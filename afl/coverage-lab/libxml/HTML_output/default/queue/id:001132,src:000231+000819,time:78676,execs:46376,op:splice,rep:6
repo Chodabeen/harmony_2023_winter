@@ -1,0 +1,16 @@
+s tst="a&“m<p 4st="a&amp;b" tsp tsŒ="a&amp;b"DTD HTML 4.0 Transitional//HTML PUBLIC "-//W3C//DTD ITML 4.0 Transitional//EN" "h "-//W3C//DTD HTML 4.0 Trtml40/strict.dtd">
+<html>
+<head>
+<title>gnome-xml push mode bug</title>
+</head>
+<body>
+
+<table border="4">
+  <tr>
+    <td bgcolor="& b"<
+a&ampBb" t;b
+le bordIC "-//W3C//DTD HTML er="4">
+	  <tr>
+	    <td>Foo2<p><p></td></tr></table>
+    </td>
+    <td bg

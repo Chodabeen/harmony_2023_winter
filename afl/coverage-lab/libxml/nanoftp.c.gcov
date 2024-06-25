@@ -1,0 +1,2123 @@
+        -:    0:Source:nanoftp.c
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * nanoftp.c: basic FTP client support
+        -:    3: *
+        -:    4: *  Reference: RFC 959
+        -:    5: */
+        -:    6:
+        -:    7:#ifdef TESTING
+        -:    8:#define STANDALONE
+        -:    9:#define HAVE_STDLIB_H
+        -:   10:#define HAVE_UNISTD_H
+        -:   11:#define HAVE_SYS_SOCKET_H
+        -:   12:#define HAVE_NETINET_IN_H
+        -:   13:#define HAVE_NETDB_H
+        -:   14:#define HAVE_SYS_TIME_H
+        -:   15:#else /* TESTING */
+        -:   16:#define NEED_SOCKETS
+        -:   17:#endif /* TESTING */
+        -:   18:
+        -:   19:#define IN_LIBXML
+        -:   20:#include "libxml.h"
+        -:   21:
+        -:   22:#ifdef LIBXML_FTP_ENABLED
+        -:   23:#include <string.h>
+        -:   24:
+        -:   25:#ifdef HAVE_STDLIB_H
+        -:   26:#include <stdlib.h>
+        -:   27:#endif
+        -:   28:#ifdef HAVE_UNISTD_H
+        -:   29:#include <unistd.h>
+        -:   30:#endif
+        -:   31:#ifdef HAVE_SYS_SOCKET_H
+        -:   32:#include <sys/socket.h>
+        -:   33:#endif
+        -:   34:#ifdef HAVE_NETINET_IN_H
+        -:   35:#include <netinet/in.h>
+        -:   36:#endif
+        -:   37:#ifdef HAVE_ARPA_INET_H
+        -:   38:#include <arpa/inet.h>
+        -:   39:#endif
+        -:   40:#ifdef HAVE_NETDB_H
+        -:   41:#include <netdb.h>
+        -:   42:#endif
+        -:   43:#ifdef HAVE_FCNTL_H
+        -:   44:#include <fcntl.h>
+        -:   45:#endif
+        -:   46:#ifdef HAVE_ERRNO_H
+        -:   47:#include <errno.h>
+        -:   48:#endif
+        -:   49:#ifdef HAVE_SYS_TIME_H
+        -:   50:#include <sys/time.h>
+        -:   51:#endif
+        -:   52:#ifdef HAVE_SYS_SELECT_H
+        -:   53:#include <sys/select.h>
+        -:   54:#endif
+        -:   55:#ifdef HAVE_SYS_SOCKET_H
+        -:   56:#include <sys/socket.h>
+        -:   57:#endif
+        -:   58:#ifdef HAVE_SYS_TYPES_H
+        -:   59:#include <sys/types.h>
+        -:   60:#endif
+        -:   61:#ifdef HAVE_STRINGS_H
+        -:   62:#include <strings.h>
+        -:   63:#endif
+        -:   64:
+        -:   65:#include <libxml/xmlmemory.h>
+        -:   66:#include <libxml/parser.h>
+        -:   67:#include <libxml/xmlerror.h>
+        -:   68:#include <libxml/uri.h>
+        -:   69:#include <libxml/nanoftp.h>
+        -:   70:#include <libxml/globals.h>
+        -:   71:
+        -:   72:/* #define DEBUG_FTP 1  */
+        -:   73:#ifdef STANDALONE
+        -:   74:#ifndef DEBUG_FTP
+        -:   75:#define DEBUG_FTP 1
+        -:   76:#endif
+        -:   77:#endif
+        -:   78:
+        -:   79:
+        -:   80:#if defined(__MINGW32__) || defined(_WIN32_WCE)
+        -:   81:#ifndef _WINSOCKAPI_
+        -:   82:#define _WINSOCKAPI_
+        -:   83:#endif
+        -:   84:#include <wsockcompat.h>
+        -:   85:#include <winsock2.h>
+        -:   86:#undef XML_SOCKLEN_T
+        -:   87:#define XML_SOCKLEN_T unsigned int
+        -:   88:#endif
+        -:   89:
+        -:   90:/**
+        -:   91: * A couple portability macros
+        -:   92: */
+        -:   93:#ifndef _WINSOCKAPI_
+        -:   94:#if !defined(__BEOS__) || defined(__HAIKU__)
+        -:   95:#define closesocket(s) close(s)
+        -:   96:#endif
+        -:   97:#endif
+        -:   98:
+        -:   99:#ifdef __BEOS__
+        -:  100:#ifndef PF_INET
+        -:  101:#define PF_INET AF_INET
+        -:  102:#endif
+        -:  103:#endif
+        -:  104:
+        -:  105:#ifdef _AIX
+        -:  106:#ifdef HAVE_BROKEN_SS_FAMILY
+        -:  107:#define ss_family __ss_family
+        -:  108:#endif
+        -:  109:#endif
+        -:  110:
+        -:  111:#ifndef XML_SOCKLEN_T
+        -:  112:#define XML_SOCKLEN_T unsigned int
+        -:  113:#endif
+        -:  114:
+        -:  115:#define FTP_COMMAND_OK		200
+        -:  116:#define FTP_SYNTAX_ERROR	500
+        -:  117:#define FTP_GET_PASSWD		331
+        -:  118:#define FTP_BUF_SIZE		1024
+        -:  119:
+        -:  120:#define XML_NANO_MAX_URLBUF	4096
+        -:  121:
+        -:  122:typedef struct xmlNanoFTPCtxt {
+        -:  123:    char *protocol;	/* the protocol name */
+        -:  124:    char *hostname;	/* the host name */
+        -:  125:    int port;		/* the port */
+        -:  126:    char *path;		/* the path within the URL */
+        -:  127:    char *user;		/* user string */
+        -:  128:    char *passwd;	/* passwd string */
+        -:  129:#ifdef SUPPORT_IP6
+        -:  130:    struct sockaddr_storage ftpAddr; /* this is large enough to hold IPv6 address*/
+        -:  131:#else
+        -:  132:    struct sockaddr_in ftpAddr; /* the socket address struct */
+        -:  133:#endif
+        -:  134:    int passive;	/* currently we support only passive !!! */
+        -:  135:    SOCKET controlFd;	/* the file descriptor for the control socket */
+        -:  136:    SOCKET dataFd;	/* the file descriptor for the data socket */
+        -:  137:    int state;		/* WRITE / READ / CLOSED */
+        -:  138:    int returnValue;	/* the protocol return value */
+        -:  139:    /* buffer for data received from the control connection */
+        -:  140:    char controlBuf[FTP_BUF_SIZE + 1];
+        -:  141:    int controlBufIndex;
+        -:  142:    int controlBufUsed;
+        -:  143:    int controlBufAnswer;
+        -:  144:} xmlNanoFTPCtxt, *xmlNanoFTPCtxtPtr;
+        -:  145:
+        -:  146:static int initialized = 0;
+        -:  147:static char *proxy = NULL;	/* the proxy name if any */
+        -:  148:static int proxyPort = 0;	/* the proxy port if any */
+        -:  149:static char *proxyUser = NULL;	/* user for proxy authentication */
+        -:  150:static char *proxyPasswd = NULL;/* passwd for proxy authentication */
+        -:  151:static int proxyType = 0;	/* uses TYPE or a@b ? */
+        -:  152:
+        -:  153:#ifdef SUPPORT_IP6
+        -:  154:static
+    #####:  155:int have_ipv6(void) {
+        -:  156:    int s;
+        -:  157:
+    #####:  158:    s = socket (AF_INET6, SOCK_STREAM, 0);
+    #####:  159:    if (s != -1) {
+    #####:  160:	close (s);
+    #####:  161:	return (1);
+        -:  162:    }
+    #####:  163:    return (0);
+        -:  164:}
+        -:  165:#endif
+        -:  166:
+        -:  167:/**
+        -:  168: * xmlFTPErrMemory:
+        -:  169: * @extra:  extra informations
+        -:  170: *
+        -:  171: * Handle an out of memory condition
+        -:  172: */
+        -:  173:static void
+    #####:  174:xmlFTPErrMemory(const char *extra)
+        -:  175:{
+    #####:  176:    __xmlSimpleError(XML_FROM_FTP, XML_ERR_NO_MEMORY, NULL, NULL, extra);
+    #####:  177:}
+        -:  178:
+        -:  179:/**
+        -:  180: * xmlNanoFTPInit:
+        -:  181: *
+        -:  182: * Initialize the FTP protocol layer.
+        -:  183: * Currently it just checks for proxy informations,
+        -:  184: * and get the hostname
+        -:  185: */
+        -:  186:
+        -:  187:void
+    #####:  188:xmlNanoFTPInit(void) {
+        -:  189:    const char *env;
+        -:  190:#ifdef _WINSOCKAPI_
+        -:  191:    WSADATA wsaData;
+        -:  192:#endif
+        -:  193:
+    #####:  194:    if (initialized)
+    #####:  195:	return;
+        -:  196:
+        -:  197:#ifdef _WINSOCKAPI_
+        -:  198:    if (WSAStartup(MAKEWORD(1, 1), &wsaData) != 0)
+        -:  199:	return;
+        -:  200:#endif
+        -:  201:
+    #####:  202:    proxyPort = 21;
+    #####:  203:    env = getenv("no_proxy");
+    #####:  204:    if (env && ((env[0] == '*' ) && (env[1] == 0)))
+    #####:  205:	return;
+    #####:  206:    env = getenv("ftp_proxy");
+    #####:  207:    if (env != NULL) {
+    #####:  208:	xmlNanoFTPScanProxy(env);
+        -:  209:    } else {
+    #####:  210:	env = getenv("FTP_PROXY");
+    #####:  211:	if (env != NULL) {
+    #####:  212:	    xmlNanoFTPScanProxy(env);
+        -:  213:	}
+        -:  214:    }
+    #####:  215:    env = getenv("ftp_proxy_user");
+    #####:  216:    if (env != NULL) {
+    #####:  217:	proxyUser = xmlMemStrdup(env);
+        -:  218:    }
+    #####:  219:    env = getenv("ftp_proxy_password");
+    #####:  220:    if (env != NULL) {
+    #####:  221:	proxyPasswd = xmlMemStrdup(env);
+        -:  222:    }
+    #####:  223:    initialized = 1;
+        -:  224:}
+        -:  225:
+        -:  226:/**
+        -:  227: * xmlNanoFTPCleanup:
+        -:  228: *
+        -:  229: * Cleanup the FTP protocol layer. This cleanup proxy informations.
+        -:  230: */
+        -:  231:
+        -:  232:void
+    #####:  233:xmlNanoFTPCleanup(void) {
+    #####:  234:    if (proxy != NULL) {
+    #####:  235:	xmlFree(proxy);
+    #####:  236:	proxy = NULL;
+        -:  237:    }
+    #####:  238:    if (proxyUser != NULL) {
+    #####:  239:	xmlFree(proxyUser);
+    #####:  240:	proxyUser = NULL;
+        -:  241:    }
+    #####:  242:    if (proxyPasswd != NULL) {
+    #####:  243:	xmlFree(proxyPasswd);
+    #####:  244:	proxyPasswd = NULL;
+        -:  245:    }
+        -:  246:#ifdef _WINSOCKAPI_
+        -:  247:    if (initialized)
+        -:  248:	WSACleanup();
+        -:  249:#endif
+    #####:  250:    initialized = 0;
+    #####:  251:}
+        -:  252:
+        -:  253:/**
+        -:  254: * xmlNanoFTPProxy:
+        -:  255: * @host:  the proxy host name
+        -:  256: * @port:  the proxy port
+        -:  257: * @user:  the proxy user name
+        -:  258: * @passwd:  the proxy password
+        -:  259: * @type:  the type of proxy 1 for using SITE, 2 for USER a@b
+        -:  260: *
+        -:  261: * Setup the FTP proxy informations.
+        -:  262: * This can also be done by using ftp_proxy ftp_proxy_user and
+        -:  263: * ftp_proxy_password environment variables.
+        -:  264: */
+        -:  265:
+        -:  266:void
+    #####:  267:xmlNanoFTPProxy(const char *host, int port, const char *user,
+        -:  268:	        const char *passwd, int type) {
+    #####:  269:    if (proxy != NULL) {
+    #####:  270:	xmlFree(proxy);
+    #####:  271:	proxy = NULL;
+        -:  272:    }
+    #####:  273:    if (proxyUser != NULL) {
+    #####:  274:	xmlFree(proxyUser);
+    #####:  275:	proxyUser = NULL;
+        -:  276:    }
+    #####:  277:    if (proxyPasswd != NULL) {
+    #####:  278:	xmlFree(proxyPasswd);
+    #####:  279:	proxyPasswd = NULL;
+        -:  280:    }
+    #####:  281:    if (host)
+    #####:  282:	proxy = xmlMemStrdup(host);
+    #####:  283:    if (user)
+    #####:  284:	proxyUser = xmlMemStrdup(user);
+    #####:  285:    if (passwd)
+    #####:  286:	proxyPasswd = xmlMemStrdup(passwd);
+    #####:  287:    proxyPort = port;
+    #####:  288:    proxyType = type;
+    #####:  289:}
+        -:  290:
+        -:  291:/**
+        -:  292: * xmlNanoFTPScanURL:
+        -:  293: * @ctx:  an FTP context
+        -:  294: * @URL:  The URL used to initialize the context
+        -:  295: *
+        -:  296: * (Re)Initialize an FTP context by parsing the URL and finding
+        -:  297: * the protocol host port and path it indicates.
+        -:  298: */
+        -:  299:
+        -:  300:static void
+    #####:  301:xmlNanoFTPScanURL(void *ctx, const char *URL) {
+    #####:  302:    xmlNanoFTPCtxtPtr ctxt = (xmlNanoFTPCtxtPtr) ctx;
+        -:  303:    xmlURIPtr uri;
+        -:  304:
+        -:  305:    /*
+        -:  306:     * Clear any existing data from the context
+        -:  307:     */
+    #####:  308:    if (ctxt->protocol != NULL) {
+    #####:  309:        xmlFree(ctxt->protocol);
+    #####:  310:	ctxt->protocol = NULL;
+        -:  311:    }
+    #####:  312:    if (ctxt->hostname != NULL) {
+    #####:  313:        xmlFree(ctxt->hostname);
+    #####:  314:	ctxt->hostname = NULL;
+        -:  315:    }
+    #####:  316:    if (ctxt->path != NULL) {
+    #####:  317:        xmlFree(ctxt->path);
+    #####:  318:	ctxt->path = NULL;
+        -:  319:    }
+    #####:  320:    if (URL == NULL) return;
+        -:  321:
+    #####:  322:    uri = xmlParseURIRaw(URL, 1);
+    #####:  323:    if (uri == NULL)
+    #####:  324:	return;
+        -:  325:
+    #####:  326:    if ((uri->scheme == NULL) || (uri->server == NULL)) {
+    #####:  327:	xmlFreeURI(uri);
+    #####:  328:	return;
+        -:  329:    }
+        -:  330:
+    #####:  331:    ctxt->protocol = xmlMemStrdup(uri->scheme);
+    #####:  332:    ctxt->hostname = xmlMemStrdup(uri->server);
+    #####:  333:    if (uri->path != NULL)
+    #####:  334:	ctxt->path = xmlMemStrdup(uri->path);
+        -:  335:    else
+    #####:  336:	ctxt->path = xmlMemStrdup("/");
+    #####:  337:    if (uri->port != 0)
+    #####:  338:	ctxt->port = uri->port;
+        -:  339:
+    #####:  340:    if (uri->user != NULL) {
+        -:  341:	char *cptr;
+    #####:  342:	if ((cptr=strchr(uri->user, ':')) == NULL)
+    #####:  343:	    ctxt->user = xmlMemStrdup(uri->user);
+        -:  344:	else {
+    #####:  345:	    ctxt->user = (char *)xmlStrndup((xmlChar *)uri->user,
+    #####:  346:			    (cptr - uri->user));
+    #####:  347:	    ctxt->passwd = xmlMemStrdup(cptr+1);
+        -:  348:	}
+        -:  349:    }
+        -:  350:
+    #####:  351:    xmlFreeURI(uri);
+        -:  352:
+        -:  353:}
+        -:  354:
+        -:  355:/**
+        -:  356: * xmlNanoFTPUpdateURL:
+        -:  357: * @ctx:  an FTP context
+        -:  358: * @URL:  The URL used to update the context
+        -:  359: *
+        -:  360: * Update an FTP context by parsing the URL and finding
+        -:  361: * new path it indicates. If there is an error in the
+        -:  362: * protocol, hostname, port or other information, the
+        -:  363: * error is raised. It indicates a new connection has to
+        -:  364: * be established.
+        -:  365: *
+        -:  366: * Returns 0 if Ok, -1 in case of error (other host).
+        -:  367: */
+        -:  368:
+        -:  369:int
+    #####:  370:xmlNanoFTPUpdateURL(void *ctx, const char *URL) {
+    #####:  371:    xmlNanoFTPCtxtPtr ctxt = (xmlNanoFTPCtxtPtr) ctx;
+        -:  372:    xmlURIPtr uri;
+        -:  373:
+    #####:  374:    if (URL == NULL)
+    #####:  375:	return(-1);
+    #####:  376:    if (ctxt == NULL)
+    #####:  377:	return(-1);
+    #####:  378:    if (ctxt->protocol == NULL)
+    #####:  379:	return(-1);
+    #####:  380:    if (ctxt->hostname == NULL)
+    #####:  381:	return(-1);
+        -:  382:
+    #####:  383:    uri = xmlParseURIRaw(URL, 1);
+    #####:  384:    if (uri == NULL)
+    #####:  385:	return(-1);
+        -:  386:
+    #####:  387:    if ((uri->scheme == NULL) || (uri->server == NULL)) {
+    #####:  388:	xmlFreeURI(uri);
+    #####:  389:	return(-1);
+        -:  390:    }
+    #####:  391:    if ((strcmp(ctxt->protocol, uri->scheme)) ||
+    #####:  392:	(strcmp(ctxt->hostname, uri->server)) ||
+    #####:  393:	((uri->port != 0) && (ctxt->port != uri->port))) {
+    #####:  394:	xmlFreeURI(uri);
+    #####:  395:	return(-1);
+        -:  396:    }
+        -:  397:
+    #####:  398:    if (uri->port != 0)
+    #####:  399:	ctxt->port = uri->port;
+        -:  400:
+    #####:  401:    if (ctxt->path != NULL) {
+    #####:  402:	xmlFree(ctxt->path);
+    #####:  403:	ctxt->path = NULL;
+        -:  404:    }
+        -:  405:
+    #####:  406:    if (uri->path == NULL)
+    #####:  407:        ctxt->path = xmlMemStrdup("/");
+        -:  408:    else
+    #####:  409:	ctxt->path = xmlMemStrdup(uri->path);
+        -:  410:
+    #####:  411:    xmlFreeURI(uri);
+        -:  412:
+    #####:  413:    return(0);
+        -:  414:}
+        -:  415:
+        -:  416:/**
+        -:  417: * xmlNanoFTPScanProxy:
+        -:  418: * @URL:  The proxy URL used to initialize the proxy context
+        -:  419: *
+        -:  420: * (Re)Initialize the FTP Proxy context by parsing the URL and finding
+        -:  421: * the protocol host port it indicates.
+        -:  422: * Should be like ftp://myproxy/ or ftp://myproxy:3128/
+        -:  423: * A NULL URL cleans up proxy informations.
+        -:  424: */
+        -:  425:
+        -:  426:void
+    #####:  427:xmlNanoFTPScanProxy(const char *URL) {
+        -:  428:    xmlURIPtr uri;
+        -:  429:
+    #####:  430:    if (proxy != NULL) {
+    #####:  431:        xmlFree(proxy);
+    #####:  432:	proxy = NULL;
+        -:  433:    }
+    #####:  434:    proxyPort = 0;
+        -:  435:
+        -:  436:#ifdef DEBUG_FTP
+        -:  437:    if (URL == NULL)
+        -:  438:	xmlGenericError(xmlGenericErrorContext,
+        -:  439:		"Removing FTP proxy info\n");
+        -:  440:    else
+        -:  441:	xmlGenericError(xmlGenericErrorContext,
+        -:  442:		"Using FTP proxy %s\n", URL);
+        -:  443:#endif
+    #####:  444:    if (URL == NULL) return;
+        -:  445:
+    #####:  446:    uri = xmlParseURIRaw(URL, 1);
+    #####:  447:    if ((uri == NULL) || (uri->scheme == NULL) ||
+    #####:  448:	(strcmp(uri->scheme, "ftp")) || (uri->server == NULL)) {
+    #####:  449:	__xmlIOErr(XML_FROM_FTP, XML_FTP_URL_SYNTAX, "Syntax Error\n");
+    #####:  450:	if (uri != NULL)
+    #####:  451:	    xmlFreeURI(uri);
+    #####:  452:	return;
+        -:  453:    }
+        -:  454:
+    #####:  455:    proxy = xmlMemStrdup(uri->server);
+    #####:  456:    if (uri->port != 0)
+    #####:  457:	proxyPort = uri->port;
+        -:  458:
+    #####:  459:    xmlFreeURI(uri);
+        -:  460:}
+        -:  461:
+        -:  462:/**
+        -:  463: * xmlNanoFTPNewCtxt:
+        -:  464: * @URL:  The URL used to initialize the context
+        -:  465: *
+        -:  466: * Allocate and initialize a new FTP context.
+        -:  467: *
+        -:  468: * Returns an FTP context or NULL in case of error.
+        -:  469: */
+        -:  470:
+        -:  471:void*
+    #####:  472:xmlNanoFTPNewCtxt(const char *URL) {
+        -:  473:    xmlNanoFTPCtxtPtr ret;
+        -:  474:    char *unescaped;
+        -:  475:
+    #####:  476:    ret = (xmlNanoFTPCtxtPtr) xmlMalloc(sizeof(xmlNanoFTPCtxt));
+    #####:  477:    if (ret == NULL) {
+    #####:  478:        xmlFTPErrMemory("allocating FTP context");
+    #####:  479:        return(NULL);
+        -:  480:    }
+        -:  481:
+    #####:  482:    memset(ret, 0, sizeof(xmlNanoFTPCtxt));
+    #####:  483:    ret->port = 21;
+    #####:  484:    ret->passive = 1;
+    #####:  485:    ret->returnValue = 0;
+    #####:  486:    ret->controlBufIndex = 0;
+    #####:  487:    ret->controlBufUsed = 0;
+    #####:  488:    ret->controlFd = INVALID_SOCKET;
+        -:  489:
+    #####:  490:    unescaped = xmlURIUnescapeString(URL, 0, NULL);
+    #####:  491:    if (unescaped != NULL) {
+    #####:  492:	xmlNanoFTPScanURL(ret, unescaped);
+    #####:  493:	xmlFree(unescaped);
+    #####:  494:    } else if (URL != NULL)
+    #####:  495:	xmlNanoFTPScanURL(ret, URL);
+        -:  496:
+    #####:  497:    return(ret);
+        -:  498:}
+        -:  499:
+        -:  500:/**
+        -:  501: * xmlNanoFTPFreeCtxt:
+        -:  502: * @ctx:  an FTP context
+        -:  503: *
+        -:  504: * Frees the context after closing the connection.
+        -:  505: */
+        -:  506:
+        -:  507:void
+    #####:  508:xmlNanoFTPFreeCtxt(void * ctx) {
+    #####:  509:    xmlNanoFTPCtxtPtr ctxt = (xmlNanoFTPCtxtPtr) ctx;
+    #####:  510:    if (ctxt == NULL) return;
+    #####:  511:    if (ctxt->hostname != NULL) xmlFree(ctxt->hostname);
+    #####:  512:    if (ctxt->protocol != NULL) xmlFree(ctxt->protocol);
+    #####:  513:    if (ctxt->path != NULL) xmlFree(ctxt->path);
+    #####:  514:    ctxt->passive = 1;
+    #####:  515:    if (ctxt->controlFd != INVALID_SOCKET) closesocket(ctxt->controlFd);
+    #####:  516:    ctxt->controlFd = INVALID_SOCKET;
+    #####:  517:    ctxt->controlBufIndex = -1;
+    #####:  518:    ctxt->controlBufUsed = -1;
+    #####:  519:    xmlFree(ctxt);
+        -:  520:}
+        -:  521:
+        -:  522:/**
+        -:  523: * xmlNanoFTPParseResponse:
+        -:  524: * @buf:  the buffer containing the response
+        -:  525: * @len:  the buffer length
+        -:  526: *
+        -:  527: * Parsing of the server answer, we just extract the code.
+        -:  528: *
+        -:  529: * returns 0 for errors
+        -:  530: *     +XXX for last line of response
+        -:  531: *     -XXX for response to be continued
+        -:  532: */
+        -:  533:static int
+    #####:  534:xmlNanoFTPParseResponse(char *buf, int len) {
+    #####:  535:    int val = 0;
+        -:  536:
+    #####:  537:    if (len < 3) return(-1);
+    #####:  538:    if ((*buf >= '0') && (*buf <= '9'))
+    #####:  539:        val = val * 10 + (*buf - '0');
+        -:  540:    else
+    #####:  541:        return(0);
+    #####:  542:    buf++;
+    #####:  543:    if ((*buf >= '0') && (*buf <= '9'))
+    #####:  544:        val = val * 10 + (*buf - '0');
+        -:  545:    else
+    #####:  546:        return(0);
+    #####:  547:    buf++;
+    #####:  548:    if ((*buf >= '0') && (*buf <= '9'))
+    #####:  549:        val = val * 10 + (*buf - '0');
+        -:  550:    else
+    #####:  551:        return(0);
+    #####:  552:    buf++;
+    #####:  553:    if (*buf == '-')
+    #####:  554:        return(-val);
+    #####:  555:    return(val);
+        -:  556:}
+        -:  557:
+        -:  558:/**
+        -:  559: * xmlNanoFTPGetMore:
+        -:  560: * @ctx:  an FTP context
+        -:  561: *
+        -:  562: * Read more information from the FTP control connection
+        -:  563: * Returns the number of bytes read, < 0 indicates an error
+        -:  564: */
+        -:  565:static int
+    #####:  566:xmlNanoFTPGetMore(void *ctx) {
+    #####:  567:    xmlNanoFTPCtxtPtr ctxt = (xmlNanoFTPCtxtPtr) ctx;
+        -:  568:    int len;
+        -:  569:    int size;
+        -:  570:
+    #####:  571:    if ((ctxt == NULL) || (ctxt->controlFd == INVALID_SOCKET)) return(-1);
+        -:  572:
+    #####:  573:    if ((ctxt->controlBufIndex < 0) || (ctxt->controlBufIndex > FTP_BUF_SIZE)) {
+        -:  574:#ifdef DEBUG_FTP
+        -:  575:        xmlGenericError(xmlGenericErrorContext,
+        -:  576:		"xmlNanoFTPGetMore : controlBufIndex = %d\n",
+        -:  577:		ctxt->controlBufIndex);
+        -:  578:#endif
+    #####:  579:	return(-1);
+        -:  580:    }
+        -:  581:
+    #####:  582:    if ((ctxt->controlBufUsed < 0) || (ctxt->controlBufUsed > FTP_BUF_SIZE)) {
+        -:  583:#ifdef DEBUG_FTP
+        -:  584:        xmlGenericError(xmlGenericErrorContext,
+        -:  585:		"xmlNanoFTPGetMore : controlBufUsed = %d\n",
+        -:  586:		ctxt->controlBufUsed);
+        -:  587:#endif
+    #####:  588:	return(-1);
+        -:  589:    }
+    #####:  590:    if (ctxt->controlBufIndex > ctxt->controlBufUsed) {
+        -:  591:#ifdef DEBUG_FTP
+        -:  592:        xmlGenericError(xmlGenericErrorContext,
+        -:  593:		"xmlNanoFTPGetMore : controlBufIndex > controlBufUsed %d > %d\n",
+        -:  594:	       ctxt->controlBufIndex, ctxt->controlBufUsed);
+        -:  595:#endif
+    #####:  596:	return(-1);
+        -:  597:    }
+        -:  598:
+        -:  599:    /*
+        -:  600:     * First pack the control buffer
+        -:  601:     */
+    #####:  602:    if (ctxt->controlBufIndex > 0) {
+    #####:  603:	memmove(&ctxt->controlBuf[0], &ctxt->controlBuf[ctxt->controlBufIndex],
+    #####:  604:		ctxt->controlBufUsed - ctxt->controlBufIndex);
+    #####:  605:	ctxt->controlBufUsed -= ctxt->controlBufIndex;
+    #####:  606:	ctxt->controlBufIndex = 0;
+        -:  607:    }
+    #####:  608:    size = FTP_BUF_SIZE - ctxt->controlBufUsed;
+    #####:  609:    if (size == 0) {
+        -:  610:#ifdef DEBUG_FTP
+        -:  611:        xmlGenericError(xmlGenericErrorContext,
+        -:  612:		"xmlNanoFTPGetMore : buffer full %d \n", ctxt->controlBufUsed);
+        -:  613:#endif
+    #####:  614:	return(0);
+        -:  615:    }
+        -:  616:
+        -:  617:    /*
+        -:  618:     * Read the amount left on the control connection
+        -:  619:     */
+    #####:  620:    if ((len = recv(ctxt->controlFd, &ctxt->controlBuf[ctxt->controlBufIndex],
+        -:  621:		    size, 0)) < 0) {
+    #####:  622:	__xmlIOErr(XML_FROM_FTP, 0, "recv failed");
+    #####:  623:	closesocket(ctxt->controlFd); ctxt->controlFd = INVALID_SOCKET;
+    #####:  624:        ctxt->controlFd = INVALID_SOCKET;
+    #####:  625:        return(-1);
+        -:  626:    }
+        -:  627:#ifdef DEBUG_FTP
+        -:  628:    xmlGenericError(xmlGenericErrorContext,
+        -:  629:	    "xmlNanoFTPGetMore : read %d [%d - %d]\n", len,
+        -:  630:	   ctxt->controlBufUsed, ctxt->controlBufUsed + len);
+        -:  631:#endif
+    #####:  632:    ctxt->controlBufUsed += len;
+    #####:  633:    ctxt->controlBuf[ctxt->controlBufUsed] = 0;
+        -:  634:
+    #####:  635:    return(len);
+        -:  636:}
+        -:  637:
+        -:  638:/**
+        -:  639: * xmlNanoFTPReadResponse:
+        -:  640: * @ctx:  an FTP context
+        -:  641: *
+        -:  642: * Read the response from the FTP server after a command.
+        -:  643: * Returns the code number
+        -:  644: */
+        -:  645:static int
+    #####:  646:xmlNanoFTPReadResponse(void *ctx) {
+    #####:  647:    xmlNanoFTPCtxtPtr ctxt = (xmlNanoFTPCtxtPtr) ctx;
+        -:  648:    char *ptr, *end;
+        -:  649:    int len;
+    #####:  650:    int res = -1, cur = -1;
+        -:  651:
+    #####:  652:    if ((ctxt == NULL) || (ctxt->controlFd == INVALID_SOCKET)) return(-1);
+        -:  653:
+    #####:  654:get_more:
+        -:  655:    /*
+        -:  656:     * Assumes everything up to controlBuf[controlBufIndex] has been read
+        -:  657:     * and analyzed.
+        -:  658:     */
+    #####:  659:    len = xmlNanoFTPGetMore(ctx);
+    #####:  660:    if (len < 0) {
+    #####:  661:        return(-1);
+        -:  662:    }
+    #####:  663:    if ((ctxt->controlBufUsed == 0) && (len == 0)) {
+    #####:  664:        return(-1);
+        -:  665:    }
+    #####:  666:    ptr = &ctxt->controlBuf[ctxt->controlBufIndex];
+    #####:  667:    end = &ctxt->controlBuf[ctxt->controlBufUsed];
+        -:  668:
+        -:  669:#ifdef DEBUG_FTP
+        -:  670:    xmlGenericError(xmlGenericErrorContext,
+        -:  671:	    "\n<<<\n%s\n--\n", ptr);
+        -:  672:#endif
+    #####:  673:    while (ptr < end) {
+    #####:  674:        cur = xmlNanoFTPParseResponse(ptr, end - ptr);
+    #####:  675:	if (cur > 0) {
+        -:  676:	    /*
+        -:  677:	     * Successfully scanned the control code, scratch
+        -:  678:	     * till the end of the line, but keep the index to be
+        -:  679:	     * able to analyze the result if needed.
+        -:  680:	     */
+    #####:  681:	    res = cur;
+    #####:  682:	    ptr += 3;
+    #####:  683:	    ctxt->controlBufAnswer = ptr - ctxt->controlBuf;
+    #####:  684:	    while ((ptr < end) && (*ptr != '\n')) ptr++;
+    #####:  685:	    if (*ptr == '\n') ptr++;
+    #####:  686:	    if (*ptr == '\r') ptr++;
+    #####:  687:	    break;
+        -:  688:	}
+    #####:  689:	while ((ptr < end) && (*ptr != '\n')) ptr++;
+    #####:  690:	if (ptr >= end) {
+    #####:  691:	    ctxt->controlBufIndex = ctxt->controlBufUsed;
+    #####:  692:	    goto get_more;
+        -:  693:	}
+    #####:  694:	if (*ptr != '\r') ptr++;
+        -:  695:    }
+        -:  696:
+    #####:  697:    if (res < 0) goto get_more;
+    #####:  698:    ctxt->controlBufIndex = ptr - ctxt->controlBuf;
+        -:  699:#ifdef DEBUG_FTP
+        -:  700:    ptr = &ctxt->controlBuf[ctxt->controlBufIndex];
+        -:  701:    xmlGenericError(xmlGenericErrorContext, "\n---\n%s\n--\n", ptr);
+        -:  702:#endif
+        -:  703:
+        -:  704:#ifdef DEBUG_FTP
+        -:  705:    xmlGenericError(xmlGenericErrorContext, "Got %d\n", res);
+        -:  706:#endif
+    #####:  707:    return(res / 100);
+        -:  708:}
+        -:  709:
+        -:  710:/**
+        -:  711: * xmlNanoFTPGetResponse:
+        -:  712: * @ctx:  an FTP context
+        -:  713: *
+        -:  714: * Get the response from the FTP server after a command.
+        -:  715: * Returns the code number
+        -:  716: */
+        -:  717:
+        -:  718:int
+    #####:  719:xmlNanoFTPGetResponse(void *ctx) {
+        -:  720:    int res;
+        -:  721:
+    #####:  722:    res = xmlNanoFTPReadResponse(ctx);
+        -:  723:
+    #####:  724:    return(res);
+        -:  725:}
+        -:  726:
+        -:  727:/**
+        -:  728: * xmlNanoFTPCheckResponse:
+        -:  729: * @ctx:  an FTP context
+        -:  730: *
+        -:  731: * Check if there is a response from the FTP server after a command.
+        -:  732: * Returns the code number, or 0
+        -:  733: */
+        -:  734:
+        -:  735:int
+    #####:  736:xmlNanoFTPCheckResponse(void *ctx) {
+    #####:  737:    xmlNanoFTPCtxtPtr ctxt = (xmlNanoFTPCtxtPtr) ctx;
+        -:  738:    fd_set rfd;
+        -:  739:    struct timeval tv;
+        -:  740:
+    #####:  741:    if ((ctxt == NULL) || (ctxt->controlFd == INVALID_SOCKET)) return(-1);
+    #####:  742:    tv.tv_sec = 0;
+    #####:  743:    tv.tv_usec = 0;
+    #####:  744:    FD_ZERO(&rfd);
+    #####:  745:    FD_SET(ctxt->controlFd, &rfd);
+    #####:  746:    switch(select(ctxt->controlFd + 1, &rfd, NULL, NULL, &tv)) {
+    #####:  747:	case 0:
+    #####:  748:	    return(0);
+    #####:  749:	case -1:
+    #####:  750:	    __xmlIOErr(XML_FROM_FTP, 0, "select");
+    #####:  751:	    return(-1);
+        -:  752:
+        -:  753:    }
+        -:  754:
+    #####:  755:    return(xmlNanoFTPReadResponse(ctx));
+        -:  756:}
+        -:  757:
+        -:  758:/**
+        -:  759: * Send the user authentication
+        -:  760: */
+        -:  761:
+        -:  762:static int
+    #####:  763:xmlNanoFTPSendUser(void *ctx) {
+    #####:  764:    xmlNanoFTPCtxtPtr ctxt = (xmlNanoFTPCtxtPtr) ctx;
+        -:  765:    char buf[200];
+        -:  766:    int len;
+        -:  767:    int res;
+        -:  768:
+    #####:  769:    if (ctxt->user == NULL)
+    #####:  770:	snprintf(buf, sizeof(buf), "USER anonymous\r\n");
+        -:  771:    else
+    #####:  772:	snprintf(buf, sizeof(buf), "USER %s\r\n", ctxt->user);
+    #####:  773:    buf[sizeof(buf) - 1] = 0;
+    #####:  774:    len = strlen(buf);
+        -:  775:#ifdef DEBUG_FTP
+        -:  776:    xmlGenericError(xmlGenericErrorContext, "%s", buf);
+        -:  777:#endif
+    #####:  778:    res = send(ctxt->controlFd, SEND_ARG2_CAST buf, len, 0);
+    #####:  779:    if (res < 0) {
+    #####:  780:	__xmlIOErr(XML_FROM_FTP, 0, "send failed");
+    #####:  781:	return(res);
+        -:  782:    }
+    #####:  783:    return(0);
+        -:  784:}
+        -:  785:
+        -:  786:/**
+        -:  787: * Send the password authentication
+        -:  788: */
+        -:  789:
+        -:  790:static int
+    #####:  791:xmlNanoFTPSendPasswd(void *ctx) {
+    #####:  792:    xmlNanoFTPCtxtPtr ctxt = (xmlNanoFTPCtxtPtr) ctx;
+        -:  793:    char buf[200];
+        -:  794:    int len;
+        -:  795:    int res;
+        -:  796:
+    #####:  797:    if (ctxt->passwd == NULL)
+    #####:  798:	snprintf(buf, sizeof(buf), "PASS anonymous@\r\n");
+        -:  799:    else
+    #####:  800:	snprintf(buf, sizeof(buf), "PASS %s\r\n", ctxt->passwd);
+    #####:  801:    buf[sizeof(buf) - 1] = 0;
+    #####:  802:    len = strlen(buf);
+        -:  803:#ifdef DEBUG_FTP
+        -:  804:    xmlGenericError(xmlGenericErrorContext, "%s", buf);
+        -:  805:#endif
+    #####:  806:    res = send(ctxt->controlFd, SEND_ARG2_CAST buf, len, 0);
+    #####:  807:    if (res < 0) {
+    #####:  808:	__xmlIOErr(XML_FROM_FTP, 0, "send failed");
+    #####:  809:	return(res);
+        -:  810:    }
+    #####:  811:    return(0);
+        -:  812:}
+        -:  813:
+        -:  814:/**
+        -:  815: * xmlNanoFTPQuit:
+        -:  816: * @ctx:  an FTP context
+        -:  817: *
+        -:  818: * Send a QUIT command to the server
+        -:  819: *
+        -:  820: * Returns -1 in case of error, 0 otherwise
+        -:  821: */
+        -:  822:
+        -:  823:
+        -:  824:int
+    #####:  825:xmlNanoFTPQuit(void *ctx) {
+    #####:  826:    xmlNanoFTPCtxtPtr ctxt = (xmlNanoFTPCtxtPtr) ctx;
+        -:  827:    char buf[200];
+        -:  828:    int len, res;
+        -:  829:
+    #####:  830:    if ((ctxt == NULL) || (ctxt->controlFd == INVALID_SOCKET)) return(-1);
+        -:  831:
+    #####:  832:    snprintf(buf, sizeof(buf), "QUIT\r\n");
+    #####:  833:    len = strlen(buf);
+        -:  834:#ifdef DEBUG_FTP
+        -:  835:    xmlGenericError(xmlGenericErrorContext, "%s", buf); /* Just to be consistent, even though we know it can't have a % in it */
+        -:  836:#endif
+    #####:  837:    res = send(ctxt->controlFd, SEND_ARG2_CAST buf, len, 0);
+    #####:  838:    if (res < 0) {
+    #####:  839:	__xmlIOErr(XML_FROM_FTP, 0, "send failed");
+    #####:  840:	return(res);
+        -:  841:    }
+    #####:  842:    return(0);
+        -:  843:}
+        -:  844:
+        -:  845:/**
+        -:  846: * xmlNanoFTPConnect:
+        -:  847: * @ctx:  an FTP context
+        -:  848: *
+        -:  849: * Tries to open a control connection
+        -:  850: *
+        -:  851: * Returns -1 in case of error, 0 otherwise
+        -:  852: */
+        -:  853:
+        -:  854:int
+    #####:  855:xmlNanoFTPConnect(void *ctx) {
+    #####:  856:    xmlNanoFTPCtxtPtr ctxt = (xmlNanoFTPCtxtPtr) ctx;
+        -:  857:    struct hostent *hp;
+        -:  858:    int port;
+        -:  859:    int res;
+    #####:  860:    int addrlen = sizeof (struct sockaddr_in);
+        -:  861:
+    #####:  862:    if (ctxt == NULL)
+    #####:  863:	return(-1);
+    #####:  864:    if (ctxt->hostname == NULL)
+    #####:  865:	return(-1);
+        -:  866:
+        -:  867:    /*
+        -:  868:     * do the blocking DNS query.
+        -:  869:     */
+    #####:  870:    if (proxy) {
+    #####:  871:        port = proxyPort;
+        -:  872:    } else {
+    #####:  873:	port = ctxt->port;
+        -:  874:    }
+    #####:  875:    if (port == 0)
+    #####:  876:	port = 21;
+        -:  877:
+    #####:  878:    memset (&ctxt->ftpAddr, 0, sizeof(ctxt->ftpAddr));
+        -:  879:
+        -:  880:#ifdef SUPPORT_IP6
+    #####:  881:    if (have_ipv6 ()) {
+        -:  882:	struct addrinfo hints, *tmp, *result;
+        -:  883:
+    #####:  884:	result = NULL;
+    #####:  885:	memset (&hints, 0, sizeof(hints));
+    #####:  886:	hints.ai_socktype = SOCK_STREAM;
+        -:  887:
+    #####:  888:	if (proxy) {
+    #####:  889:	    if (getaddrinfo (proxy, NULL, &hints, &result) != 0) {
+    #####:  890:		__xmlIOErr(XML_FROM_FTP, 0, "getaddrinfo failed");
+    #####:  891:		return (-1);
+        -:  892:	    }
+        -:  893:	}
+        -:  894:	else
+    #####:  895:	    if (getaddrinfo (ctxt->hostname, NULL, &hints, &result) != 0) {
+    #####:  896:		__xmlIOErr(XML_FROM_FTP, 0, "getaddrinfo failed");
+    #####:  897:		return (-1);
+        -:  898:	    }
+        -:  899:
+    #####:  900:	for (tmp = result; tmp; tmp = tmp->ai_next)
+    #####:  901:	    if (tmp->ai_family == AF_INET || tmp->ai_family == AF_INET6)
+        -:  902:		break;
+        -:  903:
+    #####:  904:	if (!tmp) {
+    #####:  905:	    if (result)
+    #####:  906:		freeaddrinfo (result);
+    #####:  907:	    __xmlIOErr(XML_FROM_FTP, 0, "getaddrinfo failed");
+    #####:  908:	    return (-1);
+        -:  909:	}
+    #####:  910:	if (tmp->ai_addrlen > sizeof(ctxt->ftpAddr)) {
+    #####:  911:	    if (result)
+    #####:  912:		freeaddrinfo (result);
+    #####:  913:	    __xmlIOErr(XML_FROM_FTP, 0, "gethostbyname address mismatch");
+    #####:  914:	    return (-1);
+        -:  915:	}
+    #####:  916:	if (tmp->ai_family == AF_INET6) {
+    #####:  917:	    memcpy (&ctxt->ftpAddr, tmp->ai_addr, tmp->ai_addrlen);
+    #####:  918:	    ((struct sockaddr_in6 *) &ctxt->ftpAddr)->sin6_port = htons (port);
+    #####:  919:	    ctxt->controlFd = socket (AF_INET6, SOCK_STREAM, 0);
+        -:  920:	}
+        -:  921:	else {
+    #####:  922:	    memcpy (&ctxt->ftpAddr, tmp->ai_addr, tmp->ai_addrlen);
+    #####:  923:	    ((struct sockaddr_in *) &ctxt->ftpAddr)->sin_port = htons (port);
+    #####:  924:	    ctxt->controlFd = socket (AF_INET, SOCK_STREAM, 0);
+        -:  925:	}
+    #####:  926:	addrlen = tmp->ai_addrlen;
+    #####:  927:	freeaddrinfo (result);
+        -:  928:    }
+        -:  929:    else
+        -:  930:#endif
+        -:  931:    {
+    #####:  932:	if (proxy)
+    #####:  933:	    hp = gethostbyname (GETHOSTBYNAME_ARG_CAST proxy);
+        -:  934:	else
+    #####:  935:	    hp = gethostbyname (GETHOSTBYNAME_ARG_CAST ctxt->hostname);
+    #####:  936:	if (hp == NULL) {
+    #####:  937:	    __xmlIOErr(XML_FROM_FTP, 0, "gethostbyname failed");
+    #####:  938:	    return (-1);
+        -:  939:	}
+    #####:  940:	if ((unsigned int) hp->h_length >
+        -:  941:	    sizeof(((struct sockaddr_in *)&ctxt->ftpAddr)->sin_addr)) {
+    #####:  942:	    __xmlIOErr(XML_FROM_FTP, 0, "gethostbyname address mismatch");
+    #####:  943:	    return (-1);
+        -:  944:	}
+        -:  945:
+        -:  946:	/*
+        -:  947:	 * Prepare the socket
+        -:  948:	 */
+    #####:  949:	((struct sockaddr_in *)&ctxt->ftpAddr)->sin_family = AF_INET;
+    #####:  950:	memcpy (&((struct sockaddr_in *)&ctxt->ftpAddr)->sin_addr,
+    #####:  951:		hp->h_addr_list[0], hp->h_length);
+    #####:  952:	((struct sockaddr_in *)&ctxt->ftpAddr)->sin_port =
+    #####:  953:             (unsigned short)htons ((unsigned short)port);
+    #####:  954:	ctxt->controlFd = socket (AF_INET, SOCK_STREAM, 0);
+    #####:  955:	addrlen = sizeof (struct sockaddr_in);
+        -:  956:    }
+        -:  957:
+    #####:  958:    if (ctxt->controlFd == INVALID_SOCKET) {
+    #####:  959:	__xmlIOErr(XML_FROM_FTP, 0, "socket failed");
+    #####:  960:        return(-1);
+        -:  961:    }
+        -:  962:
+        -:  963:    /*
+        -:  964:     * Do the connect.
+        -:  965:     */
+    #####:  966:    if (connect(ctxt->controlFd, (struct sockaddr *) &ctxt->ftpAddr,
+        -:  967:	    addrlen) < 0) {
+    #####:  968:	__xmlIOErr(XML_FROM_FTP, 0, "Failed to create a connection");
+    #####:  969:        closesocket(ctxt->controlFd); ctxt->controlFd = INVALID_SOCKET;
+    #####:  970:        ctxt->controlFd = INVALID_SOCKET;
+    #####:  971:	return(-1);
+        -:  972:    }
+        -:  973:
+        -:  974:    /*
+        -:  975:     * Wait for the HELLO from the server.
+        -:  976:     */
+    #####:  977:    res = xmlNanoFTPGetResponse(ctxt);
+    #####:  978:    if (res != 2) {
+    #####:  979:        closesocket(ctxt->controlFd); ctxt->controlFd = INVALID_SOCKET;
+    #####:  980:        ctxt->controlFd = INVALID_SOCKET;
+    #####:  981:	return(-1);
+        -:  982:    }
+        -:  983:
+        -:  984:    /*
+        -:  985:     * State diagram for the login operation on the FTP server
+        -:  986:     *
+        -:  987:     * Reference: RFC 959
+        -:  988:     *
+        -:  989:     *                       1
+        -:  990:     * +---+   USER    +---+------------->+---+
+        -:  991:     * | B |---------->| W | 2       ---->| E |
+        -:  992:     * +---+           +---+------  |  -->+---+
+        -:  993:     *                  | |       | | |
+        -:  994:     *                3 | | 4,5   | | |
+        -:  995:     *    --------------   -----  | | |
+        -:  996:     *   |                      | | | |
+        -:  997:     *   |                      | | | |
+        -:  998:     *   |                 ---------  |
+        -:  999:     *   |               1|     | |   |
+        -: 1000:     *   V                |     | |   |
+        -: 1001:     * +---+   PASS    +---+ 2  |  ------>+---+
+        -: 1002:     * |   |---------->| W |------------->| S |
+        -: 1003:     * +---+           +---+   ---------->+---+
+        -: 1004:     *                  | |   | |     |
+        -: 1005:     *                3 | |4,5| |     |
+        -: 1006:     *    --------------   --------   |
+        -: 1007:     *   |                    | |  |  |
+        -: 1008:     *   |                    | |  |  |
+        -: 1009:     *   |                 -----------
+        -: 1010:     *   |             1,3|   | |  |
+        -: 1011:     *   V                |  2| |  |
+        -: 1012:     * +---+   ACCT    +---+--  |   ----->+---+
+        -: 1013:     * |   |---------->| W | 4,5 -------->| F |
+        -: 1014:     * +---+           +---+------------->+---+
+        -: 1015:     *
+        -: 1016:     * Of course in case of using a proxy this get really nasty and is not
+        -: 1017:     * standardized at all :-(
+        -: 1018:     */
+    #####: 1019:    if (proxy) {
+        -: 1020:        int len;
+        -: 1021:	char buf[400];
+        -: 1022:
+    #####: 1023:        if (proxyUser != NULL) {
+        -: 1024:	    /*
+        -: 1025:	     * We need proxy auth
+        -: 1026:	     */
+    #####: 1027:	    snprintf(buf, sizeof(buf), "USER %s\r\n", proxyUser);
+    #####: 1028:            buf[sizeof(buf) - 1] = 0;
+    #####: 1029:            len = strlen(buf);
+        -: 1030:#ifdef DEBUG_FTP
+        -: 1031:	    xmlGenericError(xmlGenericErrorContext, "%s", buf);
+        -: 1032:#endif
+    #####: 1033:	    res = send(ctxt->controlFd, SEND_ARG2_CAST buf, len, 0);
+    #####: 1034:	    if (res < 0) {
+    #####: 1035:		__xmlIOErr(XML_FROM_FTP, 0, "send failed");
+    #####: 1036:		closesocket(ctxt->controlFd);
+    #####: 1037:		ctxt->controlFd = INVALID_SOCKET;
+    #####: 1038:	        return(res);
+        -: 1039:	    }
+    #####: 1040:	    res = xmlNanoFTPGetResponse(ctxt);
+    #####: 1041:	    switch (res) {
+    #####: 1042:		case 2:
+    #####: 1043:		    if (proxyPasswd == NULL)
+    #####: 1044:			break;
+        -: 1045:		case 3:
+    #####: 1046:		    if (proxyPasswd != NULL)
+    #####: 1047:			snprintf(buf, sizeof(buf), "PASS %s\r\n", proxyPasswd);
+        -: 1048:		    else
+    #####: 1049:			snprintf(buf, sizeof(buf), "PASS anonymous@\r\n");
+    #####: 1050:                    buf[sizeof(buf) - 1] = 0;
+    #####: 1051:                    len = strlen(buf);
+        -: 1052:#ifdef DEBUG_FTP
+        -: 1053:		    xmlGenericError(xmlGenericErrorContext, "%s", buf);
+        -: 1054:#endif
+    #####: 1055:		    res = send(ctxt->controlFd, SEND_ARG2_CAST buf, len, 0);
+    #####: 1056:		    if (res < 0) {
+    #####: 1057:			__xmlIOErr(XML_FROM_FTP, 0, "send failed");
+    #####: 1058:			closesocket(ctxt->controlFd);
+    #####: 1059:			ctxt->controlFd = INVALID_SOCKET;
+    #####: 1060:			return(res);
+        -: 1061:		    }
+    #####: 1062:		    res = xmlNanoFTPGetResponse(ctxt);
+    #####: 1063:		    if (res > 3) {
+    #####: 1064:			closesocket(ctxt->controlFd);
+    #####: 1065:			ctxt->controlFd = INVALID_SOCKET;
+    #####: 1066:			return(-1);
+        -: 1067:		    }
+    #####: 1068:		    break;
+    #####: 1069:		case 1:
+    #####: 1070:		    break;
+    #####: 1071:		case 4:
+        -: 1072:		case 5:
+        -: 1073:		case -1:
+        -: 1074:		default:
+    #####: 1075:		    closesocket(ctxt->controlFd);
+    #####: 1076:		    ctxt->controlFd = INVALID_SOCKET;
+    #####: 1077:		    return(-1);
+        -: 1078:	    }
+    #####: 1079:	}
+        -: 1080:
+        -: 1081:	/*
+        -: 1082:	 * We assume we don't need more authentication to the proxy
+        -: 1083:	 * and that it succeeded :-\
+        -: 1084:	 */
+    #####: 1085:	switch (proxyType) {
+    #####: 1086:	    case 0:
+        -: 1087:		/* we will try in sequence */
+        -: 1088:	    case 1:
+        -: 1089:		/* Using SITE command */
+    #####: 1090:		snprintf(buf, sizeof(buf), "SITE %s\r\n", ctxt->hostname);
+    #####: 1091:                buf[sizeof(buf) - 1] = 0;
+    #####: 1092:                len = strlen(buf);
+        -: 1093:#ifdef DEBUG_FTP
+        -: 1094:		xmlGenericError(xmlGenericErrorContext, "%s", buf);
+        -: 1095:#endif
+    #####: 1096:		res = send(ctxt->controlFd, SEND_ARG2_CAST buf, len, 0);
+    #####: 1097:		if (res < 0) {
+    #####: 1098:		    __xmlIOErr(XML_FROM_FTP, 0, "send failed");
+    #####: 1099:		    closesocket(ctxt->controlFd); ctxt->controlFd = INVALID_SOCKET;
+    #####: 1100:		    ctxt->controlFd = INVALID_SOCKET;
+    #####: 1101:		    return(res);
+        -: 1102:		}
+    #####: 1103:		res = xmlNanoFTPGetResponse(ctxt);
+    #####: 1104:		if (res == 2) {
+        -: 1105:		    /* we assume it worked :-\ 1 is error for SITE command */
+    #####: 1106:		    proxyType = 1;
+    #####: 1107:		    break;
+        -: 1108:		}
+    #####: 1109:		if (proxyType == 1) {
+    #####: 1110:		    closesocket(ctxt->controlFd); ctxt->controlFd = INVALID_SOCKET;
+    #####: 1111:		    ctxt->controlFd = INVALID_SOCKET;
+    #####: 1112:		    return(-1);
+        -: 1113:		}
+        -: 1114:	    case 2:
+        -: 1115:		/* USER user@host command */
+    #####: 1116:		if (ctxt->user == NULL)
+    #####: 1117:		    snprintf(buf, sizeof(buf), "USER anonymous@%s\r\n",
+        -: 1118:			           ctxt->hostname);
+        -: 1119:		else
+    #####: 1120:		    snprintf(buf, sizeof(buf), "USER %s@%s\r\n",
+        -: 1121:			           ctxt->user, ctxt->hostname);
+    #####: 1122:                buf[sizeof(buf) - 1] = 0;
+    #####: 1123:                len = strlen(buf);
+        -: 1124:#ifdef DEBUG_FTP
+        -: 1125:		xmlGenericError(xmlGenericErrorContext, "%s", buf);
+        -: 1126:#endif
+    #####: 1127:		res = send(ctxt->controlFd, SEND_ARG2_CAST buf, len, 0);
+    #####: 1128:		if (res < 0) {
+    #####: 1129:		    __xmlIOErr(XML_FROM_FTP, 0, "send failed");
+    #####: 1130:		    closesocket(ctxt->controlFd); ctxt->controlFd = INVALID_SOCKET;
+    #####: 1131:		    ctxt->controlFd = INVALID_SOCKET;
+    #####: 1132:		    return(res);
+        -: 1133:		}
+    #####: 1134:		res = xmlNanoFTPGetResponse(ctxt);
+    #####: 1135:		if ((res == 1) || (res == 2)) {
+        -: 1136:		    /* we assume it worked :-\ */
+    #####: 1137:		    proxyType = 2;
+    #####: 1138:		    return(0);
+        -: 1139:		}
+    #####: 1140:		if (ctxt->passwd == NULL)
+    #####: 1141:		    snprintf(buf, sizeof(buf), "PASS anonymous@\r\n");
+        -: 1142:		else
+    #####: 1143:		    snprintf(buf, sizeof(buf), "PASS %s\r\n", ctxt->passwd);
+    #####: 1144:                buf[sizeof(buf) - 1] = 0;
+    #####: 1145:                len = strlen(buf);
+        -: 1146:#ifdef DEBUG_FTP
+        -: 1147:		xmlGenericError(xmlGenericErrorContext, "%s", buf);
+        -: 1148:#endif
+    #####: 1149:		res = send(ctxt->controlFd, SEND_ARG2_CAST buf, len, 0);
+    #####: 1150:		if (res < 0) {
+    #####: 1151:		    __xmlIOErr(XML_FROM_FTP, 0, "send failed");
+    #####: 1152:		    closesocket(ctxt->controlFd); ctxt->controlFd = INVALID_SOCKET;
+    #####: 1153:		    ctxt->controlFd = INVALID_SOCKET;
+    #####: 1154:		    return(res);
+        -: 1155:		}
+    #####: 1156:		res = xmlNanoFTPGetResponse(ctxt);
+    #####: 1157:		if ((res == 1) || (res == 2)) {
+        -: 1158:		    /* we assume it worked :-\ */
+    #####: 1159:		    proxyType = 2;
+    #####: 1160:		    return(0);
+        -: 1161:		}
+    #####: 1162:		if (proxyType == 2) {
+    #####: 1163:		    closesocket(ctxt->controlFd); ctxt->controlFd = INVALID_SOCKET;
+    #####: 1164:		    ctxt->controlFd = INVALID_SOCKET;
+    #####: 1165:		    return(-1);
+        -: 1166:		}
+        -: 1167:	    case 3:
+        -: 1168:		/*
+        -: 1169:		 * If you need support for other Proxy authentication scheme
+        -: 1170:		 * send the code or at least the sequence in use.
+        -: 1171:		 */
+        -: 1172:	    default:
+    #####: 1173:		closesocket(ctxt->controlFd); ctxt->controlFd = INVALID_SOCKET;
+    #####: 1174:		ctxt->controlFd = INVALID_SOCKET;
+    #####: 1175:		return(-1);
+        -: 1176:	}
+        -: 1177:    }
+        -: 1178:    /*
+        -: 1179:     * Non-proxy handling.
+        -: 1180:     */
+    #####: 1181:    res = xmlNanoFTPSendUser(ctxt);
+    #####: 1182:    if (res < 0) {
+    #####: 1183:        closesocket(ctxt->controlFd); ctxt->controlFd = INVALID_SOCKET;
+    #####: 1184:        ctxt->controlFd = INVALID_SOCKET;
+    #####: 1185:	return(-1);
+        -: 1186:    }
+    #####: 1187:    res = xmlNanoFTPGetResponse(ctxt);
+    #####: 1188:    switch (res) {
+    #####: 1189:	case 2:
+    #####: 1190:	    return(0);
+    #####: 1191:	case 3:
+    #####: 1192:	    break;
+    #####: 1193:	case 1:
+        -: 1194:	case 4:
+        -: 1195:	case 5:
+        -: 1196:        case -1:
+        -: 1197:	default:
+    #####: 1198:	    closesocket(ctxt->controlFd); ctxt->controlFd = INVALID_SOCKET;
+    #####: 1199:	    ctxt->controlFd = INVALID_SOCKET;
+    #####: 1200:	    return(-1);
+        -: 1201:    }
+    #####: 1202:    res = xmlNanoFTPSendPasswd(ctxt);
+    #####: 1203:    if (res < 0) {
+    #####: 1204:        closesocket(ctxt->controlFd); ctxt->controlFd = INVALID_SOCKET;
+    #####: 1205:        ctxt->controlFd = INVALID_SOCKET;
+    #####: 1206:	return(-1);
+        -: 1207:    }
+    #####: 1208:    res = xmlNanoFTPGetResponse(ctxt);
+    #####: 1209:    switch (res) {
+    #####: 1210:	case 2:
+    #####: 1211:	    break;
+    #####: 1212:	case 3:
+    #####: 1213:	    __xmlIOErr(XML_FROM_FTP, XML_FTP_ACCNT,
+        -: 1214:		       "FTP server asking for ACCNT on anonymous\n");
+    #####: 1215:	case 1:
+        -: 1216:	case 4:
+        -: 1217:	case 5:
+        -: 1218:        case -1:
+        -: 1219:	default:
+    #####: 1220:	    closesocket(ctxt->controlFd); ctxt->controlFd = INVALID_SOCKET;
+    #####: 1221:	    ctxt->controlFd = INVALID_SOCKET;
+    #####: 1222:	    return(-1);
+        -: 1223:    }
+        -: 1224:
+    #####: 1225:    return(0);
+        -: 1226:}
+        -: 1227:
+        -: 1228:/**
+        -: 1229: * xmlNanoFTPConnectTo:
+        -: 1230: * @server:  an FTP server name
+        -: 1231: * @port:  the port (use 21 if 0)
+        -: 1232: *
+        -: 1233: * Tries to open a control connection to the given server/port
+        -: 1234: *
+        -: 1235: * Returns an fTP context or NULL if it failed
+        -: 1236: */
+        -: 1237:
+        -: 1238:void*
+    #####: 1239:xmlNanoFTPConnectTo(const char *server, int port) {
+        -: 1240:    xmlNanoFTPCtxtPtr ctxt;
+        -: 1241:    int res;
+        -: 1242:
+    #####: 1243:    xmlNanoFTPInit();
+    #####: 1244:    if (server == NULL)
+    #####: 1245:	return(NULL);
+    #####: 1246:    if (port <= 0)
+    #####: 1247:	return(NULL);
+    #####: 1248:    ctxt = (xmlNanoFTPCtxtPtr) xmlNanoFTPNewCtxt(NULL);
+    #####: 1249:    if (ctxt == NULL)
+    #####: 1250:        return(NULL);
+    #####: 1251:    ctxt->hostname = xmlMemStrdup(server);
+    #####: 1252:    if (ctxt->hostname == NULL) {
+    #####: 1253:	xmlNanoFTPFreeCtxt(ctxt);
+    #####: 1254:	return(NULL);
+        -: 1255:    }
+    #####: 1256:    if (port != 0)
+    #####: 1257:	ctxt->port = port;
+    #####: 1258:    res = xmlNanoFTPConnect(ctxt);
+    #####: 1259:    if (res < 0) {
+    #####: 1260:	xmlNanoFTPFreeCtxt(ctxt);
+    #####: 1261:	return(NULL);
+        -: 1262:    }
+    #####: 1263:    return(ctxt);
+        -: 1264:}
+        -: 1265:
+        -: 1266:/**
+        -: 1267: * xmlNanoFTPCwd:
+        -: 1268: * @ctx:  an FTP context
+        -: 1269: * @directory:  a directory on the server
+        -: 1270: *
+        -: 1271: * Tries to change the remote directory
+        -: 1272: *
+        -: 1273: * Returns -1 incase of error, 1 if CWD worked, 0 if it failed
+        -: 1274: */
+        -: 1275:
+        -: 1276:int
+    #####: 1277:xmlNanoFTPCwd(void *ctx, const char *directory) {
+    #####: 1278:    xmlNanoFTPCtxtPtr ctxt = (xmlNanoFTPCtxtPtr) ctx;
+        -: 1279:    char buf[400];
+        -: 1280:    int len;
+        -: 1281:    int res;
+        -: 1282:
+    #####: 1283:    if ((ctxt == NULL) || (ctxt->controlFd == INVALID_SOCKET)) return(-1);
+    #####: 1284:    if (directory == NULL) return 0;
+        -: 1285:
+        -: 1286:    /*
+        -: 1287:     * Expected response code for CWD:
+        -: 1288:     *
+        -: 1289:     * CWD
+        -: 1290:     *     250
+        -: 1291:     *     500, 501, 502, 421, 530, 550
+        -: 1292:     */
+    #####: 1293:    snprintf(buf, sizeof(buf), "CWD %s\r\n", directory);
+    #####: 1294:    buf[sizeof(buf) - 1] = 0;
+    #####: 1295:    len = strlen(buf);
+        -: 1296:#ifdef DEBUG_FTP
+        -: 1297:    xmlGenericError(xmlGenericErrorContext, "%s", buf);
+        -: 1298:#endif
+    #####: 1299:    res = send(ctxt->controlFd, SEND_ARG2_CAST buf, len, 0);
+    #####: 1300:    if (res < 0) {
+    #####: 1301:	__xmlIOErr(XML_FROM_FTP, 0, "send failed");
+    #####: 1302:	return(res);
+        -: 1303:    }
+    #####: 1304:    res = xmlNanoFTPGetResponse(ctxt);
+    #####: 1305:    if (res == 4) {
+    #####: 1306:	return(-1);
+        -: 1307:    }
+    #####: 1308:    if (res == 2) return(1);
+    #####: 1309:    if (res == 5) {
+    #####: 1310:	return(0);
+        -: 1311:    }
+    #####: 1312:    return(0);
+        -: 1313:}
+        -: 1314:
+        -: 1315:/**
+        -: 1316: * xmlNanoFTPDele:
+        -: 1317: * @ctx:  an FTP context
+        -: 1318: * @file:  a file or directory on the server
+        -: 1319: *
+        -: 1320: * Tries to delete an item (file or directory) from server
+        -: 1321: *
+        -: 1322: * Returns -1 incase of error, 1 if DELE worked, 0 if it failed
+        -: 1323: */
+        -: 1324:
+        -: 1325:int
+    #####: 1326:xmlNanoFTPDele(void *ctx, const char *file) {
+    #####: 1327:    xmlNanoFTPCtxtPtr ctxt = (xmlNanoFTPCtxtPtr) ctx;
+        -: 1328:    char buf[400];
+        -: 1329:    int len;
+        -: 1330:    int res;
+        -: 1331:
+    #####: 1332:    if ((ctxt == NULL) || (ctxt->controlFd == INVALID_SOCKET) ||
+    #####: 1333:        (file == NULL)) return(-1);
+        -: 1334:
+        -: 1335:    /*
+        -: 1336:     * Expected response code for DELE:
+        -: 1337:     *
+        -: 1338:     * DELE
+        -: 1339:     *       250
+        -: 1340:     *       450, 550
+        -: 1341:     *       500, 501, 502, 421, 530
+        -: 1342:     */
+        -: 1343:
+    #####: 1344:    snprintf(buf, sizeof(buf), "DELE %s\r\n", file);
+    #####: 1345:    buf[sizeof(buf) - 1] = 0;
+    #####: 1346:    len = strlen(buf);
+        -: 1347:#ifdef DEBUG_FTP
+        -: 1348:    xmlGenericError(xmlGenericErrorContext, "%s", buf);
+        -: 1349:#endif
+    #####: 1350:    res = send(ctxt->controlFd, SEND_ARG2_CAST buf, len, 0);
+    #####: 1351:    if (res < 0) {
+    #####: 1352:	__xmlIOErr(XML_FROM_FTP, 0, "send failed");
+    #####: 1353:	return(res);
+        -: 1354:    }
+    #####: 1355:    res = xmlNanoFTPGetResponse(ctxt);
+    #####: 1356:    if (res == 4) {
+    #####: 1357:	return(-1);
+        -: 1358:    }
+    #####: 1359:    if (res == 2) return(1);
+    #####: 1360:    if (res == 5) {
+    #####: 1361:	return(0);
+        -: 1362:    }
+    #####: 1363:    return(0);
+        -: 1364:}
+        -: 1365:/**
+        -: 1366: * xmlNanoFTPGetConnection:
+        -: 1367: * @ctx:  an FTP context
+        -: 1368: *
+        -: 1369: * Try to open a data connection to the server. Currently only
+        -: 1370: * passive mode is supported.
+        -: 1371: *
+        -: 1372: * Returns -1 incase of error, 0 otherwise
+        -: 1373: */
+        -: 1374:
+        -: 1375:SOCKET
+    #####: 1376:xmlNanoFTPGetConnection(void *ctx) {
+    #####: 1377:    xmlNanoFTPCtxtPtr ctxt = (xmlNanoFTPCtxtPtr) ctx;
+        -: 1378:    char buf[200], *cur;
+        -: 1379:    int len, i;
+        -: 1380:    int res;
+        -: 1381:    unsigned char ad[6], *adp, *portp;
+        -: 1382:    unsigned int temp[6];
+        -: 1383:#ifdef SUPPORT_IP6
+        -: 1384:    struct sockaddr_storage dataAddr;
+        -: 1385:#else
+        -: 1386:    struct sockaddr_in dataAddr;
+        -: 1387:#endif
+        -: 1388:    XML_SOCKLEN_T dataAddrLen;
+        -: 1389:
+    #####: 1390:    if (ctxt == NULL) return INVALID_SOCKET;
+        -: 1391:
+    #####: 1392:    memset (&dataAddr, 0, sizeof(dataAddr));
+        -: 1393:#ifdef SUPPORT_IP6
+    #####: 1394:    if ((ctxt->ftpAddr).ss_family == AF_INET6) {
+    #####: 1395:	ctxt->dataFd = socket (AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+    #####: 1396:	((struct sockaddr_in6 *)&dataAddr)->sin6_family = AF_INET6;
+    #####: 1397:	dataAddrLen = sizeof(struct sockaddr_in6);
+        -: 1398:    } else
+        -: 1399:#endif
+        -: 1400:    {
+    #####: 1401:	ctxt->dataFd = socket (AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    #####: 1402:	((struct sockaddr_in *)&dataAddr)->sin_family = AF_INET;
+    #####: 1403:	dataAddrLen = sizeof (struct sockaddr_in);
+        -: 1404:    }
+        -: 1405:
+    #####: 1406:    if (ctxt->dataFd == INVALID_SOCKET) {
+    #####: 1407:	__xmlIOErr(XML_FROM_FTP, 0, "socket failed");
+    #####: 1408:	return INVALID_SOCKET;
+        -: 1409:    }
+        -: 1410:
+    #####: 1411:    if (ctxt->passive) {
+        -: 1412:#ifdef SUPPORT_IP6
+    #####: 1413:	if ((ctxt->ftpAddr).ss_family == AF_INET6)
+    #####: 1414:	    snprintf (buf, sizeof(buf), "EPSV\r\n");
+        -: 1415:	else
+        -: 1416:#endif
+    #####: 1417:	    snprintf (buf, sizeof(buf), "PASV\r\n");
+    #####: 1418:        len = strlen (buf);
+        -: 1419:#ifdef DEBUG_FTP
+        -: 1420:	xmlGenericError(xmlGenericErrorContext, "%s", buf);
+        -: 1421:#endif
+    #####: 1422:	res = send(ctxt->controlFd, SEND_ARG2_CAST buf, len, 0);
+    #####: 1423:	if (res < 0) {
+    #####: 1424:	    __xmlIOErr(XML_FROM_FTP, 0, "send failed");
+    #####: 1425:	    closesocket(ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+    #####: 1426:	    return INVALID_SOCKET;
+        -: 1427:	}
+    #####: 1428:        res = xmlNanoFTPReadResponse(ctx);
+    #####: 1429:	if (res != 2) {
+    #####: 1430:	    if (res == 5) {
+    #####: 1431:	        closesocket(ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+    #####: 1432:		return INVALID_SOCKET;
+        -: 1433:	    } else {
+        -: 1434:		/*
+        -: 1435:		 * retry with an active connection
+        -: 1436:		 */
+    #####: 1437:	        closesocket(ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+    #####: 1438:	        ctxt->passive = 0;
+        -: 1439:	    }
+        -: 1440:	}
+    #####: 1441:	cur = &ctxt->controlBuf[ctxt->controlBufAnswer];
+    #####: 1442:	while (((*cur < '0') || (*cur > '9')) && *cur != '\0') cur++;
+        -: 1443:#ifdef SUPPORT_IP6
+    #####: 1444:	if ((ctxt->ftpAddr).ss_family == AF_INET6) {
+    #####: 1445:	    if (sscanf (cur, "%u", &temp[0]) != 1) {
+    #####: 1446:		__xmlIOErr(XML_FROM_FTP, XML_FTP_EPSV_ANSWER,
+        -: 1447:			"Invalid answer to EPSV\n");
+    #####: 1448:		if (ctxt->dataFd != INVALID_SOCKET) {
+    #####: 1449:		    closesocket (ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+        -: 1450:		}
+    #####: 1451:		return INVALID_SOCKET;
+        -: 1452:	    }
+    #####: 1453:	    memcpy (&((struct sockaddr_in6 *)&dataAddr)->sin6_addr, &((struct sockaddr_in6 *)&ctxt->ftpAddr)->sin6_addr, sizeof(struct in6_addr));
+    #####: 1454:	    ((struct sockaddr_in6 *)&dataAddr)->sin6_port = htons (temp[0]);
+        -: 1455:	}
+        -: 1456:	else
+        -: 1457:#endif
+        -: 1458:	{
+    #####: 1459:	    if (sscanf (cur, "%u,%u,%u,%u,%u,%u", &temp[0], &temp[1], &temp[2],
+        -: 1460:		&temp[3], &temp[4], &temp[5]) != 6) {
+    #####: 1461:		__xmlIOErr(XML_FROM_FTP, XML_FTP_PASV_ANSWER,
+        -: 1462:			"Invalid answer to PASV\n");
+    #####: 1463:		if (ctxt->dataFd != INVALID_SOCKET) {
+    #####: 1464:		    closesocket (ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+        -: 1465:		}
+    #####: 1466:		return INVALID_SOCKET;
+        -: 1467:	    }
+    #####: 1468:	    for (i=0; i<6; i++) ad[i] = (unsigned char) (temp[i] & 0xff);
+    #####: 1469:	    memcpy (&((struct sockaddr_in *)&dataAddr)->sin_addr, &ad[0], 4);
+    #####: 1470:	    memcpy (&((struct sockaddr_in *)&dataAddr)->sin_port, &ad[4], 2);
+        -: 1471:	}
+        -: 1472:
+    #####: 1473:	if (connect(ctxt->dataFd, (struct sockaddr *) &dataAddr, dataAddrLen) < 0) {
+    #####: 1474:	    __xmlIOErr(XML_FROM_FTP, 0, "Failed to create a data connection");
+    #####: 1475:	    closesocket(ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+    #####: 1476:	    return INVALID_SOCKET;
+        -: 1477:	}
+        -: 1478:    } else {
+    #####: 1479:        getsockname(ctxt->dataFd, (struct sockaddr *) &dataAddr, &dataAddrLen);
+        -: 1480:#ifdef SUPPORT_IP6
+    #####: 1481:	if ((ctxt->ftpAddr).ss_family == AF_INET6)
+    #####: 1482:	    ((struct sockaddr_in6 *)&dataAddr)->sin6_port = 0;
+        -: 1483:	else
+        -: 1484:#endif
+    #####: 1485:	    ((struct sockaddr_in *)&dataAddr)->sin_port = 0;
+        -: 1486:
+    #####: 1487:	if (bind(ctxt->dataFd, (struct sockaddr *) &dataAddr, dataAddrLen) < 0) {
+    #####: 1488:	    __xmlIOErr(XML_FROM_FTP, 0, "bind failed");
+    #####: 1489:	    closesocket(ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+    #####: 1490:	    return INVALID_SOCKET;
+        -: 1491:	}
+    #####: 1492:        getsockname(ctxt->dataFd, (struct sockaddr *) &dataAddr, &dataAddrLen);
+        -: 1493:
+    #####: 1494:	if (listen(ctxt->dataFd, 1) < 0) {
+    #####: 1495:	    __xmlIOErr(XML_FROM_FTP, 0, "listen failed");
+    #####: 1496:	    closesocket(ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+    #####: 1497:	    return INVALID_SOCKET;
+        -: 1498:	}
+        -: 1499:#ifdef SUPPORT_IP6
+    #####: 1500:	if ((ctxt->ftpAddr).ss_family == AF_INET6) {
+        -: 1501:	    char buf6[INET6_ADDRSTRLEN];
+    #####: 1502:	    inet_ntop (AF_INET6, &((struct sockaddr_in6 *)&dataAddr)->sin6_addr,
+        -: 1503:		    buf6, INET6_ADDRSTRLEN);
+    #####: 1504:	    adp = (unsigned char *) buf6;
+    #####: 1505:	    portp = (unsigned char *) &((struct sockaddr_in6 *)&dataAddr)->sin6_port;
+    #####: 1506:	    snprintf (buf, sizeof(buf), "EPRT |2|%s|%s|\r\n", adp, portp);
+        -: 1507:        } else
+        -: 1508:#endif
+        -: 1509:	{
+    #####: 1510:	    adp = (unsigned char *) &((struct sockaddr_in *)&dataAddr)->sin_addr;
+    #####: 1511:	    portp = (unsigned char *) &((struct sockaddr_in *)&dataAddr)->sin_port;
+    #####: 1512:	    snprintf (buf, sizeof(buf), "PORT %d,%d,%d,%d,%d,%d\r\n",
+    #####: 1513:	    adp[0] & 0xff, adp[1] & 0xff, adp[2] & 0xff, adp[3] & 0xff,
+    #####: 1514:	    portp[0] & 0xff, portp[1] & 0xff);
+        -: 1515:	}
+        -: 1516:
+    #####: 1517:        buf[sizeof(buf) - 1] = 0;
+    #####: 1518:        len = strlen(buf);
+        -: 1519:#ifdef DEBUG_FTP
+        -: 1520:	xmlGenericError(xmlGenericErrorContext, "%s", buf);
+        -: 1521:#endif
+        -: 1522:
+    #####: 1523:	res = send(ctxt->controlFd, SEND_ARG2_CAST buf, len, 0);
+    #####: 1524:	if (res < 0) {
+    #####: 1525:	    __xmlIOErr(XML_FROM_FTP, 0, "send failed");
+    #####: 1526:	    closesocket(ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+    #####: 1527:	    return INVALID_SOCKET;
+        -: 1528:	}
+    #####: 1529:        res = xmlNanoFTPGetResponse(ctxt);
+    #####: 1530:	if (res != 2) {
+    #####: 1531:	    closesocket(ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+    #####: 1532:	    return INVALID_SOCKET;
+        -: 1533:        }
+        -: 1534:    }
+    #####: 1535:    return(ctxt->dataFd);
+        -: 1536:
+        -: 1537:}
+        -: 1538:
+        -: 1539:/**
+        -: 1540: * xmlNanoFTPCloseConnection:
+        -: 1541: * @ctx:  an FTP context
+        -: 1542: *
+        -: 1543: * Close the data connection from the server
+        -: 1544: *
+        -: 1545: * Returns -1 incase of error, 0 otherwise
+        -: 1546: */
+        -: 1547:
+        -: 1548:int
+    #####: 1549:xmlNanoFTPCloseConnection(void *ctx) {
+    #####: 1550:    xmlNanoFTPCtxtPtr ctxt = (xmlNanoFTPCtxtPtr) ctx;
+        -: 1551:    int res;
+        -: 1552:    fd_set rfd, efd;
+        -: 1553:    struct timeval tv;
+        -: 1554:
+    #####: 1555:    if ((ctxt == NULL) || (ctxt->controlFd == INVALID_SOCKET)) return(-1);
+        -: 1556:
+    #####: 1557:    closesocket(ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+    #####: 1558:    tv.tv_sec = 15;
+    #####: 1559:    tv.tv_usec = 0;
+    #####: 1560:    FD_ZERO(&rfd);
+    #####: 1561:    FD_SET(ctxt->controlFd, &rfd);
+    #####: 1562:    FD_ZERO(&efd);
+    #####: 1563:    FD_SET(ctxt->controlFd, &efd);
+    #####: 1564:    res = select(ctxt->controlFd + 1, &rfd, NULL, &efd, &tv);
+    #####: 1565:    if (res < 0) {
+        -: 1566:#ifdef DEBUG_FTP
+        -: 1567:	perror("select");
+        -: 1568:#endif
+    #####: 1569:	closesocket(ctxt->controlFd); ctxt->controlFd = INVALID_SOCKET;
+    #####: 1570:	return(-1);
+        -: 1571:    }
+    #####: 1572:    if (res == 0) {
+        -: 1573:#ifdef DEBUG_FTP
+        -: 1574:	xmlGenericError(xmlGenericErrorContext,
+        -: 1575:		"xmlNanoFTPCloseConnection: timeout\n");
+        -: 1576:#endif
+    #####: 1577:	closesocket(ctxt->controlFd); ctxt->controlFd = INVALID_SOCKET;
+        -: 1578:    } else {
+    #####: 1579:	res = xmlNanoFTPGetResponse(ctxt);
+    #####: 1580:	if (res != 2) {
+    #####: 1581:	    closesocket(ctxt->controlFd); ctxt->controlFd = INVALID_SOCKET;
+    #####: 1582:	    return(-1);
+        -: 1583:	}
+        -: 1584:    }
+    #####: 1585:    return(0);
+        -: 1586:}
+        -: 1587:
+        -: 1588:/**
+        -: 1589: * xmlNanoFTPParseList:
+        -: 1590: * @list:  some data listing received from the server
+        -: 1591: * @callback:  the user callback
+        -: 1592: * @userData:  the user callback data
+        -: 1593: *
+        -: 1594: * Parse at most one entry from the listing.
+        -: 1595: *
+        -: 1596: * Returns -1 incase of error, the length of data parsed otherwise
+        -: 1597: */
+        -: 1598:
+        -: 1599:static int
+    #####: 1600:xmlNanoFTPParseList(const char *list, ftpListCallback callback, void *userData) {
+    #####: 1601:    const char *cur = list;
+        -: 1602:    char filename[151];
+        -: 1603:    char attrib[11];
+        -: 1604:    char owner[11];
+        -: 1605:    char group[11];
+        -: 1606:    char month[4];
+    #####: 1607:    int year = 0;
+    #####: 1608:    int minute = 0;
+    #####: 1609:    int hour = 0;
+    #####: 1610:    int day = 0;
+    #####: 1611:    unsigned long size = 0;
+    #####: 1612:    int links = 0;
+        -: 1613:    int i;
+        -: 1614:
+    #####: 1615:    if (!strncmp(cur, "total", 5)) {
+    #####: 1616:        cur += 5;
+    #####: 1617:	while (*cur == ' ') cur++;
+    #####: 1618:	while ((*cur >= '0') && (*cur <= '9'))
+    #####: 1619:	    links = (links * 10) + (*cur++ - '0');
+    #####: 1620:	while ((*cur == ' ') || (*cur == '\n')  || (*cur == '\r'))
+    #####: 1621:	    cur++;
+    #####: 1622:	return(cur - list);
+    #####: 1623:    } else if (*list == '+') {
+    #####: 1624:	return(0);
+        -: 1625:    } else {
+    #####: 1626:	while ((*cur == ' ') || (*cur == '\n')  || (*cur == '\r'))
+    #####: 1627:	    cur++;
+    #####: 1628:	if (*cur == 0) return(0);
+    #####: 1629:	i = 0;
+    #####: 1630:	while (*cur != ' ') {
+    #####: 1631:	    if (i < 10)
+    #####: 1632:		attrib[i++] = *cur;
+    #####: 1633:	    cur++;
+    #####: 1634:	    if (*cur == 0) return(0);
+        -: 1635:	}
+    #####: 1636:	attrib[10] = 0;
+    #####: 1637:	while (*cur == ' ') cur++;
+    #####: 1638:	if (*cur == 0) return(0);
+    #####: 1639:	while ((*cur >= '0') && (*cur <= '9'))
+    #####: 1640:	    links = (links * 10) + (*cur++ - '0');
+    #####: 1641:	while (*cur == ' ') cur++;
+    #####: 1642:	if (*cur == 0) return(0);
+    #####: 1643:	i = 0;
+    #####: 1644:	while (*cur != ' ') {
+    #####: 1645:	    if (i < 10)
+    #####: 1646:		owner[i++] = *cur;
+    #####: 1647:	    cur++;
+    #####: 1648:	    if (*cur == 0) return(0);
+        -: 1649:	}
+    #####: 1650:	owner[i] = 0;
+    #####: 1651:	while (*cur == ' ') cur++;
+    #####: 1652:	if (*cur == 0) return(0);
+    #####: 1653:	i = 0;
+    #####: 1654:	while (*cur != ' ') {
+    #####: 1655:	    if (i < 10)
+    #####: 1656:		group[i++] = *cur;
+    #####: 1657:	    cur++;
+    #####: 1658:	    if (*cur == 0) return(0);
+        -: 1659:	}
+    #####: 1660:	group[i] = 0;
+    #####: 1661:	while (*cur == ' ') cur++;
+    #####: 1662:	if (*cur == 0) return(0);
+    #####: 1663:	while ((*cur >= '0') && (*cur <= '9'))
+    #####: 1664:	    size = (size * 10) + (*cur++ - '0');
+    #####: 1665:	while (*cur == ' ') cur++;
+    #####: 1666:	if (*cur == 0) return(0);
+    #####: 1667:	i = 0;
+    #####: 1668:	while (*cur != ' ') {
+    #####: 1669:	    if (i < 3)
+    #####: 1670:		month[i++] = *cur;
+    #####: 1671:	    cur++;
+    #####: 1672:	    if (*cur == 0) return(0);
+        -: 1673:	}
+    #####: 1674:	month[i] = 0;
+    #####: 1675:	while (*cur == ' ') cur++;
+    #####: 1676:	if (*cur == 0) return(0);
+    #####: 1677:        while ((*cur >= '0') && (*cur <= '9'))
+    #####: 1678:	    day = (day * 10) + (*cur++ - '0');
+    #####: 1679:	while (*cur == ' ') cur++;
+    #####: 1680:	if (*cur == 0) return(0);
+    #####: 1681:	if ((cur[1] == 0) || (cur[2] == 0)) return(0);
+    #####: 1682:	if ((cur[1] == ':') || (cur[2] == ':')) {
+    #####: 1683:	    while ((*cur >= '0') && (*cur <= '9'))
+    #####: 1684:		hour = (hour * 10) + (*cur++ - '0');
+    #####: 1685:	    if (*cur == ':') cur++;
+    #####: 1686:	    while ((*cur >= '0') && (*cur <= '9'))
+    #####: 1687:		minute = (minute * 10) + (*cur++ - '0');
+        -: 1688:	} else {
+    #####: 1689:	    while ((*cur >= '0') && (*cur <= '9'))
+    #####: 1690:		year = (year * 10) + (*cur++ - '0');
+        -: 1691:	}
+    #####: 1692:	while (*cur == ' ') cur++;
+    #####: 1693:	if (*cur == 0) return(0);
+    #####: 1694:	i = 0;
+    #####: 1695:	while ((*cur != '\n')  && (*cur != '\r')) {
+    #####: 1696:	    if (i < 150)
+    #####: 1697:		filename[i++] = *cur;
+    #####: 1698:	    cur++;
+    #####: 1699:	    if (*cur == 0) return(0);
+        -: 1700:	}
+    #####: 1701:	filename[i] = 0;
+    #####: 1702:	if ((*cur != '\n') && (*cur != '\r'))
+    #####: 1703:	    return(0);
+    #####: 1704:	while ((*cur == '\n')  || (*cur == '\r'))
+    #####: 1705:	    cur++;
+        -: 1706:    }
+    #####: 1707:    if (callback != NULL) {
+    #####: 1708:        callback(userData, filename, attrib, owner, group, size, links,
+        -: 1709:		 year, month, day, hour, minute);
+        -: 1710:    }
+    #####: 1711:    return(cur - list);
+        -: 1712:}
+        -: 1713:
+        -: 1714:/**
+        -: 1715: * xmlNanoFTPList:
+        -: 1716: * @ctx:  an FTP context
+        -: 1717: * @callback:  the user callback
+        -: 1718: * @userData:  the user callback data
+        -: 1719: * @filename:  optional files to list
+        -: 1720: *
+        -: 1721: * Do a listing on the server. All files info are passed back
+        -: 1722: * in the callbacks.
+        -: 1723: *
+        -: 1724: * Returns -1 incase of error, 0 otherwise
+        -: 1725: */
+        -: 1726:
+        -: 1727:int
+    #####: 1728:xmlNanoFTPList(void *ctx, ftpListCallback callback, void *userData,
+        -: 1729:	       const char *filename) {
+    #####: 1730:    xmlNanoFTPCtxtPtr ctxt = (xmlNanoFTPCtxtPtr) ctx;
+        -: 1731:    char buf[4096 + 1];
+        -: 1732:    int len, res;
+    #####: 1733:    int indx = 0, base;
+        -: 1734:    fd_set rfd, efd;
+        -: 1735:    struct timeval tv;
+        -: 1736:
+    #####: 1737:    if (ctxt == NULL) return (-1);
+    #####: 1738:    if (filename == NULL) {
+    #####: 1739:        if (xmlNanoFTPCwd(ctxt, ctxt->path) < 1)
+    #####: 1740:	    return(-1);
+    #####: 1741:	ctxt->dataFd = xmlNanoFTPGetConnection(ctxt);
+    #####: 1742:	if (ctxt->dataFd == INVALID_SOCKET)
+    #####: 1743:	    return(-1);
+    #####: 1744:	snprintf(buf, sizeof(buf), "LIST -L\r\n");
+        -: 1745:    } else {
+    #####: 1746:	if (filename[0] != '/') {
+    #####: 1747:	    if (xmlNanoFTPCwd(ctxt, ctxt->path) < 1)
+    #####: 1748:		return(-1);
+        -: 1749:	}
+    #####: 1750:	ctxt->dataFd = xmlNanoFTPGetConnection(ctxt);
+    #####: 1751:	if (ctxt->dataFd == INVALID_SOCKET)
+    #####: 1752:	    return(-1);
+    #####: 1753:	snprintf(buf, sizeof(buf), "LIST -L %s\r\n", filename);
+        -: 1754:    }
+    #####: 1755:    buf[sizeof(buf) - 1] = 0;
+    #####: 1756:    len = strlen(buf);
+        -: 1757:#ifdef DEBUG_FTP
+        -: 1758:    xmlGenericError(xmlGenericErrorContext, "%s", buf);
+        -: 1759:#endif
+    #####: 1760:    res = send(ctxt->controlFd, SEND_ARG2_CAST buf, len, 0);
+    #####: 1761:    if (res < 0) {
+    #####: 1762:	__xmlIOErr(XML_FROM_FTP, 0, "send failed");
+    #####: 1763:	closesocket(ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+    #####: 1764:	return(res);
+        -: 1765:    }
+    #####: 1766:    res = xmlNanoFTPReadResponse(ctxt);
+    #####: 1767:    if (res != 1) {
+    #####: 1768:	closesocket(ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+    #####: 1769:	return(-res);
+        -: 1770:    }
+        -: 1771:
+        -: 1772:    do {
+    #####: 1773:	tv.tv_sec = 1;
+    #####: 1774:	tv.tv_usec = 0;
+    #####: 1775:	FD_ZERO(&rfd);
+    #####: 1776:	FD_SET(ctxt->dataFd, &rfd);
+    #####: 1777:	FD_ZERO(&efd);
+    #####: 1778:	FD_SET(ctxt->dataFd, &efd);
+    #####: 1779:	res = select(ctxt->dataFd + 1, &rfd, NULL, &efd, &tv);
+    #####: 1780:	if (res < 0) {
+        -: 1781:#ifdef DEBUG_FTP
+        -: 1782:	    perror("select");
+        -: 1783:#endif
+    #####: 1784:	    closesocket(ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+    #####: 1785:	    return(-1);
+        -: 1786:	}
+    #####: 1787:	if (res == 0) {
+    #####: 1788:	    res = xmlNanoFTPCheckResponse(ctxt);
+    #####: 1789:	    if (res < 0) {
+    #####: 1790:		closesocket(ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+    #####: 1791:		ctxt->dataFd = INVALID_SOCKET;
+    #####: 1792:		return(-1);
+        -: 1793:	    }
+    #####: 1794:	    if (res == 2) {
+    #####: 1795:		closesocket(ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+    #####: 1796:		return(0);
+        -: 1797:	    }
+        -: 1798:
+    #####: 1799:	    continue;
+        -: 1800:	}
+        -: 1801:
+    #####: 1802:	if ((len = recv(ctxt->dataFd, &buf[indx], sizeof(buf) - (indx + 1), 0)) < 0) {
+    #####: 1803:	    __xmlIOErr(XML_FROM_FTP, 0, "recv");
+    #####: 1804:	    closesocket(ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+    #####: 1805:	    ctxt->dataFd = INVALID_SOCKET;
+    #####: 1806:	    return(-1);
+        -: 1807:	}
+        -: 1808:#ifdef DEBUG_FTP
+        -: 1809:        write(1, &buf[indx], len);
+        -: 1810:#endif
+    #####: 1811:	indx += len;
+    #####: 1812:	buf[indx] = 0;
+    #####: 1813:	base = 0;
+        -: 1814:	do {
+    #####: 1815:	    res = xmlNanoFTPParseList(&buf[base], callback, userData);
+    #####: 1816:	    base += res;
+    #####: 1817:	} while (res > 0);
+        -: 1818:
+    #####: 1819:	memmove(&buf[0], &buf[base], indx - base);
+    #####: 1820:	indx -= base;
+    #####: 1821:    } while (len != 0);
+    #####: 1822:    xmlNanoFTPCloseConnection(ctxt);
+    #####: 1823:    return(0);
+        -: 1824:}
+        -: 1825:
+        -: 1826:/**
+        -: 1827: * xmlNanoFTPGetSocket:
+        -: 1828: * @ctx:  an FTP context
+        -: 1829: * @filename:  the file to retrieve (or NULL if path is in context).
+        -: 1830: *
+        -: 1831: * Initiate fetch of the given file from the server.
+        -: 1832: *
+        -: 1833: * Returns the socket for the data connection, or <0 in case of error
+        -: 1834: */
+        -: 1835:
+        -: 1836:
+        -: 1837:SOCKET
+    #####: 1838:xmlNanoFTPGetSocket(void *ctx, const char *filename) {
+    #####: 1839:    xmlNanoFTPCtxtPtr ctxt = (xmlNanoFTPCtxtPtr) ctx;
+        -: 1840:    char buf[300];
+        -: 1841:    int res, len;
+    #####: 1842:    if (ctx == NULL)
+    #####: 1843:	return INVALID_SOCKET;
+    #####: 1844:    if ((filename == NULL) && (ctxt->path == NULL))
+    #####: 1845:	return INVALID_SOCKET;
+    #####: 1846:    ctxt->dataFd = xmlNanoFTPGetConnection(ctxt);
+    #####: 1847:    if (ctxt->dataFd == INVALID_SOCKET)
+    #####: 1848:	return INVALID_SOCKET;
+        -: 1849:
+    #####: 1850:    snprintf(buf, sizeof(buf), "TYPE I\r\n");
+    #####: 1851:    len = strlen(buf);
+        -: 1852:#ifdef DEBUG_FTP
+        -: 1853:    xmlGenericError(xmlGenericErrorContext, "%s", buf);
+        -: 1854:#endif
+    #####: 1855:    res = send(ctxt->controlFd, SEND_ARG2_CAST buf, len, 0);
+    #####: 1856:    if (res < 0) {
+    #####: 1857:	__xmlIOErr(XML_FROM_FTP, 0, "send failed");
+    #####: 1858:	closesocket(ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+    #####: 1859:	return INVALID_SOCKET;
+        -: 1860:    }
+    #####: 1861:    res = xmlNanoFTPReadResponse(ctxt);
+    #####: 1862:    if (res != 2) {
+    #####: 1863:	closesocket(ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+    #####: 1864:	return INVALID_SOCKET;
+        -: 1865:    }
+    #####: 1866:    if (filename == NULL)
+    #####: 1867:	snprintf(buf, sizeof(buf), "RETR %s\r\n", ctxt->path);
+        -: 1868:    else
+    #####: 1869:	snprintf(buf, sizeof(buf), "RETR %s\r\n", filename);
+    #####: 1870:    buf[sizeof(buf) - 1] = 0;
+    #####: 1871:    len = strlen(buf);
+        -: 1872:#ifdef DEBUG_FTP
+        -: 1873:    xmlGenericError(xmlGenericErrorContext, "%s", buf);
+        -: 1874:#endif
+    #####: 1875:    res = send(ctxt->controlFd, SEND_ARG2_CAST buf, len, 0);
+    #####: 1876:    if (res < 0) {
+    #####: 1877:	__xmlIOErr(XML_FROM_FTP, 0, "send failed");
+    #####: 1878:	closesocket(ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+    #####: 1879:	return INVALID_SOCKET;
+        -: 1880:    }
+    #####: 1881:    res = xmlNanoFTPReadResponse(ctxt);
+    #####: 1882:    if (res != 1) {
+    #####: 1883:	closesocket(ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+    #####: 1884:	return INVALID_SOCKET;
+        -: 1885:    }
+    #####: 1886:    return(ctxt->dataFd);
+        -: 1887:}
+        -: 1888:
+        -: 1889:/**
+        -: 1890: * xmlNanoFTPGet:
+        -: 1891: * @ctx:  an FTP context
+        -: 1892: * @callback:  the user callback
+        -: 1893: * @userData:  the user callback data
+        -: 1894: * @filename:  the file to retrieve
+        -: 1895: *
+        -: 1896: * Fetch the given file from the server. All data are passed back
+        -: 1897: * in the callbacks. The last callback has a size of 0 block.
+        -: 1898: *
+        -: 1899: * Returns -1 incase of error, 0 otherwise
+        -: 1900: */
+        -: 1901:
+        -: 1902:int
+    #####: 1903:xmlNanoFTPGet(void *ctx, ftpDataCallback callback, void *userData,
+        -: 1904:	      const char *filename) {
+    #####: 1905:    xmlNanoFTPCtxtPtr ctxt = (xmlNanoFTPCtxtPtr) ctx;
+        -: 1906:    char buf[4096];
+    #####: 1907:    int len = 0, res;
+        -: 1908:    fd_set rfd;
+        -: 1909:    struct timeval tv;
+        -: 1910:
+    #####: 1911:    if (ctxt == NULL) return(-1);
+    #####: 1912:    if ((filename == NULL) && (ctxt->path == NULL))
+    #####: 1913:	return(-1);
+    #####: 1914:    if (callback == NULL)
+    #####: 1915:	return(-1);
+    #####: 1916:    if (xmlNanoFTPGetSocket(ctxt, filename) == INVALID_SOCKET)
+    #####: 1917:	return(-1);
+        -: 1918:
+        -: 1919:    do {
+    #####: 1920:	tv.tv_sec = 1;
+    #####: 1921:	tv.tv_usec = 0;
+    #####: 1922:	FD_ZERO(&rfd);
+    #####: 1923:	FD_SET(ctxt->dataFd, &rfd);
+    #####: 1924:	res = select(ctxt->dataFd + 1, &rfd, NULL, NULL, &tv);
+    #####: 1925:	if (res < 0) {
+        -: 1926:#ifdef DEBUG_FTP
+        -: 1927:	    perror("select");
+        -: 1928:#endif
+    #####: 1929:	    closesocket(ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+    #####: 1930:	    return(-1);
+        -: 1931:	}
+    #####: 1932:	if (res == 0) {
+    #####: 1933:	    res = xmlNanoFTPCheckResponse(ctxt);
+    #####: 1934:	    if (res < 0) {
+    #####: 1935:		closesocket(ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+    #####: 1936:		ctxt->dataFd = INVALID_SOCKET;
+    #####: 1937:		return(-1);
+        -: 1938:	    }
+    #####: 1939:	    if (res == 2) {
+    #####: 1940:		closesocket(ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+    #####: 1941:		return(0);
+        -: 1942:	    }
+        -: 1943:
+    #####: 1944:	    continue;
+        -: 1945:	}
+    #####: 1946:	if ((len = recv(ctxt->dataFd, buf, sizeof(buf), 0)) < 0) {
+    #####: 1947:	    __xmlIOErr(XML_FROM_FTP, 0, "recv failed");
+    #####: 1948:	    callback(userData, buf, len);
+    #####: 1949:	    closesocket(ctxt->dataFd); ctxt->dataFd = INVALID_SOCKET;
+    #####: 1950:	    return(-1);
+        -: 1951:	}
+    #####: 1952:	callback(userData, buf, len);
+    #####: 1953:    } while (len != 0);
+        -: 1954:
+    #####: 1955:    return(xmlNanoFTPCloseConnection(ctxt));
+        -: 1956:}
+        -: 1957:
+        -: 1958:/**
+        -: 1959: * xmlNanoFTPRead:
+        -: 1960: * @ctx:  the FTP context
+        -: 1961: * @dest:  a buffer
+        -: 1962: * @len:  the buffer length
+        -: 1963: *
+        -: 1964: * This function tries to read @len bytes from the existing FTP connection
+        -: 1965: * and saves them in @dest. This is a blocking call.
+        -: 1966: *
+        -: 1967: * Returns the number of byte read. 0 is an indication of an end of connection.
+        -: 1968: *         -1 indicates a parameter error.
+        -: 1969: */
+        -: 1970:int
+    #####: 1971:xmlNanoFTPRead(void *ctx, void *dest, int len) {
+    #####: 1972:    xmlNanoFTPCtxtPtr ctxt = (xmlNanoFTPCtxtPtr) ctx;
+        -: 1973:
+    #####: 1974:    if (ctx == NULL) return(-1);
+    #####: 1975:    if (ctxt->dataFd == INVALID_SOCKET) return(0);
+    #####: 1976:    if (dest == NULL) return(-1);
+    #####: 1977:    if (len <= 0) return(0);
+        -: 1978:
+    #####: 1979:    len = recv(ctxt->dataFd, dest, len, 0);
+    #####: 1980:    if (len <= 0) {
+    #####: 1981:	if (len < 0)
+    #####: 1982:	    __xmlIOErr(XML_FROM_FTP, 0, "recv failed");
+    #####: 1983:	xmlNanoFTPCloseConnection(ctxt);
+        -: 1984:    }
+        -: 1985:#ifdef DEBUG_FTP
+        -: 1986:    xmlGenericError(xmlGenericErrorContext, "Recvd %d bytes\n", len);
+        -: 1987:#endif
+    #####: 1988:    return(len);
+        -: 1989:}
+        -: 1990:
+        -: 1991:/**
+        -: 1992: * xmlNanoFTPOpen:
+        -: 1993: * @URL: the URL to the resource
+        -: 1994: *
+        -: 1995: * Start to fetch the given ftp:// resource
+        -: 1996: *
+        -: 1997: * Returns an FTP context, or NULL
+        -: 1998: */
+        -: 1999:
+        -: 2000:void*
+    #####: 2001:xmlNanoFTPOpen(const char *URL) {
+        -: 2002:    xmlNanoFTPCtxtPtr ctxt;
+        -: 2003:    SOCKET sock;
+        -: 2004:
+    #####: 2005:    xmlNanoFTPInit();
+    #####: 2006:    if (URL == NULL) return(NULL);
+    #####: 2007:    if (strncmp("ftp://", URL, 6)) return(NULL);
+        -: 2008:
+    #####: 2009:    ctxt = (xmlNanoFTPCtxtPtr) xmlNanoFTPNewCtxt(URL);
+    #####: 2010:    if (ctxt == NULL) return(NULL);
+    #####: 2011:    if (xmlNanoFTPConnect(ctxt) < 0) {
+    #####: 2012:	xmlNanoFTPFreeCtxt(ctxt);
+    #####: 2013:	return(NULL);
+        -: 2014:    }
+    #####: 2015:    sock = xmlNanoFTPGetSocket(ctxt, ctxt->path);
+    #####: 2016:    if (sock == INVALID_SOCKET) {
+    #####: 2017:	xmlNanoFTPFreeCtxt(ctxt);
+    #####: 2018:	return(NULL);
+        -: 2019:    }
+    #####: 2020:    return(ctxt);
+        -: 2021:}
+        -: 2022:
+        -: 2023:/**
+        -: 2024: * xmlNanoFTPClose:
+        -: 2025: * @ctx: an FTP context
+        -: 2026: *
+        -: 2027: * Close the connection and both control and transport
+        -: 2028: *
+        -: 2029: * Returns -1 incase of error, 0 otherwise
+        -: 2030: */
+        -: 2031:
+        -: 2032:int
+    #####: 2033:xmlNanoFTPClose(void *ctx) {
+    #####: 2034:    xmlNanoFTPCtxtPtr ctxt = (xmlNanoFTPCtxtPtr) ctx;
+        -: 2035:
+    #####: 2036:    if (ctxt == NULL)
+    #####: 2037:	return(-1);
+        -: 2038:
+    #####: 2039:    if (ctxt->dataFd != INVALID_SOCKET) {
+    #####: 2040:	closesocket(ctxt->dataFd);
+    #####: 2041:	ctxt->dataFd = INVALID_SOCKET;
+        -: 2042:    }
+    #####: 2043:    if (ctxt->controlFd != INVALID_SOCKET) {
+    #####: 2044:	xmlNanoFTPQuit(ctxt);
+    #####: 2045:	closesocket(ctxt->controlFd);
+    #####: 2046:	ctxt->controlFd = INVALID_SOCKET;
+        -: 2047:    }
+    #####: 2048:    xmlNanoFTPFreeCtxt(ctxt);
+    #####: 2049:    return(0);
+        -: 2050:}
+        -: 2051:
+        -: 2052:#ifdef STANDALONE
+        -: 2053:/************************************************************************
+        -: 2054: *									*
+        -: 2055: *			Basic test in Standalone mode			*
+        -: 2056: *									*
+        -: 2057: ************************************************************************/
+        -: 2058:static
+        -: 2059:void ftpList(void *userData, const char *filename, const char* attrib,
+        -: 2060:	     const char *owner, const char *group, unsigned long size, int links,
+        -: 2061:	     int year, const char *month, int day, int hour, int minute) {
+        -: 2062:    xmlGenericError(xmlGenericErrorContext,
+        -: 2063:	    "%s %s %s %ld %s\n", attrib, owner, group, size, filename);
+        -: 2064:}
+        -: 2065:static
+        -: 2066:void ftpData(void *userData, const char *data, int len) {
+        -: 2067:    if (userData == NULL) return;
+        -: 2068:    if (len <= 0) {
+        -: 2069:	fclose((FILE*)userData);
+        -: 2070:	return;
+        -: 2071:    }
+        -: 2072:    fwrite(data, len, 1, (FILE*)userData);
+        -: 2073:}
+        -: 2074:
+        -: 2075:int main(int argc, char **argv) {
+        -: 2076:    void *ctxt;
+        -: 2077:    FILE *output;
+        -: 2078:    char *tstfile = NULL;
+        -: 2079:
+        -: 2080:    xmlNanoFTPInit();
+        -: 2081:    if (argc > 1) {
+        -: 2082:	ctxt = xmlNanoFTPNewCtxt(argv[1]);
+        -: 2083:	if (xmlNanoFTPConnect(ctxt) < 0) {
+        -: 2084:	    xmlGenericError(xmlGenericErrorContext,
+        -: 2085:		    "Couldn't connect to %s\n", argv[1]);
+        -: 2086:	    exit(1);
+        -: 2087:	}
+        -: 2088:	if (argc > 2)
+        -: 2089:	    tstfile = argv[2];
+        -: 2090:    } else
+        -: 2091:	ctxt = xmlNanoFTPConnectTo("localhost", 0);
+        -: 2092:    if (ctxt == NULL) {
+        -: 2093:        xmlGenericError(xmlGenericErrorContext,
+        -: 2094:		"Couldn't connect to localhost\n");
+        -: 2095:        exit(1);
+        -: 2096:    }
+        -: 2097:    xmlNanoFTPList(ctxt, ftpList, NULL, tstfile);
+        -: 2098:    output = fopen("/tmp/tstdata", "w");
+        -: 2099:    if (output != NULL) {
+        -: 2100:	if (xmlNanoFTPGet(ctxt, ftpData, (void *) output, tstfile) < 0)
+        -: 2101:	    xmlGenericError(xmlGenericErrorContext,
+        -: 2102:		    "Failed to get file\n");
+        -: 2103:
+        -: 2104:    }
+        -: 2105:    xmlNanoFTPClose(ctxt);
+        -: 2106:    xmlMemoryDump();
+        -: 2107:    exit(0);
+        -: 2108:}
+        -: 2109:#endif /* STANDALONE */
+        -: 2110:#else /* !LIBXML_FTP_ENABLED */
+        -: 2111:#ifdef STANDALONE
+        -: 2112:#include <stdio.h>
+        -: 2113:int main(int argc, char **argv) {
+        -: 2114:    xmlGenericError(xmlGenericErrorContext,
+        -: 2115:	    "%s : FTP support not compiled in\n", argv[0]);
+        -: 2116:    return(0);
+        -: 2117:}
+        -: 2118:#endif /* STANDALONE */
+        -: 2119:#endif /* LIBXML_FTP_ENABLED */
+        -: 2120:#define bottom_nanoftp
+        -: 2121:#include "elfgcchack.h"

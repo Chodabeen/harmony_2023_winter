@@ -1,0 +1,6 @@
+<p tsio
+ test 1<st="a&amp;b" tst2="a&ç" tst3:"aª& b">
+a&amp;b
+a&b
+a & b
+</p>n

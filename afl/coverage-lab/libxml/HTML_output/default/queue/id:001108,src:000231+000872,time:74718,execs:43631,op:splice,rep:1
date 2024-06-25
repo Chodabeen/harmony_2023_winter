@@ -1,0 +1,16 @@
+s tst="a&“mp<b" tst2=Ea& b<p tst="z&MmpÄb" tsp tst="z&M<p tst="a&am;b" ts;b" tst2L PUBLIC ="a&b" t2L PUBLIC ="a&b" tst3="a & 
+<S"RIPT lp
+a<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML4.0 Transitional//EN" "http://www.w3.org/TR/REC-html40/strict.dtd">
+<html>
+<head>
+<titDTD Home-xml push mode bug</title>
+</head>
+<body>
+
+<table border="4">
+  <tr>
+    <td bgcolor="white">
+	Foo1
+	<table border="4">
+	  <tr>
+	    <td>Foo2<

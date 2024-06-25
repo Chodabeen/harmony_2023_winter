@@ -1,0 +1,7 @@
+#!/bin/bash
+
+cd libpng && export CFLAGS="-g -fsanitize=memory -static" LDFLAGS="-fsanitize=memory" CC='../../../AFLplusplus/'
+./configure
+make -j$npoc
+
+gcc -o test_pngfix test_pngfix.c

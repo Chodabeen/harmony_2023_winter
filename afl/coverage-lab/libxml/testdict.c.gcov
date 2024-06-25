@@ -1,0 +1,446 @@
+        -:    0:Source:testdict.c
+        -:    0:Programs:38
+        -:    1:#include <string.h>
+        -:    2:#include <libxml/parser.h>
+        -:    3:#include <libxml/dict.h>
+        -:    4:
+        -:    5:/* #define WITH_PRINT */
+        -:    6:
+        -:    7:static const char *seeds1[] = {
+        -:    8:   "a", "b", "c",
+        -:    9:   "d", "e", "f",
+        -:   10:   "g", "h", "i",
+        -:   11:   "j", "k", "l",
+        -:   12:
+        -:   13:   NULL
+        -:   14:};
+        -:   15:
+        -:   16:static const char *seeds2[] = {
+        -:   17:   "m", "n", "o",
+        -:   18:   "p", "q", "r",
+        -:   19:   "s", "t", "u",
+        -:   20:   "v", "w", "x",
+        -:   21:
+        -:   22:   NULL
+        -:   23:};
+        -:   24:
+        -:   25:#define NB_STRINGS_NS 100
+        -:   26:#define NB_STRINGS_MAX 10000
+        -:   27:#define NB_STRINGS_MIN 10
+        -:   28:
+        -:   29:static xmlChar *strings1[NB_STRINGS_MAX];
+        -:   30:static xmlChar *strings2[NB_STRINGS_MAX];
+        -:   31:static const xmlChar *test1[NB_STRINGS_MAX];
+        -:   32:static const xmlChar *test2[NB_STRINGS_MAX];
+        -:   33:static int nbErrors = 0;
+        -:   34:
+    #####:   35:static void fill_strings(void) {
+        -:   36:    int i, j, k;
+        -:   37:
+        -:   38:    /*
+        -:   39:     * That's a bit nasty but the output is fine and it doesn't take hours
+        -:   40:     * there is a small but sufficient number of duplicates, and we have
+        -:   41:     * ":xxx" and full QNames in the last NB_STRINGS_NS values
+        -:   42:     */
+    #####:   43:    for (i = 0; seeds1[i] != NULL; i++) {
+    #####:   44:        strings1[i] = xmlStrdup((const xmlChar *) seeds1[i]);
+    #####:   45:	if (strings1[i] == NULL) {
+    #####:   46:	    fprintf(stderr, "Out of memory while generating strings1\n");
+    #####:   47:	    exit(1);
+        -:   48:	}
+        -:   49:    }
+    #####:   50:    for (j = 0, k = 0;i < NB_STRINGS_MAX - NB_STRINGS_NS;i++,j++) {
+    #####:   51:        strings1[i] = xmlStrncatNew(strings1[j], strings1[k], -1);
+    #####:   52:	if (strings1[i] == NULL) {
+    #####:   53:	    fprintf(stderr, "Out of memory while generating strings1\n");
+    #####:   54:	    exit(1);
+        -:   55:	}
+    #####:   56:	if (j >= 50) {
+    #####:   57:	    j = 0;
+    #####:   58:	    k++;
+        -:   59:	}
+        -:   60:    }
+    #####:   61:    for (j = 0; (j < 50) && (i < NB_STRINGS_MAX); i++, j+=2) {
+    #####:   62:        strings1[i] = xmlStrncatNew(strings1[j], (const xmlChar *) ":", -1);
+    #####:   63:	if (strings1[i] == NULL) {
+    #####:   64:	    fprintf(stderr, "Out of memory while generating strings1\n");
+    #####:   65:	    exit(1);
+        -:   66:	}
+        -:   67:    }
+    #####:   68:    for (j = NB_STRINGS_MAX - NB_STRINGS_NS, k = 0;
+    #####:   69:         i < NB_STRINGS_MAX;i++,j++) {
+    #####:   70:        strings1[i] = xmlStrncatNew(strings1[j], strings1[k], -1);
+    #####:   71:	if (strings1[i] == NULL) {
+    #####:   72:	    fprintf(stderr, "Out of memory while generating strings1\n");
+    #####:   73:	    exit(1);
+        -:   74:	}
+    #####:   75:	k += 3;
+    #####:   76:	if (k >= 50) k = 0;
+        -:   77:    }
+        -:   78:
+        -:   79:    /*
+        -:   80:     * Now do the same with the second pool of strings
+        -:   81:     */
+    #####:   82:    for (i = 0; seeds2[i] != NULL; i++) {
+    #####:   83:        strings2[i] = xmlStrdup((const xmlChar *) seeds2[i]);
+    #####:   84:	if (strings2[i] == NULL) {
+    #####:   85:	    fprintf(stderr, "Out of memory while generating strings2\n");
+    #####:   86:	    exit(1);
+        -:   87:	}
+        -:   88:    }
+    #####:   89:    for (j = 0, k = 0;i < NB_STRINGS_MAX - NB_STRINGS_NS;i++,j++) {
+    #####:   90:        strings2[i] = xmlStrncatNew(strings2[j], strings2[k], -1);
+    #####:   91:	if (strings2[i] == NULL) {
+    #####:   92:	    fprintf(stderr, "Out of memory while generating strings2\n");
+    #####:   93:	    exit(1);
+        -:   94:	}
+    #####:   95:	if (j >= 50) {
+    #####:   96:	    j = 0;
+    #####:   97:	    k++;
+        -:   98:	}
+        -:   99:    }
+    #####:  100:    for (j = 0; (j < 50) && (i < NB_STRINGS_MAX); i++, j+=2) {
+    #####:  101:        strings2[i] = xmlStrncatNew(strings2[j], (const xmlChar *) ":", -1);
+    #####:  102:	if (strings2[i] == NULL) {
+    #####:  103:	    fprintf(stderr, "Out of memory while generating strings2\n");
+    #####:  104:	    exit(1);
+        -:  105:	}
+        -:  106:    }
+    #####:  107:    for (j = NB_STRINGS_MAX - NB_STRINGS_NS, k = 0;
+    #####:  108:         i < NB_STRINGS_MAX;i++,j++) {
+    #####:  109:        strings2[i] = xmlStrncatNew(strings2[j], strings2[k], -1);
+    #####:  110:	if (strings2[i] == NULL) {
+    #####:  111:	    fprintf(stderr, "Out of memory while generating strings2\n");
+    #####:  112:	    exit(1);
+        -:  113:	}
+    #####:  114:	k += 3;
+    #####:  115:	if (k >= 50) k = 0;
+        -:  116:    }
+        -:  117:
+    #####:  118:}
+        -:  119:
+        -:  120:#ifdef WITH_PRINT
+        -:  121:static void print_strings(void) {
+        -:  122:    int i;
+        -:  123:
+        -:  124:    for (i = 0; i < NB_STRINGS_MAX;i++) {
+        -:  125:        printf("%s\n", strings1[i]);
+        -:  126:    }
+        -:  127:    for (i = 0; i < NB_STRINGS_MAX;i++) {
+        -:  128:        printf("%s\n", strings2[i]);
+        -:  129:    }
+        -:  130:}
+        -:  131:#endif
+        -:  132:
+    #####:  133:static void clean_strings(void) {
+        -:  134:    int i;
+        -:  135:
+    #####:  136:    for (i = 0; i < NB_STRINGS_MAX; i++) {
+    #####:  137:        if (strings1[i] != NULL) /* really should not happen */
+    #####:  138:	    xmlFree(strings1[i]);
+        -:  139:    }
+    #####:  140:    for (i = 0; i < NB_STRINGS_MAX; i++) {
+    #####:  141:        if (strings2[i] != NULL) /* really should not happen */
+    #####:  142:	    xmlFree(strings2[i]);
+        -:  143:    }
+    #####:  144:}
+        -:  145:
+        -:  146:/*
+        -:  147: * This tests the sub-dictionary support
+        -:  148: */
+    #####:  149:static int run_test2(xmlDictPtr parent) {
+        -:  150:    int i, j;
+        -:  151:    xmlDictPtr dict;
+    #####:  152:    int ret = 0;
+        -:  153:    xmlChar prefix[40];
+        -:  154:    xmlChar *cur, *pref;
+        -:  155:    const xmlChar *tmp;
+        -:  156:
+    #####:  157:    dict = xmlDictCreateSub(parent);
+    #####:  158:    if (dict == NULL) {
+    #####:  159:	fprintf(stderr, "Out of memory while creating sub-dictionary\n");
+    #####:  160:	exit(1);
+        -:  161:    }
+    #####:  162:    memset(test2, 0, sizeof(test2));
+        -:  163:
+        -:  164:    /*
+        -:  165:     * Fill in NB_STRINGS_MIN, at this point the dictionary should not grow
+        -:  166:     * and we allocate all those doing the fast key computations
+        -:  167:     * All the strings are based on a different seeds subset so we know
+        -:  168:     * they are allocated in the main dictionary, not coming from the parent
+        -:  169:     */
+    #####:  170:    for (i = 0;i < NB_STRINGS_MIN;i++) {
+    #####:  171:        test2[i] = xmlDictLookup(dict, strings2[i], -1);
+    #####:  172:	if (test2[i] == NULL) {
+    #####:  173:	    fprintf(stderr, "Failed lookup for '%s'\n", strings2[i]);
+    #####:  174:	    ret = 1;
+    #####:  175:	    nbErrors++;
+        -:  176:	}
+        -:  177:    }
+    #####:  178:    j = NB_STRINGS_MAX - NB_STRINGS_NS;
+        -:  179:    /* ":foo" like strings2 */
+    #####:  180:    for (i = 0;i < NB_STRINGS_MIN;i++, j++) {
+    #####:  181:        test2[j] = xmlDictLookup(dict, strings2[j], xmlStrlen(strings2[j]));
+    #####:  182:	if (test2[j] == NULL) {
+    #####:  183:	    fprintf(stderr, "Failed lookup for '%s'\n", strings2[j]);
+    #####:  184:	    ret = 1;
+    #####:  185:	    nbErrors++;
+        -:  186:	}
+        -:  187:    }
+        -:  188:    /* "a:foo" like strings2 */
+    #####:  189:    j = NB_STRINGS_MAX - NB_STRINGS_MIN;
+    #####:  190:    for (i = 0;i < NB_STRINGS_MIN;i++, j++) {
+    #####:  191:        test2[j] = xmlDictLookup(dict, strings2[j], xmlStrlen(strings2[j]));
+    #####:  192:	if (test2[j] == NULL) {
+    #####:  193:	    fprintf(stderr, "Failed lookup for '%s'\n", strings2[j]);
+    #####:  194:	    ret = 1;
+    #####:  195:	    nbErrors++;
+        -:  196:	}
+        -:  197:    }
+        -:  198:
+        -:  199:    /*
+        -:  200:     * At this point allocate all the strings
+        -:  201:     * the dictionary will grow in the process, reallocate more string tables
+        -:  202:     * and switch to the better key generator
+        -:  203:     */
+    #####:  204:    for (i = 0;i < NB_STRINGS_MAX;i++) {
+    #####:  205:        if (test2[i] != NULL)
+    #####:  206:	    continue;
+    #####:  207:	test2[i] = xmlDictLookup(dict, strings2[i], -1);
+    #####:  208:	if (test2[i] == NULL) {
+    #####:  209:	    fprintf(stderr, "Failed lookup for '%s'\n", strings2[i]);
+    #####:  210:	    ret = 1;
+    #####:  211:	    nbErrors++;
+        -:  212:	}
+        -:  213:    }
+        -:  214:
+        -:  215:    /*
+        -:  216:     * Now we can start to test things, first that all strings2 belongs to
+        -:  217:     * the dict, and that none of them was actually allocated in the parent
+        -:  218:     */
+    #####:  219:    for (i = 0;i < NB_STRINGS_MAX;i++) {
+    #####:  220:        if (!xmlDictOwns(dict, test2[i])) {
+    #####:  221:	    fprintf(stderr, "Failed ownership failure for '%s'\n",
+        -:  222:	            strings2[i]);
+    #####:  223:	    ret = 1;
+    #####:  224:	    nbErrors++;
+        -:  225:	}
+    #####:  226:        if (xmlDictOwns(parent, test2[i])) {
+    #####:  227:	    fprintf(stderr, "Failed parent ownership failure for '%s'\n",
+        -:  228:	            strings2[i]);
+    #####:  229:	    ret = 1;
+    #####:  230:	    nbErrors++;
+        -:  231:	}
+        -:  232:    }
+        -:  233:
+        -:  234:    /*
+        -:  235:     * Also verify that all strings from the parent are seen from the subdict
+        -:  236:     */
+    #####:  237:    for (i = 0;i < NB_STRINGS_MAX;i++) {
+    #####:  238:        if (!xmlDictOwns(dict, test1[i])) {
+    #####:  239:	    fprintf(stderr, "Failed sub-ownership failure for '%s'\n",
+        -:  240:	            strings1[i]);
+    #####:  241:	    ret = 1;
+    #####:  242:	    nbErrors++;
+        -:  243:	}
+        -:  244:    }
+        -:  245:
+        -:  246:    /*
+        -:  247:     * Then that another lookup to the string in sub will return the same
+        -:  248:     */
+    #####:  249:    for (i = 0;i < NB_STRINGS_MAX;i++) {
+    #####:  250:        if (xmlDictLookup(dict, strings2[i], -1) != test2[i]) {
+    #####:  251:	    fprintf(stderr, "Failed re-lookup check for %d, '%s'\n",
+        -:  252:	            i, strings2[i]);
+    #####:  253:	    ret = 1;
+    #####:  254:	    nbErrors++;
+        -:  255:	}
+        -:  256:    }
+        -:  257:    /*
+        -:  258:     * But also that any lookup for a string in the parent will be provided
+        -:  259:     * as in the parent
+        -:  260:     */
+    #####:  261:    for (i = 0;i < NB_STRINGS_MAX;i++) {
+    #####:  262:        if (xmlDictLookup(dict, strings1[i], -1) != test1[i]) {
+    #####:  263:	    fprintf(stderr, "Failed parent string lookup check for %d, '%s'\n",
+        -:  264:	            i, strings1[i]);
+    #####:  265:	    ret = 1;
+    #####:  266:	    nbErrors++;
+        -:  267:	}
+        -:  268:    }
+        -:  269:
+        -:  270:    /*
+        -:  271:     * check the QName lookups
+        -:  272:     */
+    #####:  273:    for (i = NB_STRINGS_MAX - NB_STRINGS_NS;i < NB_STRINGS_MAX;i++) {
+    #####:  274:        cur = strings2[i];
+    #####:  275:	pref = &prefix[0];
+    #####:  276:	while (*cur != ':') *pref++ = *cur++;
+    #####:  277:	cur++;
+    #####:  278:	*pref = 0;
+    #####:  279:	tmp = xmlDictQLookup(dict, &prefix[0], cur);
+    #####:  280:	if (xmlDictQLookup(dict, &prefix[0], cur) != test2[i]) {
+    #####:  281:	    fprintf(stderr, "Failed lookup check for '%s':'%s'\n",
+        -:  282:	            &prefix[0], cur);
+    #####:  283:            ret = 1;
+    #####:  284:	    nbErrors++;
+        -:  285:	}
+        -:  286:    }
+        -:  287:    /*
+        -:  288:     * check the QName lookups for strings from the parent
+        -:  289:     */
+    #####:  290:    for (i = NB_STRINGS_MAX - NB_STRINGS_NS;i < NB_STRINGS_MAX;i++) {
+    #####:  291:        cur = strings1[i];
+    #####:  292:	pref = &prefix[0];
+    #####:  293:	while (*cur != ':') *pref++ = *cur++;
+    #####:  294:	cur++;
+    #####:  295:	*pref = 0;
+    #####:  296:	tmp = xmlDictQLookup(dict, &prefix[0], cur);
+    #####:  297:	if (xmlDictQLookup(dict, &prefix[0], cur) != test1[i]) {
+    #####:  298:	    fprintf(stderr, "Failed parent lookup check for '%s':'%s'\n",
+        -:  299:	            &prefix[0], cur);
+    #####:  300:            ret = 1;
+    #####:  301:	    nbErrors++;
+        -:  302:	}
+        -:  303:    }
+        -:  304:
+    #####:  305:    xmlDictFree(dict);
+    #####:  306:    return(ret);
+        -:  307:}
+        -:  308:
+        -:  309:/*
+        -:  310: * Test a single dictionary
+        -:  311: */
+    #####:  312:static int run_test1(void) {
+        -:  313:    int i, j;
+        -:  314:    xmlDictPtr dict;
+    #####:  315:    int ret = 0;
+        -:  316:    xmlChar prefix[40];
+        -:  317:    xmlChar *cur, *pref;
+        -:  318:    const xmlChar *tmp;
+        -:  319:
+    #####:  320:    dict = xmlDictCreate();
+    #####:  321:    if (dict == NULL) {
+    #####:  322:	fprintf(stderr, "Out of memory while creating dictionary\n");
+    #####:  323:	exit(1);
+        -:  324:    }
+    #####:  325:    memset(test1, 0, sizeof(test1));
+        -:  326:
+        -:  327:    /*
+        -:  328:     * Fill in NB_STRINGS_MIN, at this point the dictionary should not grow
+        -:  329:     * and we allocate all those doing the fast key computations
+        -:  330:     */
+    #####:  331:    for (i = 0;i < NB_STRINGS_MIN;i++) {
+    #####:  332:        test1[i] = xmlDictLookup(dict, strings1[i], -1);
+    #####:  333:	if (test1[i] == NULL) {
+    #####:  334:	    fprintf(stderr, "Failed lookup for '%s'\n", strings1[i]);
+    #####:  335:	    ret = 1;
+    #####:  336:	    nbErrors++;
+        -:  337:	}
+        -:  338:    }
+    #####:  339:    j = NB_STRINGS_MAX - NB_STRINGS_NS;
+        -:  340:    /* ":foo" like strings1 */
+    #####:  341:    for (i = 0;i < NB_STRINGS_MIN;i++, j++) {
+    #####:  342:        test1[j] = xmlDictLookup(dict, strings1[j], xmlStrlen(strings1[j]));
+    #####:  343:	if (test1[j] == NULL) {
+    #####:  344:	    fprintf(stderr, "Failed lookup for '%s'\n", strings1[j]);
+    #####:  345:	    ret = 1;
+    #####:  346:	    nbErrors++;
+        -:  347:	}
+        -:  348:    }
+        -:  349:    /* "a:foo" like strings1 */
+    #####:  350:    j = NB_STRINGS_MAX - NB_STRINGS_MIN;
+    #####:  351:    for (i = 0;i < NB_STRINGS_MIN;i++, j++) {
+    #####:  352:        test1[j] = xmlDictLookup(dict, strings1[j], xmlStrlen(strings1[j]));
+    #####:  353:	if (test1[j] == NULL) {
+    #####:  354:	    fprintf(stderr, "Failed lookup for '%s'\n", strings1[j]);
+    #####:  355:	    ret = 1;
+    #####:  356:	    nbErrors++;
+        -:  357:	}
+        -:  358:    }
+        -:  359:
+        -:  360:    /*
+        -:  361:     * At this point allocate all the strings
+        -:  362:     * the dictionary will grow in the process, reallocate more string tables
+        -:  363:     * and switch to the better key generator
+        -:  364:     */
+    #####:  365:    for (i = 0;i < NB_STRINGS_MAX;i++) {
+    #####:  366:        if (test1[i] != NULL)
+    #####:  367:	    continue;
+    #####:  368:	test1[i] = xmlDictLookup(dict, strings1[i], -1);
+    #####:  369:	if (test1[i] == NULL) {
+    #####:  370:	    fprintf(stderr, "Failed lookup for '%s'\n", strings1[i]);
+    #####:  371:	    ret = 1;
+    #####:  372:	    nbErrors++;
+        -:  373:	}
+        -:  374:    }
+        -:  375:
+        -:  376:    /*
+        -:  377:     * Now we can start to test things, first that all strings1 belongs to
+        -:  378:     * the dict
+        -:  379:     */
+    #####:  380:    for (i = 0;i < NB_STRINGS_MAX;i++) {
+    #####:  381:        if (!xmlDictOwns(dict, test1[i])) {
+    #####:  382:	    fprintf(stderr, "Failed ownership failure for '%s'\n",
+        -:  383:	            strings1[i]);
+    #####:  384:	    ret = 1;
+    #####:  385:	    nbErrors++;
+        -:  386:	}
+        -:  387:    }
+        -:  388:
+        -:  389:    /*
+        -:  390:     * Then that another lookup to the string will return the same
+        -:  391:     */
+    #####:  392:    for (i = 0;i < NB_STRINGS_MAX;i++) {
+    #####:  393:        if (xmlDictLookup(dict, strings1[i], -1) != test1[i]) {
+    #####:  394:	    fprintf(stderr, "Failed re-lookup check for %d, '%s'\n",
+        -:  395:	            i, strings1[i]);
+    #####:  396:	    ret = 1;
+    #####:  397:	    nbErrors++;
+        -:  398:	}
+        -:  399:    }
+        -:  400:
+        -:  401:    /*
+        -:  402:     * More complex, check the QName lookups
+        -:  403:     */
+    #####:  404:    for (i = NB_STRINGS_MAX - NB_STRINGS_NS;i < NB_STRINGS_MAX;i++) {
+    #####:  405:        cur = strings1[i];
+    #####:  406:	pref = &prefix[0];
+    #####:  407:	while (*cur != ':') *pref++ = *cur++;
+    #####:  408:	cur++;
+    #####:  409:	*pref = 0;
+    #####:  410:	tmp = xmlDictQLookup(dict, &prefix[0], cur);
+    #####:  411:	if (xmlDictQLookup(dict, &prefix[0], cur) != test1[i]) {
+    #####:  412:	    fprintf(stderr, "Failed lookup check for '%s':'%s'\n",
+        -:  413:	            &prefix[0], cur);
+    #####:  414:            ret = 1;
+    #####:  415:	    nbErrors++;
+        -:  416:	}
+        -:  417:    }
+        -:  418:
+    #####:  419:    run_test2(dict);
+        -:  420:
+    #####:  421:    xmlDictFree(dict);
+    #####:  422:    return(ret);
+        -:  423:}
+        -:  424:
+    #####:  425:int main(void)
+        -:  426:{
+        -:  427:    int ret;
+        -:  428:
+    #####:  429:    LIBXML_TEST_VERSION
+    #####:  430:    fill_strings();
+        -:  431:#ifdef WITH_PRINT
+        -:  432:    print_strings();
+        -:  433:#endif
+    #####:  434:    ret = run_test1();
+    #####:  435:    if (ret == 0) {
+    #####:  436:        printf("dictionary tests succeeded %d strings\n", 2 * NB_STRINGS_MAX);
+        -:  437:    } else {
+    #####:  438:        printf("dictionary tests failed with %d errors\n", nbErrors);
+        -:  439:    }
+    #####:  440:    clean_strings();
+    #####:  441:    xmlCleanupParser();
+    #####:  442:    xmlMemoryDump();
+    #####:  443:    return(ret);
+        -:  444:}

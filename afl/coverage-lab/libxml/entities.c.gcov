@@ -1,0 +1,1107 @@
+        -:    0:Source:entities.c
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * entities.c : implementation for the XML entities handling
+        -:    3: *
+        -:    4: * See Copyright for the status of this software.
+        -:    5: *
+        -:    6: * daniel@veillard.com
+        -:    7: */
+        -:    8:
+        -:    9:#define IN_LIBXML
+        -:   10:#include "libxml.h"
+        -:   11:
+        -:   12:#include <string.h>
+        -:   13:#ifdef HAVE_STDLIB_H
+        -:   14:#include <stdlib.h>
+        -:   15:#endif
+        -:   16:#include <libxml/xmlmemory.h>
+        -:   17:#include <libxml/hash.h>
+        -:   18:#include <libxml/entities.h>
+        -:   19:#include <libxml/parser.h>
+        -:   20:#include <libxml/parserInternals.h>
+        -:   21:#include <libxml/xmlerror.h>
+        -:   22:#include <libxml/globals.h>
+        -:   23:#include <libxml/dict.h>
+        -:   24:
+        -:   25:#include "save.h"
+        -:   26:
+        -:   27:/*
+        -:   28: * The XML predefined entities.
+        -:   29: */
+        -:   30:
+        -:   31:static xmlEntity xmlEntityLt = {
+        -:   32:    NULL, XML_ENTITY_DECL, BAD_CAST "lt",
+        -:   33:    NULL, NULL, NULL, NULL, NULL, NULL,
+        -:   34:    BAD_CAST "<", BAD_CAST "<", 1,
+        -:   35:    XML_INTERNAL_PREDEFINED_ENTITY,
+        -:   36:    NULL, NULL, NULL, NULL, 0, 1
+        -:   37:};
+        -:   38:static xmlEntity xmlEntityGt = {
+        -:   39:    NULL, XML_ENTITY_DECL, BAD_CAST "gt",
+        -:   40:    NULL, NULL, NULL, NULL, NULL, NULL,
+        -:   41:    BAD_CAST ">", BAD_CAST ">", 1,
+        -:   42:    XML_INTERNAL_PREDEFINED_ENTITY,
+        -:   43:    NULL, NULL, NULL, NULL, 0, 1
+        -:   44:};
+        -:   45:static xmlEntity xmlEntityAmp = {
+        -:   46:    NULL, XML_ENTITY_DECL, BAD_CAST "amp",
+        -:   47:    NULL, NULL, NULL, NULL, NULL, NULL,
+        -:   48:    BAD_CAST "&", BAD_CAST "&", 1,
+        -:   49:    XML_INTERNAL_PREDEFINED_ENTITY,
+        -:   50:    NULL, NULL, NULL, NULL, 0, 1
+        -:   51:};
+        -:   52:static xmlEntity xmlEntityQuot = {
+        -:   53:    NULL, XML_ENTITY_DECL, BAD_CAST "quot",
+        -:   54:    NULL, NULL, NULL, NULL, NULL, NULL,
+        -:   55:    BAD_CAST "\"", BAD_CAST "\"", 1,
+        -:   56:    XML_INTERNAL_PREDEFINED_ENTITY,
+        -:   57:    NULL, NULL, NULL, NULL, 0, 1
+        -:   58:};
+        -:   59:static xmlEntity xmlEntityApos = {
+        -:   60:    NULL, XML_ENTITY_DECL, BAD_CAST "apos",
+        -:   61:    NULL, NULL, NULL, NULL, NULL, NULL,
+        -:   62:    BAD_CAST "'", BAD_CAST "'", 1,
+        -:   63:    XML_INTERNAL_PREDEFINED_ENTITY,
+        -:   64:    NULL, NULL, NULL, NULL, 0, 1
+        -:   65:};
+        -:   66:
+        -:   67:/**
+        -:   68: * xmlEntitiesErrMemory:
+        -:   69: * @extra:  extra informations
+        -:   70: *
+        -:   71: * Handle an out of memory condition
+        -:   72: */
+        -:   73:static void
+    #####:   74:xmlEntitiesErrMemory(const char *extra)
+        -:   75:{
+    #####:   76:    __xmlSimpleError(XML_FROM_TREE, XML_ERR_NO_MEMORY, NULL, NULL, extra);
+    #####:   77:}
+        -:   78:
+        -:   79:/**
+        -:   80: * xmlEntitiesErr:
+        -:   81: * @code:  the error code
+        -:   82: * @msg:  the message
+        -:   83: *
+        -:   84: * Handle an out of memory condition
+        -:   85: */
+        -:   86:static void
+    #####:   87:xmlEntitiesErr(xmlParserErrors code, const char *msg)
+        -:   88:{
+    #####:   89:    __xmlSimpleError(XML_FROM_TREE, code, NULL, msg, NULL);
+    #####:   90:}
+        -:   91:
+        -:   92:/*
+        -:   93: * xmlFreeEntity : clean-up an entity record.
+        -:   94: */
+        -:   95:static void
+    #####:   96:xmlFreeEntity(xmlEntityPtr entity)
+        -:   97:{
+    #####:   98:    xmlDictPtr dict = NULL;
+        -:   99:
+    #####:  100:    if (entity == NULL)
+    #####:  101:        return;
+        -:  102:
+    #####:  103:    if (entity->doc != NULL)
+    #####:  104:        dict = entity->doc->dict;
+        -:  105:
+        -:  106:
+    #####:  107:    if ((entity->children) && (entity->owner == 1) &&
+    #####:  108:        (entity == (xmlEntityPtr) entity->children->parent))
+    #####:  109:        xmlFreeNodeList(entity->children);
+    #####:  110:    if (dict != NULL) {
+    #####:  111:        if ((entity->name != NULL) && (!xmlDictOwns(dict, entity->name)))
+    #####:  112:            xmlFree((char *) entity->name);
+    #####:  113:        if ((entity->ExternalID != NULL) &&
+    #####:  114:	    (!xmlDictOwns(dict, entity->ExternalID)))
+    #####:  115:            xmlFree((char *) entity->ExternalID);
+    #####:  116:        if ((entity->SystemID != NULL) &&
+    #####:  117:	    (!xmlDictOwns(dict, entity->SystemID)))
+    #####:  118:            xmlFree((char *) entity->SystemID);
+    #####:  119:        if ((entity->URI != NULL) && (!xmlDictOwns(dict, entity->URI)))
+    #####:  120:            xmlFree((char *) entity->URI);
+    #####:  121:        if ((entity->content != NULL)
+    #####:  122:            && (!xmlDictOwns(dict, entity->content)))
+    #####:  123:            xmlFree((char *) entity->content);
+    #####:  124:        if ((entity->orig != NULL) && (!xmlDictOwns(dict, entity->orig)))
+    #####:  125:            xmlFree((char *) entity->orig);
+        -:  126:    } else {
+    #####:  127:        if (entity->name != NULL)
+    #####:  128:            xmlFree((char *) entity->name);
+    #####:  129:        if (entity->ExternalID != NULL)
+    #####:  130:            xmlFree((char *) entity->ExternalID);
+    #####:  131:        if (entity->SystemID != NULL)
+    #####:  132:            xmlFree((char *) entity->SystemID);
+    #####:  133:        if (entity->URI != NULL)
+    #####:  134:            xmlFree((char *) entity->URI);
+    #####:  135:        if (entity->content != NULL)
+    #####:  136:            xmlFree((char *) entity->content);
+    #####:  137:        if (entity->orig != NULL)
+    #####:  138:            xmlFree((char *) entity->orig);
+        -:  139:    }
+    #####:  140:    xmlFree(entity);
+        -:  141:}
+        -:  142:
+        -:  143:/*
+        -:  144: * xmlCreateEntity:
+        -:  145: *
+        -:  146: * internal routine doing the entity node strutures allocations
+        -:  147: */
+        -:  148:static xmlEntityPtr
+    #####:  149:xmlCreateEntity(xmlDictPtr dict, const xmlChar *name, int type,
+        -:  150:	        const xmlChar *ExternalID, const xmlChar *SystemID,
+        -:  151:	        const xmlChar *content) {
+        -:  152:    xmlEntityPtr ret;
+        -:  153:
+    #####:  154:    ret = (xmlEntityPtr) xmlMalloc(sizeof(xmlEntity));
+    #####:  155:    if (ret == NULL) {
+    #####:  156:        xmlEntitiesErrMemory("xmlCreateEntity: malloc failed");
+    #####:  157:	return(NULL);
+        -:  158:    }
+    #####:  159:    memset(ret, 0, sizeof(xmlEntity));
+    #####:  160:    ret->type = XML_ENTITY_DECL;
+    #####:  161:    ret->checked = 0;
+        -:  162:
+        -:  163:    /*
+        -:  164:     * fill the structure.
+        -:  165:     */
+    #####:  166:    ret->etype = (xmlEntityType) type;
+    #####:  167:    if (dict == NULL) {
+    #####:  168:	ret->name = xmlStrdup(name);
+    #####:  169:	if (ExternalID != NULL)
+    #####:  170:	    ret->ExternalID = xmlStrdup(ExternalID);
+    #####:  171:	if (SystemID != NULL)
+    #####:  172:	    ret->SystemID = xmlStrdup(SystemID);
+        -:  173:    } else {
+    #####:  174:        ret->name = xmlDictLookup(dict, name, -1);
+    #####:  175:	if (ExternalID != NULL)
+    #####:  176:	    ret->ExternalID = xmlDictLookup(dict, ExternalID, -1);
+    #####:  177:	if (SystemID != NULL)
+    #####:  178:	    ret->SystemID = xmlDictLookup(dict, SystemID, -1);
+        -:  179:    }
+    #####:  180:    if (content != NULL) {
+    #####:  181:        ret->length = xmlStrlen(content);
+    #####:  182:	if ((dict != NULL) && (ret->length < 5))
+    #####:  183:	    ret->content = (xmlChar *)
+    #####:  184:	                   xmlDictLookup(dict, content, ret->length);
+        -:  185:	else
+    #####:  186:	    ret->content = xmlStrndup(content, ret->length);
+        -:  187:     } else {
+    #####:  188:        ret->length = 0;
+    #####:  189:        ret->content = NULL;
+        -:  190:    }
+    #####:  191:    ret->URI = NULL; /* to be computed by the layer knowing
+        -:  192:			the defining entity */
+    #####:  193:    ret->orig = NULL;
+    #####:  194:    ret->owner = 0;
+        -:  195:
+    #####:  196:    return(ret);
+        -:  197:}
+        -:  198:
+        -:  199:/*
+        -:  200: * xmlAddEntity : register a new entity for an entities table.
+        -:  201: */
+        -:  202:static xmlEntityPtr
+    #####:  203:xmlAddEntity(xmlDtdPtr dtd, const xmlChar *name, int type,
+        -:  204:	  const xmlChar *ExternalID, const xmlChar *SystemID,
+        -:  205:	  const xmlChar *content) {
+    #####:  206:    xmlDictPtr dict = NULL;
+    #####:  207:    xmlEntitiesTablePtr table = NULL;
+        -:  208:    xmlEntityPtr ret;
+        -:  209:
+    #####:  210:    if (name == NULL)
+    #####:  211:	return(NULL);
+    #####:  212:    if (dtd == NULL)
+    #####:  213:	return(NULL);
+    #####:  214:    if (dtd->doc != NULL)
+    #####:  215:        dict = dtd->doc->dict;
+        -:  216:
+    #####:  217:    switch (type) {
+    #####:  218:        case XML_INTERNAL_GENERAL_ENTITY:
+        -:  219:        case XML_EXTERNAL_GENERAL_PARSED_ENTITY:
+        -:  220:        case XML_EXTERNAL_GENERAL_UNPARSED_ENTITY:
+    #####:  221:	    if (dtd->entities == NULL)
+    #####:  222:		dtd->entities = xmlHashCreateDict(0, dict);
+    #####:  223:	    table = dtd->entities;
+    #####:  224:	    break;
+    #####:  225:        case XML_INTERNAL_PARAMETER_ENTITY:
+        -:  226:        case XML_EXTERNAL_PARAMETER_ENTITY:
+    #####:  227:	    if (dtd->pentities == NULL)
+    #####:  228:		dtd->pentities = xmlHashCreateDict(0, dict);
+    #####:  229:	    table = dtd->pentities;
+    #####:  230:	    break;
+    #####:  231:        case XML_INTERNAL_PREDEFINED_ENTITY:
+    #####:  232:	    return(NULL);
+        -:  233:    }
+    #####:  234:    if (table == NULL)
+    #####:  235:	return(NULL);
+    #####:  236:    ret = xmlCreateEntity(dict, name, type, ExternalID, SystemID, content);
+    #####:  237:    if (ret == NULL)
+    #####:  238:        return(NULL);
+    #####:  239:    ret->doc = dtd->doc;
+        -:  240:
+    #####:  241:    if (xmlHashAddEntry(table, name, ret)) {
+        -:  242:	/*
+        -:  243:	 * entity was already defined at another level.
+        -:  244:	 */
+    #####:  245:        xmlFreeEntity(ret);
+    #####:  246:	return(NULL);
+        -:  247:    }
+    #####:  248:    return(ret);
+        -:  249:}
+        -:  250:
+        -:  251:/**
+        -:  252: * xmlGetPredefinedEntity:
+        -:  253: * @name:  the entity name
+        -:  254: *
+        -:  255: * Check whether this name is an predefined entity.
+        -:  256: *
+        -:  257: * Returns NULL if not, otherwise the entity
+        -:  258: */
+        -:  259:xmlEntityPtr
+    #####:  260:xmlGetPredefinedEntity(const xmlChar *name) {
+    #####:  261:    if (name == NULL) return(NULL);
+    #####:  262:    switch (name[0]) {
+    #####:  263:        case 'l':
+    #####:  264:	    if (xmlStrEqual(name, BAD_CAST "lt"))
+    #####:  265:	        return(&xmlEntityLt);
+    #####:  266:	    break;
+    #####:  267:        case 'g':
+    #####:  268:	    if (xmlStrEqual(name, BAD_CAST "gt"))
+    #####:  269:	        return(&xmlEntityGt);
+    #####:  270:	    break;
+    #####:  271:        case 'a':
+    #####:  272:	    if (xmlStrEqual(name, BAD_CAST "amp"))
+    #####:  273:	        return(&xmlEntityAmp);
+    #####:  274:	    if (xmlStrEqual(name, BAD_CAST "apos"))
+    #####:  275:	        return(&xmlEntityApos);
+    #####:  276:	    break;
+    #####:  277:        case 'q':
+    #####:  278:	    if (xmlStrEqual(name, BAD_CAST "quot"))
+    #####:  279:	        return(&xmlEntityQuot);
+    #####:  280:	    break;
+    #####:  281:	default:
+    #####:  282:	    break;
+        -:  283:    }
+    #####:  284:    return(NULL);
+        -:  285:}
+        -:  286:
+        -:  287:/**
+        -:  288: * xmlAddDtdEntity:
+        -:  289: * @doc:  the document
+        -:  290: * @name:  the entity name
+        -:  291: * @type:  the entity type XML_xxx_yyy_ENTITY
+        -:  292: * @ExternalID:  the entity external ID if available
+        -:  293: * @SystemID:  the entity system ID if available
+        -:  294: * @content:  the entity content
+        -:  295: *
+        -:  296: * Register a new entity for this document DTD external subset.
+        -:  297: *
+        -:  298: * Returns a pointer to the entity or NULL in case of error
+        -:  299: */
+        -:  300:xmlEntityPtr
+    #####:  301:xmlAddDtdEntity(xmlDocPtr doc, const xmlChar *name, int type,
+        -:  302:	        const xmlChar *ExternalID, const xmlChar *SystemID,
+        -:  303:		const xmlChar *content) {
+        -:  304:    xmlEntityPtr ret;
+        -:  305:    xmlDtdPtr dtd;
+        -:  306:
+    #####:  307:    if (doc == NULL) {
+    #####:  308:	xmlEntitiesErr(XML_DTD_NO_DOC,
+        -:  309:	        "xmlAddDtdEntity: document is NULL");
+    #####:  310:	return(NULL);
+        -:  311:    }
+    #####:  312:    if (doc->extSubset == NULL) {
+    #####:  313:	xmlEntitiesErr(XML_DTD_NO_DTD,
+        -:  314:	        "xmlAddDtdEntity: document without external subset");
+    #####:  315:	return(NULL);
+        -:  316:    }
+    #####:  317:    dtd = doc->extSubset;
+    #####:  318:    ret = xmlAddEntity(dtd, name, type, ExternalID, SystemID, content);
+    #####:  319:    if (ret == NULL) return(NULL);
+        -:  320:
+        -:  321:    /*
+        -:  322:     * Link it to the DTD
+        -:  323:     */
+    #####:  324:    ret->parent = dtd;
+    #####:  325:    ret->doc = dtd->doc;
+    #####:  326:    if (dtd->last == NULL) {
+    #####:  327:	dtd->children = dtd->last = (xmlNodePtr) ret;
+        -:  328:    } else {
+    #####:  329:        dtd->last->next = (xmlNodePtr) ret;
+    #####:  330:	ret->prev = dtd->last;
+    #####:  331:	dtd->last = (xmlNodePtr) ret;
+        -:  332:    }
+    #####:  333:    return(ret);
+        -:  334:}
+        -:  335:
+        -:  336:/**
+        -:  337: * xmlAddDocEntity:
+        -:  338: * @doc:  the document
+        -:  339: * @name:  the entity name
+        -:  340: * @type:  the entity type XML_xxx_yyy_ENTITY
+        -:  341: * @ExternalID:  the entity external ID if available
+        -:  342: * @SystemID:  the entity system ID if available
+        -:  343: * @content:  the entity content
+        -:  344: *
+        -:  345: * Register a new entity for this document.
+        -:  346: *
+        -:  347: * Returns a pointer to the entity or NULL in case of error
+        -:  348: */
+        -:  349:xmlEntityPtr
+    #####:  350:xmlAddDocEntity(xmlDocPtr doc, const xmlChar *name, int type,
+        -:  351:	        const xmlChar *ExternalID, const xmlChar *SystemID,
+        -:  352:	        const xmlChar *content) {
+        -:  353:    xmlEntityPtr ret;
+        -:  354:    xmlDtdPtr dtd;
+        -:  355:
+    #####:  356:    if (doc == NULL) {
+    #####:  357:	xmlEntitiesErr(XML_DTD_NO_DOC,
+        -:  358:	        "xmlAddDocEntity: document is NULL");
+    #####:  359:	return(NULL);
+        -:  360:    }
+    #####:  361:    if (doc->intSubset == NULL) {
+    #####:  362:	xmlEntitiesErr(XML_DTD_NO_DTD,
+        -:  363:	        "xmlAddDocEntity: document without internal subset");
+    #####:  364:	return(NULL);
+        -:  365:    }
+    #####:  366:    dtd = doc->intSubset;
+    #####:  367:    ret = xmlAddEntity(dtd, name, type, ExternalID, SystemID, content);
+    #####:  368:    if (ret == NULL) return(NULL);
+        -:  369:
+        -:  370:    /*
+        -:  371:     * Link it to the DTD
+        -:  372:     */
+    #####:  373:    ret->parent = dtd;
+    #####:  374:    ret->doc = dtd->doc;
+    #####:  375:    if (dtd->last == NULL) {
+    #####:  376:	dtd->children = dtd->last = (xmlNodePtr) ret;
+        -:  377:    } else {
+    #####:  378:	dtd->last->next = (xmlNodePtr) ret;
+    #####:  379:	ret->prev = dtd->last;
+    #####:  380:	dtd->last = (xmlNodePtr) ret;
+        -:  381:    }
+    #####:  382:    return(ret);
+        -:  383:}
+        -:  384:
+        -:  385:/**
+        -:  386: * xmlNewEntity:
+        -:  387: * @doc:  the document
+        -:  388: * @name:  the entity name
+        -:  389: * @type:  the entity type XML_xxx_yyy_ENTITY
+        -:  390: * @ExternalID:  the entity external ID if available
+        -:  391: * @SystemID:  the entity system ID if available
+        -:  392: * @content:  the entity content
+        -:  393: *
+        -:  394: * Create a new entity, this differs from xmlAddDocEntity() that if
+        -:  395: * the document is NULL or has no internal subset defined, then an
+        -:  396: * unlinked entity structure will be returned, it is then the responsability
+        -:  397: * of the caller to link it to the document later or free it when not needed
+        -:  398: * anymore.
+        -:  399: *
+        -:  400: * Returns a pointer to the entity or NULL in case of error
+        -:  401: */
+        -:  402:xmlEntityPtr
+    #####:  403:xmlNewEntity(xmlDocPtr doc, const xmlChar *name, int type,
+        -:  404:	     const xmlChar *ExternalID, const xmlChar *SystemID,
+        -:  405:	     const xmlChar *content) {
+        -:  406:    xmlEntityPtr ret;
+        -:  407:    xmlDictPtr dict;
+        -:  408:
+    #####:  409:    if ((doc != NULL) && (doc->intSubset != NULL)) {
+    #####:  410:	return(xmlAddDocEntity(doc, name, type, ExternalID, SystemID, content));
+        -:  411:    }
+    #####:  412:    if (doc != NULL)
+    #####:  413:        dict = doc->dict;
+        -:  414:    else
+    #####:  415:        dict = NULL;
+    #####:  416:    ret = xmlCreateEntity(dict, name, type, ExternalID, SystemID, content);
+    #####:  417:    if (ret == NULL)
+    #####:  418:        return(NULL);
+    #####:  419:    ret->doc = doc;
+    #####:  420:    return(ret);
+        -:  421:}
+        -:  422:
+        -:  423:/**
+        -:  424: * xmlGetEntityFromTable:
+        -:  425: * @table:  an entity table
+        -:  426: * @name:  the entity name
+        -:  427: * @parameter:  look for parameter entities
+        -:  428: *
+        -:  429: * Do an entity lookup in the table.
+        -:  430: * returns the corresponding parameter entity, if found.
+        -:  431: *
+        -:  432: * Returns A pointer to the entity structure or NULL if not found.
+        -:  433: */
+        -:  434:static xmlEntityPtr
+    #####:  435:xmlGetEntityFromTable(xmlEntitiesTablePtr table, const xmlChar *name) {
+    #####:  436:    return((xmlEntityPtr) xmlHashLookup(table, name));
+        -:  437:}
+        -:  438:
+        -:  439:/**
+        -:  440: * xmlGetParameterEntity:
+        -:  441: * @doc:  the document referencing the entity
+        -:  442: * @name:  the entity name
+        -:  443: *
+        -:  444: * Do an entity lookup in the internal and external subsets and
+        -:  445: * returns the corresponding parameter entity, if found.
+        -:  446: *
+        -:  447: * Returns A pointer to the entity structure or NULL if not found.
+        -:  448: */
+        -:  449:xmlEntityPtr
+    #####:  450:xmlGetParameterEntity(xmlDocPtr doc, const xmlChar *name) {
+        -:  451:    xmlEntitiesTablePtr table;
+        -:  452:    xmlEntityPtr ret;
+        -:  453:
+    #####:  454:    if (doc == NULL)
+    #####:  455:	return(NULL);
+    #####:  456:    if ((doc->intSubset != NULL) && (doc->intSubset->pentities != NULL)) {
+    #####:  457:	table = (xmlEntitiesTablePtr) doc->intSubset->pentities;
+    #####:  458:	ret = xmlGetEntityFromTable(table, name);
+    #####:  459:	if (ret != NULL)
+    #####:  460:	    return(ret);
+        -:  461:    }
+    #####:  462:    if ((doc->extSubset != NULL) && (doc->extSubset->pentities != NULL)) {
+    #####:  463:	table = (xmlEntitiesTablePtr) doc->extSubset->pentities;
+    #####:  464:	return(xmlGetEntityFromTable(table, name));
+        -:  465:    }
+    #####:  466:    return(NULL);
+        -:  467:}
+        -:  468:
+        -:  469:/**
+        -:  470: * xmlGetDtdEntity:
+        -:  471: * @doc:  the document referencing the entity
+        -:  472: * @name:  the entity name
+        -:  473: *
+        -:  474: * Do an entity lookup in the DTD entity hash table and
+        -:  475: * returns the corresponding entity, if found.
+        -:  476: * Note: the first argument is the document node, not the DTD node.
+        -:  477: *
+        -:  478: * Returns A pointer to the entity structure or NULL if not found.
+        -:  479: */
+        -:  480:xmlEntityPtr
+    #####:  481:xmlGetDtdEntity(xmlDocPtr doc, const xmlChar *name) {
+        -:  482:    xmlEntitiesTablePtr table;
+        -:  483:
+    #####:  484:    if (doc == NULL)
+    #####:  485:	return(NULL);
+    #####:  486:    if ((doc->extSubset != NULL) && (doc->extSubset->entities != NULL)) {
+    #####:  487:	table = (xmlEntitiesTablePtr) doc->extSubset->entities;
+    #####:  488:	return(xmlGetEntityFromTable(table, name));
+        -:  489:    }
+    #####:  490:    return(NULL);
+        -:  491:}
+        -:  492:
+        -:  493:/**
+        -:  494: * xmlGetDocEntity:
+        -:  495: * @doc:  the document referencing the entity
+        -:  496: * @name:  the entity name
+        -:  497: *
+        -:  498: * Do an entity lookup in the document entity hash table and
+        -:  499: * returns the corresponding entity, otherwise a lookup is done
+        -:  500: * in the predefined entities too.
+        -:  501: *
+        -:  502: * Returns A pointer to the entity structure or NULL if not found.
+        -:  503: */
+        -:  504:xmlEntityPtr
+    #####:  505:xmlGetDocEntity(const xmlDoc *doc, const xmlChar *name) {
+        -:  506:    xmlEntityPtr cur;
+        -:  507:    xmlEntitiesTablePtr table;
+        -:  508:
+    #####:  509:    if (doc != NULL) {
+    #####:  510:	if ((doc->intSubset != NULL) && (doc->intSubset->entities != NULL)) {
+    #####:  511:	    table = (xmlEntitiesTablePtr) doc->intSubset->entities;
+    #####:  512:	    cur = xmlGetEntityFromTable(table, name);
+    #####:  513:	    if (cur != NULL)
+    #####:  514:		return(cur);
+        -:  515:	}
+    #####:  516:	if (doc->standalone != 1) {
+    #####:  517:	    if ((doc->extSubset != NULL) &&
+    #####:  518:		(doc->extSubset->entities != NULL)) {
+    #####:  519:		table = (xmlEntitiesTablePtr) doc->extSubset->entities;
+    #####:  520:		cur = xmlGetEntityFromTable(table, name);
+    #####:  521:		if (cur != NULL)
+    #####:  522:		    return(cur);
+        -:  523:	    }
+        -:  524:	}
+        -:  525:    }
+    #####:  526:    return(xmlGetPredefinedEntity(name));
+        -:  527:}
+        -:  528:
+        -:  529:/*
+        -:  530: * Macro used to grow the current buffer.
+        -:  531: */
+        -:  532:#define growBufferReentrant() {						\
+        -:  533:    xmlChar *tmp;                                                       \
+        -:  534:    size_t new_size = buffer_size * 2;                                  \
+        -:  535:    if (new_size < buffer_size) goto mem_error;                         \
+        -:  536:    tmp = (xmlChar *) xmlRealloc(buffer, new_size);	                \
+        -:  537:    if (tmp == NULL) goto mem_error;                                    \
+        -:  538:    buffer = tmp;							\
+        -:  539:    buffer_size = new_size;						\
+        -:  540:}
+        -:  541:
+        -:  542:/**
+        -:  543: * xmlEncodeEntitiesInternal:
+        -:  544: * @doc:  the document containing the string
+        -:  545: * @input:  A string to convert to XML.
+        -:  546: * @attr: are we handling an atrbute value
+        -:  547: *
+        -:  548: * Do a global encoding of a string, replacing the predefined entities
+        -:  549: * and non ASCII values with their entities and CharRef counterparts.
+        -:  550: * Contrary to xmlEncodeEntities, this routine is reentrant, and result
+        -:  551: * must be deallocated.
+        -:  552: *
+        -:  553: * Returns A newly allocated string with the substitution done.
+        -:  554: */
+        -:  555:static xmlChar *
+       12:  556:xmlEncodeEntitiesInternal(xmlDocPtr doc, const xmlChar *input, int attr) {
+       12:  557:    const xmlChar *cur = input;
+       12:  558:    xmlChar *buffer = NULL;
+       12:  559:    xmlChar *out = NULL;
+       12:  560:    size_t buffer_size = 0;
+       12:  561:    int html = 0;
+        -:  562:
+       12:  563:    if (input == NULL) return(NULL);
+       12:  564:    if (doc != NULL)
+       12:  565:        html = (doc->type == XML_HTML_DOCUMENT_NODE);
+        -:  566:
+        -:  567:    /*
+        -:  568:     * allocate an translation buffer.
+        -:  569:     */
+       12:  570:    buffer_size = 1000;
+       12:  571:    buffer = (xmlChar *) xmlMalloc(buffer_size * sizeof(xmlChar));
+       12:  572:    if (buffer == NULL) {
+    #####:  573:        xmlEntitiesErrMemory("xmlEncodeEntities: malloc failed");
+    #####:  574:	return(NULL);
+        -:  575:    }
+       12:  576:    out = buffer;
+        -:  577:
+       82:  578:    while (*cur != '\0') {
+       58:  579:        size_t indx = out - buffer;
+       58:  580:        if (indx + 100 > buffer_size) {
+        -:  581:
+    #####:  582:	    growBufferReentrant();
+    #####:  583:	    out = &buffer[indx];
+        -:  584:	}
+        -:  585:
+        -:  586:	/*
+        -:  587:	 * By default one have to encode at least '<', '>', '"' and '&' !
+        -:  588:	 */
+       58:  589:	if (*cur == '<') {
+        -:  590:	    const xmlChar *end;
+        -:  591:
+        -:  592:	    /*
+        -:  593:	     * Special handling of server side include in HTML attributes
+        -:  594:	     */
+        4:  595:	    if (html && attr &&
+        2:  596:	        (cur[1] == '!') && (cur[2] == '-') && (cur[3] == '-') &&
+        -:  597:	        ((end = xmlStrstr(cur, BAD_CAST "-->")) != NULL)) {
+    #####:  598:	        while (cur != end) {
+    #####:  599:		    *out++ = *cur++;
+    #####:  600:		    indx = out - buffer;
+    #####:  601:		    if (indx + 100 > buffer_size) {
+    #####:  602:			growBufferReentrant();
+    #####:  603:			out = &buffer[indx];
+        -:  604:		    }
+        -:  605:		}
+    #####:  606:		*out++ = *cur++;
+    #####:  607:		*out++ = *cur++;
+    #####:  608:		*out++ = *cur++;
+    #####:  609:		continue;
+        -:  610:	    }
+        2:  611:	    *out++ = '&';
+        2:  612:	    *out++ = 'l';
+        2:  613:	    *out++ = 't';
+        2:  614:	    *out++ = ';';
+       56:  615:	} else if (*cur == '>') {
+        2:  616:	    *out++ = '&';
+        2:  617:	    *out++ = 'g';
+        2:  618:	    *out++ = 't';
+        2:  619:	    *out++ = ';';
+       54:  620:	} else if (*cur == '&') {
+        -:  621:	    /*
+        -:  622:	     * Special handling of &{...} construct from HTML 4, see
+        -:  623:	     * http://www.w3.org/TR/html401/appendix/notes.html#h-B.7.1
+        -:  624:	     */
+    #####:  625:	    if (html && attr && (cur[1] == '{') &&
+    #####:  626:	        (strchr((const char *) cur, '}'))) {
+    #####:  627:	        while (*cur != '}') {
+    #####:  628:		    *out++ = *cur++;
+    #####:  629:		    indx = out - buffer;
+    #####:  630:		    if (indx + 100 > buffer_size) {
+    #####:  631:			growBufferReentrant();
+    #####:  632:			out = &buffer[indx];
+        -:  633:		    }
+        -:  634:		}
+    #####:  635:		*out++ = *cur++;
+    #####:  636:		continue;
+        -:  637:	    }
+    #####:  638:	    *out++ = '&';
+    #####:  639:	    *out++ = 'a';
+    #####:  640:	    *out++ = 'm';
+    #####:  641:	    *out++ = 'p';
+    #####:  642:	    *out++ = ';';
+       62:  643:	} else if (((*cur >= 0x20) && (*cur < 0x80)) ||
+        8:  644:	    (*cur == '\n') || (*cur == '\t') || ((html) && (*cur == '\r'))) {
+        -:  645:	    /*
+        -:  646:	     * default case, just copy !
+        -:  647:	     */
+       54:  648:	    *out++ = *cur;
+    #####:  649:	} else if (*cur >= 0x80) {
+    #####:  650:	    if (((doc != NULL) && (doc->encoding != NULL)) || (html)) {
+        -:  651:		/*
+        -:  652:		 * Bjørn Reese <br@sseusa.com> provided the patch
+        -:  653:	        xmlChar xc;
+        -:  654:	        xc = (*cur & 0x3F) << 6;
+        -:  655:	        if (cur[1] != 0) {
+        -:  656:		    xc += *(++cur) & 0x3F;
+        -:  657:		    *out++ = xc;
+        -:  658:	        } else
+        -:  659:		 */
+    #####:  660:		*out++ = *cur;
+        -:  661:	    } else {
+        -:  662:		/*
+        -:  663:		 * We assume we have UTF-8 input.
+        -:  664:		 */
+        -:  665:		char buf[11], *ptr;
+    #####:  666:		int val = 0, l = 1;
+        -:  667:
+    #####:  668:		if (*cur < 0xC0) {
+    #####:  669:		    xmlEntitiesErr(XML_CHECK_NOT_UTF8,
+        -:  670:			    "xmlEncodeEntities: input not UTF-8");
+    #####:  671:		    if (doc != NULL)
+    #####:  672:			doc->encoding = xmlStrdup(BAD_CAST "ISO-8859-1");
+    #####:  673:		    snprintf(buf, sizeof(buf), "&#%d;", *cur);
+    #####:  674:		    buf[sizeof(buf) - 1] = 0;
+    #####:  675:		    ptr = buf;
+    #####:  676:		    while (*ptr != 0) *out++ = *ptr++;
+    #####:  677:		    cur++;
+    #####:  678:		    continue;
+    #####:  679:		} else if (*cur < 0xE0) {
+    #####:  680:                    val = (cur[0]) & 0x1F;
+    #####:  681:		    val <<= 6;
+    #####:  682:		    val |= (cur[1]) & 0x3F;
+    #####:  683:		    l = 2;
+    #####:  684:		} else if (*cur < 0xF0) {
+    #####:  685:                    val = (cur[0]) & 0x0F;
+    #####:  686:		    val <<= 6;
+    #####:  687:		    val |= (cur[1]) & 0x3F;
+    #####:  688:		    val <<= 6;
+    #####:  689:		    val |= (cur[2]) & 0x3F;
+    #####:  690:		    l = 3;
+    #####:  691:		} else if (*cur < 0xF8) {
+    #####:  692:                    val = (cur[0]) & 0x07;
+    #####:  693:		    val <<= 6;
+    #####:  694:		    val |= (cur[1]) & 0x3F;
+    #####:  695:		    val <<= 6;
+    #####:  696:		    val |= (cur[2]) & 0x3F;
+    #####:  697:		    val <<= 6;
+    #####:  698:		    val |= (cur[3]) & 0x3F;
+    #####:  699:		    l = 4;
+        -:  700:		}
+    #####:  701:		if ((l == 1) || (!IS_CHAR(val))) {
+    #####:  702:		    xmlEntitiesErr(XML_ERR_INVALID_CHAR,
+        -:  703:			"xmlEncodeEntities: char out of range\n");
+    #####:  704:		    if (doc != NULL)
+    #####:  705:			doc->encoding = xmlStrdup(BAD_CAST "ISO-8859-1");
+    #####:  706:		    snprintf(buf, sizeof(buf), "&#%d;", *cur);
+    #####:  707:		    buf[sizeof(buf) - 1] = 0;
+    #####:  708:		    ptr = buf;
+    #####:  709:		    while (*ptr != 0) *out++ = *ptr++;
+    #####:  710:		    cur++;
+    #####:  711:		    continue;
+        -:  712:		}
+        -:  713:		/*
+        -:  714:		 * We could do multiple things here. Just save as a char ref
+        -:  715:		 */
+    #####:  716:		snprintf(buf, sizeof(buf), "&#x%X;", val);
+    #####:  717:		buf[sizeof(buf) - 1] = 0;
+    #####:  718:		ptr = buf;
+    #####:  719:		while (*ptr != 0) *out++ = *ptr++;
+    #####:  720:		cur += l;
+    #####:  721:		continue;
+        -:  722:	    }
+    #####:  723:	} else if (IS_BYTE_CHAR(*cur)) {
+        -:  724:	    char buf[11], *ptr;
+        -:  725:
+    #####:  726:	    snprintf(buf, sizeof(buf), "&#%d;", *cur);
+    #####:  727:	    buf[sizeof(buf) - 1] = 0;
+    #####:  728:            ptr = buf;
+    #####:  729:	    while (*ptr != 0) *out++ = *ptr++;
+        -:  730:	}
+       58:  731:	cur++;
+        -:  732:    }
+       12:  733:    *out = 0;
+       12:  734:    return(buffer);
+        -:  735:
+    #####:  736:mem_error:
+    #####:  737:    xmlEntitiesErrMemory("xmlEncodeEntities: realloc failed");
+    #####:  738:    xmlFree(buffer);
+    #####:  739:    return(NULL);
+        -:  740:}
+        -:  741:
+        -:  742:/**
+        -:  743: * xmlEncodeAttributeEntities:
+        -:  744: * @doc:  the document containing the string
+        -:  745: * @input:  A string to convert to XML.
+        -:  746: *
+        -:  747: * Do a global encoding of a string, replacing the predefined entities
+        -:  748: * and non ASCII values with their entities and CharRef counterparts for
+        -:  749: * attribute values.
+        -:  750: *
+        -:  751: * Returns A newly allocated string with the substitution done.
+        -:  752: */
+        -:  753:xmlChar *
+        4:  754:xmlEncodeAttributeEntities(xmlDocPtr doc, const xmlChar *input) {
+        4:  755:    return xmlEncodeEntitiesInternal(doc, input, 1);
+        -:  756:}
+        -:  757:
+        -:  758:/**
+        -:  759: * xmlEncodeEntitiesReentrant:
+        -:  760: * @doc:  the document containing the string
+        -:  761: * @input:  A string to convert to XML.
+        -:  762: *
+        -:  763: * Do a global encoding of a string, replacing the predefined entities
+        -:  764: * and non ASCII values with their entities and CharRef counterparts.
+        -:  765: * Contrary to xmlEncodeEntities, this routine is reentrant, and result
+        -:  766: * must be deallocated.
+        -:  767: *
+        -:  768: * Returns A newly allocated string with the substitution done.
+        -:  769: */
+        -:  770:xmlChar *
+        8:  771:xmlEncodeEntitiesReentrant(xmlDocPtr doc, const xmlChar *input) {
+        8:  772:    return xmlEncodeEntitiesInternal(doc, input, 0);
+        -:  773:}
+        -:  774:
+        -:  775:/**
+        -:  776: * xmlEncodeSpecialChars:
+        -:  777: * @doc:  the document containing the string
+        -:  778: * @input:  A string to convert to XML.
+        -:  779: *
+        -:  780: * Do a global encoding of a string, replacing the predefined entities
+        -:  781: * this routine is reentrant, and result must be deallocated.
+        -:  782: *
+        -:  783: * Returns A newly allocated string with the substitution done.
+        -:  784: */
+        -:  785:xmlChar *
+    #####:  786:xmlEncodeSpecialChars(const xmlDoc *doc ATTRIBUTE_UNUSED, const xmlChar *input) {
+    #####:  787:    const xmlChar *cur = input;
+    #####:  788:    xmlChar *buffer = NULL;
+    #####:  789:    xmlChar *out = NULL;
+    #####:  790:    size_t buffer_size = 0;
+    #####:  791:    if (input == NULL) return(NULL);
+        -:  792:
+        -:  793:    /*
+        -:  794:     * allocate an translation buffer.
+        -:  795:     */
+    #####:  796:    buffer_size = 1000;
+    #####:  797:    buffer = (xmlChar *) xmlMalloc(buffer_size * sizeof(xmlChar));
+    #####:  798:    if (buffer == NULL) {
+    #####:  799:        xmlEntitiesErrMemory("xmlEncodeSpecialChars: malloc failed");
+    #####:  800:	return(NULL);
+        -:  801:    }
+    #####:  802:    out = buffer;
+        -:  803:
+    #####:  804:    while (*cur != '\0') {
+    #####:  805:        size_t indx = out - buffer;
+    #####:  806:        if (indx + 10 > buffer_size) {
+        -:  807:
+    #####:  808:	    growBufferReentrant();
+    #####:  809:	    out = &buffer[indx];
+        -:  810:	}
+        -:  811:
+        -:  812:	/*
+        -:  813:	 * By default one have to encode at least '<', '>', '"' and '&' !
+        -:  814:	 */
+    #####:  815:	if (*cur == '<') {
+    #####:  816:	    *out++ = '&';
+    #####:  817:	    *out++ = 'l';
+    #####:  818:	    *out++ = 't';
+    #####:  819:	    *out++ = ';';
+    #####:  820:	} else if (*cur == '>') {
+    #####:  821:	    *out++ = '&';
+    #####:  822:	    *out++ = 'g';
+    #####:  823:	    *out++ = 't';
+    #####:  824:	    *out++ = ';';
+    #####:  825:	} else if (*cur == '&') {
+    #####:  826:	    *out++ = '&';
+    #####:  827:	    *out++ = 'a';
+    #####:  828:	    *out++ = 'm';
+    #####:  829:	    *out++ = 'p';
+    #####:  830:	    *out++ = ';';
+    #####:  831:	} else if (*cur == '"') {
+    #####:  832:	    *out++ = '&';
+    #####:  833:	    *out++ = 'q';
+    #####:  834:	    *out++ = 'u';
+    #####:  835:	    *out++ = 'o';
+    #####:  836:	    *out++ = 't';
+    #####:  837:	    *out++ = ';';
+    #####:  838:	} else if (*cur == '\r') {
+    #####:  839:	    *out++ = '&';
+    #####:  840:	    *out++ = '#';
+    #####:  841:	    *out++ = '1';
+    #####:  842:	    *out++ = '3';
+    #####:  843:	    *out++ = ';';
+        -:  844:	} else {
+        -:  845:	    /*
+        -:  846:	     * Works because on UTF-8, all extended sequences cannot
+        -:  847:	     * result in bytes in the ASCII range.
+        -:  848:	     */
+    #####:  849:	    *out++ = *cur;
+        -:  850:	}
+    #####:  851:	cur++;
+        -:  852:    }
+    #####:  853:    *out = 0;
+    #####:  854:    return(buffer);
+        -:  855:
+    #####:  856:mem_error:
+    #####:  857:    xmlEntitiesErrMemory("xmlEncodeSpecialChars: realloc failed");
+    #####:  858:    xmlFree(buffer);
+    #####:  859:    return(NULL);
+        -:  860:}
+        -:  861:
+        -:  862:/**
+        -:  863: * xmlCreateEntitiesTable:
+        -:  864: *
+        -:  865: * create and initialize an empty entities hash table.
+        -:  866: * This really doesn't make sense and should be deprecated
+        -:  867: *
+        -:  868: * Returns the xmlEntitiesTablePtr just created or NULL in case of error.
+        -:  869: */
+        -:  870:xmlEntitiesTablePtr
+    #####:  871:xmlCreateEntitiesTable(void) {
+    #####:  872:    return((xmlEntitiesTablePtr) xmlHashCreate(0));
+        -:  873:}
+        -:  874:
+        -:  875:/**
+        -:  876: * xmlFreeEntityWrapper:
+        -:  877: * @entity:  An entity
+        -:  878: * @name:  its name
+        -:  879: *
+        -:  880: * Deallocate the memory used by an entities in the hash table.
+        -:  881: */
+        -:  882:static void
+    #####:  883:xmlFreeEntityWrapper(xmlEntityPtr entity,
+        -:  884:	               const xmlChar *name ATTRIBUTE_UNUSED) {
+    #####:  885:    if (entity != NULL)
+    #####:  886:	xmlFreeEntity(entity);
+    #####:  887:}
+        -:  888:
+        -:  889:/**
+        -:  890: * xmlFreeEntitiesTable:
+        -:  891: * @table:  An entity table
+        -:  892: *
+        -:  893: * Deallocate the memory used by an entities hash table.
+        -:  894: */
+        -:  895:void
+    #####:  896:xmlFreeEntitiesTable(xmlEntitiesTablePtr table) {
+    #####:  897:    xmlHashFree(table, (xmlHashDeallocator) xmlFreeEntityWrapper);
+    #####:  898:}
+        -:  899:
+        -:  900:#ifdef LIBXML_TREE_ENABLED
+        -:  901:/**
+        -:  902: * xmlCopyEntity:
+        -:  903: * @ent:  An entity
+        -:  904: *
+        -:  905: * Build a copy of an entity
+        -:  906: *
+        -:  907: * Returns the new xmlEntitiesPtr or NULL in case of error.
+        -:  908: */
+        -:  909:static xmlEntityPtr
+    #####:  910:xmlCopyEntity(xmlEntityPtr ent) {
+        -:  911:    xmlEntityPtr cur;
+        -:  912:
+    #####:  913:    cur = (xmlEntityPtr) xmlMalloc(sizeof(xmlEntity));
+    #####:  914:    if (cur == NULL) {
+    #####:  915:        xmlEntitiesErrMemory("xmlCopyEntity:: malloc failed");
+    #####:  916:	return(NULL);
+        -:  917:    }
+    #####:  918:    memset(cur, 0, sizeof(xmlEntity));
+    #####:  919:    cur->type = XML_ENTITY_DECL;
+        -:  920:
+    #####:  921:    cur->etype = ent->etype;
+    #####:  922:    if (ent->name != NULL)
+    #####:  923:	cur->name = xmlStrdup(ent->name);
+    #####:  924:    if (ent->ExternalID != NULL)
+    #####:  925:	cur->ExternalID = xmlStrdup(ent->ExternalID);
+    #####:  926:    if (ent->SystemID != NULL)
+    #####:  927:	cur->SystemID = xmlStrdup(ent->SystemID);
+    #####:  928:    if (ent->content != NULL)
+    #####:  929:	cur->content = xmlStrdup(ent->content);
+    #####:  930:    if (ent->orig != NULL)
+    #####:  931:	cur->orig = xmlStrdup(ent->orig);
+    #####:  932:    if (ent->URI != NULL)
+    #####:  933:	cur->URI = xmlStrdup(ent->URI);
+    #####:  934:    return(cur);
+        -:  935:}
+        -:  936:
+        -:  937:/**
+        -:  938: * xmlCopyEntitiesTable:
+        -:  939: * @table:  An entity table
+        -:  940: *
+        -:  941: * Build a copy of an entity table.
+        -:  942: *
+        -:  943: * Returns the new xmlEntitiesTablePtr or NULL in case of error.
+        -:  944: */
+        -:  945:xmlEntitiesTablePtr
+    #####:  946:xmlCopyEntitiesTable(xmlEntitiesTablePtr table) {
+    #####:  947:    return(xmlHashCopy(table, (xmlHashCopier) xmlCopyEntity));
+        -:  948:}
+        -:  949:#endif /* LIBXML_TREE_ENABLED */
+        -:  950:
+        -:  951:#ifdef LIBXML_OUTPUT_ENABLED
+        -:  952:
+        -:  953:/**
+        -:  954: * xmlDumpEntityContent:
+        -:  955: * @buf:  An XML buffer.
+        -:  956: * @content:  The entity content.
+        -:  957: *
+        -:  958: * This will dump the quoted string value, taking care of the special
+        -:  959: * treatment required by %
+        -:  960: */
+        -:  961:static void
+    #####:  962:xmlDumpEntityContent(xmlBufferPtr buf, const xmlChar *content) {
+    #####:  963:    if (buf->alloc == XML_BUFFER_ALLOC_IMMUTABLE) return;
+    #####:  964:    if (xmlStrchr(content, '%')) {
+        -:  965:        const xmlChar * base, *cur;
+        -:  966:
+    #####:  967:	xmlBufferCCat(buf, "\"");
+    #####:  968:	base = cur = content;
+    #####:  969:	while (*cur != 0) {
+    #####:  970:	    if (*cur == '"') {
+    #####:  971:		if (base != cur)
+    #####:  972:		    xmlBufferAdd(buf, base, cur - base);
+    #####:  973:		xmlBufferAdd(buf, BAD_CAST "&quot;", 6);
+    #####:  974:		cur++;
+    #####:  975:		base = cur;
+    #####:  976:	    } else if (*cur == '%') {
+    #####:  977:		if (base != cur)
+    #####:  978:		    xmlBufferAdd(buf, base, cur - base);
+    #####:  979:		xmlBufferAdd(buf, BAD_CAST "&#x25;", 6);
+    #####:  980:		cur++;
+    #####:  981:		base = cur;
+        -:  982:	    } else {
+    #####:  983:		cur++;
+        -:  984:	    }
+        -:  985:	}
+    #####:  986:	if (base != cur)
+    #####:  987:	    xmlBufferAdd(buf, base, cur - base);
+    #####:  988:	xmlBufferCCat(buf, "\"");
+        -:  989:    } else {
+    #####:  990:        xmlBufferWriteQuotedString(buf, content);
+        -:  991:    }
+        -:  992:}
+        -:  993:
+        -:  994:/**
+        -:  995: * xmlDumpEntityDecl:
+        -:  996: * @buf:  An XML buffer.
+        -:  997: * @ent:  An entity table
+        -:  998: *
+        -:  999: * This will dump the content of the entity table as an XML DTD definition
+        -: 1000: */
+        -: 1001:void
+    #####: 1002:xmlDumpEntityDecl(xmlBufferPtr buf, xmlEntityPtr ent) {
+    #####: 1003:    if ((buf == NULL) || (ent == NULL)) return;
+    #####: 1004:    switch (ent->etype) {
+    #####: 1005:	case XML_INTERNAL_GENERAL_ENTITY:
+    #####: 1006:	    xmlBufferWriteChar(buf, "<!ENTITY ");
+    #####: 1007:	    xmlBufferWriteCHAR(buf, ent->name);
+    #####: 1008:	    xmlBufferWriteChar(buf, " ");
+    #####: 1009:	    if (ent->orig != NULL)
+    #####: 1010:		xmlBufferWriteQuotedString(buf, ent->orig);
+        -: 1011:	    else
+    #####: 1012:		xmlDumpEntityContent(buf, ent->content);
+    #####: 1013:	    xmlBufferWriteChar(buf, ">\n");
+    #####: 1014:	    break;
+    #####: 1015:	case XML_EXTERNAL_GENERAL_PARSED_ENTITY:
+    #####: 1016:	    xmlBufferWriteChar(buf, "<!ENTITY ");
+    #####: 1017:	    xmlBufferWriteCHAR(buf, ent->name);
+    #####: 1018:	    if (ent->ExternalID != NULL) {
+    #####: 1019:		 xmlBufferWriteChar(buf, " PUBLIC ");
+    #####: 1020:		 xmlBufferWriteQuotedString(buf, ent->ExternalID);
+    #####: 1021:		 xmlBufferWriteChar(buf, " ");
+    #####: 1022:		 xmlBufferWriteQuotedString(buf, ent->SystemID);
+        -: 1023:	    } else {
+    #####: 1024:		 xmlBufferWriteChar(buf, " SYSTEM ");
+    #####: 1025:		 xmlBufferWriteQuotedString(buf, ent->SystemID);
+        -: 1026:	    }
+    #####: 1027:	    xmlBufferWriteChar(buf, ">\n");
+    #####: 1028:	    break;
+    #####: 1029:	case XML_EXTERNAL_GENERAL_UNPARSED_ENTITY:
+    #####: 1030:	    xmlBufferWriteChar(buf, "<!ENTITY ");
+    #####: 1031:	    xmlBufferWriteCHAR(buf, ent->name);
+    #####: 1032:	    if (ent->ExternalID != NULL) {
+    #####: 1033:		 xmlBufferWriteChar(buf, " PUBLIC ");
+    #####: 1034:		 xmlBufferWriteQuotedString(buf, ent->ExternalID);
+    #####: 1035:		 xmlBufferWriteChar(buf, " ");
+    #####: 1036:		 xmlBufferWriteQuotedString(buf, ent->SystemID);
+        -: 1037:	    } else {
+    #####: 1038:		 xmlBufferWriteChar(buf, " SYSTEM ");
+    #####: 1039:		 xmlBufferWriteQuotedString(buf, ent->SystemID);
+        -: 1040:	    }
+    #####: 1041:	    if (ent->content != NULL) { /* Should be true ! */
+    #####: 1042:		xmlBufferWriteChar(buf, " NDATA ");
+    #####: 1043:		if (ent->orig != NULL)
+    #####: 1044:		    xmlBufferWriteCHAR(buf, ent->orig);
+        -: 1045:		else
+    #####: 1046:		    xmlBufferWriteCHAR(buf, ent->content);
+        -: 1047:	    }
+    #####: 1048:	    xmlBufferWriteChar(buf, ">\n");
+    #####: 1049:	    break;
+    #####: 1050:	case XML_INTERNAL_PARAMETER_ENTITY:
+    #####: 1051:	    xmlBufferWriteChar(buf, "<!ENTITY % ");
+    #####: 1052:	    xmlBufferWriteCHAR(buf, ent->name);
+    #####: 1053:	    xmlBufferWriteChar(buf, " ");
+    #####: 1054:	    if (ent->orig == NULL)
+    #####: 1055:		xmlDumpEntityContent(buf, ent->content);
+        -: 1056:	    else
+    #####: 1057:		xmlBufferWriteQuotedString(buf, ent->orig);
+    #####: 1058:	    xmlBufferWriteChar(buf, ">\n");
+    #####: 1059:	    break;
+    #####: 1060:	case XML_EXTERNAL_PARAMETER_ENTITY:
+    #####: 1061:	    xmlBufferWriteChar(buf, "<!ENTITY % ");
+    #####: 1062:	    xmlBufferWriteCHAR(buf, ent->name);
+    #####: 1063:	    if (ent->ExternalID != NULL) {
+    #####: 1064:		 xmlBufferWriteChar(buf, " PUBLIC ");
+    #####: 1065:		 xmlBufferWriteQuotedString(buf, ent->ExternalID);
+    #####: 1066:		 xmlBufferWriteChar(buf, " ");
+    #####: 1067:		 xmlBufferWriteQuotedString(buf, ent->SystemID);
+        -: 1068:	    } else {
+    #####: 1069:		 xmlBufferWriteChar(buf, " SYSTEM ");
+    #####: 1070:		 xmlBufferWriteQuotedString(buf, ent->SystemID);
+        -: 1071:	    }
+    #####: 1072:	    xmlBufferWriteChar(buf, ">\n");
+    #####: 1073:	    break;
+    #####: 1074:	default:
+    #####: 1075:	    xmlEntitiesErr(XML_DTD_UNKNOWN_ENTITY,
+        -: 1076:		"xmlDumpEntitiesDecl: internal: unknown type entity type");
+        -: 1077:    }
+        -: 1078:}
+        -: 1079:
+        -: 1080:/**
+        -: 1081: * xmlDumpEntityDeclScan:
+        -: 1082: * @ent:  An entity table
+        -: 1083: * @buf:  An XML buffer.
+        -: 1084: *
+        -: 1085: * When using the hash table scan function, arguments need to be reversed
+        -: 1086: */
+        -: 1087:static void
+    #####: 1088:xmlDumpEntityDeclScan(xmlEntityPtr ent, xmlBufferPtr buf) {
+    #####: 1089:    xmlDumpEntityDecl(buf, ent);
+    #####: 1090:}
+        -: 1091:
+        -: 1092:/**
+        -: 1093: * xmlDumpEntitiesTable:
+        -: 1094: * @buf:  An XML buffer.
+        -: 1095: * @table:  An entity table
+        -: 1096: *
+        -: 1097: * This will dump the content of the entity table as an XML DTD definition
+        -: 1098: */
+        -: 1099:void
+    #####: 1100:xmlDumpEntitiesTable(xmlBufferPtr buf, xmlEntitiesTablePtr table) {
+    #####: 1101:    xmlHashScan(table, (xmlHashScanner)xmlDumpEntityDeclScan, buf);
+    #####: 1102:}
+        -: 1103:#endif /* LIBXML_OUTPUT_ENABLED */
+        -: 1104:#define bottom_entities
+        -: 1105:#include "elfgcchack.h"

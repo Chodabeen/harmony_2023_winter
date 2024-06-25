@@ -1,0 +1,311 @@
+        -:    0:Source:testAutomata.c
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * testRegexp.c: simple module for testing regular expressions
+        -:    3: *
+        -:    4: * See Copyright for the status of this software.
+        -:    5: *
+        -:    6: * Daniel Veillard <veillard@redhat.com>
+        -:    7: */
+        -:    8:
+        -:    9:#include "libxml.h"
+        -:   10:#ifdef LIBXML_AUTOMATA_ENABLED
+        -:   11:#include <string.h>
+        -:   12:
+        -:   13:#include <libxml/tree.h>
+        -:   14:#include <libxml/xmlautomata.h>
+        -:   15:
+    #####:   16:static int scanNumber(char **ptr) {
+    #####:   17:    int ret = 0;
+        -:   18:    char *cur;
+        -:   19:
+    #####:   20:    cur = *ptr;
+    #####:   21:    while ((*cur >= '0') && (*cur <= '9')) {
+    #####:   22:	ret = ret * 10 + (*cur - '0');
+    #####:   23:	cur++;
+        -:   24:    }
+    #####:   25:    *ptr = cur;
+    #####:   26:    return(ret);
+        -:   27:}
+        -:   28:
+        -:   29:static void
+    #####:   30:testRegexpFile(const char *filename) {
+        -:   31:    FILE *input;
+        -:   32:    char expr[5000];
+        -:   33:    int len;
+        -:   34:    int ret;
+        -:   35:    int i;
+        -:   36:    xmlAutomataPtr am;
+        -:   37:    xmlAutomataStatePtr states[1000];
+    #####:   38:    xmlRegexpPtr regexp = NULL;
+    #####:   39:    xmlRegExecCtxtPtr exec = NULL;
+        -:   40:
+    #####:   41:    for (i = 0;i<1000;i++)
+    #####:   42:	states[i] = NULL;
+        -:   43:
+    #####:   44:    input = fopen(filename, "r");
+    #####:   45:    if (input == NULL) {
+    #####:   46:        xmlGenericError(xmlGenericErrorContext,
+        -:   47:		"Cannot open %s for reading\n", filename);
+    #####:   48:	return;
+        -:   49:    }
+        -:   50:
+    #####:   51:    am = xmlNewAutomata();
+    #####:   52:    if (am == NULL) {
+    #####:   53:        xmlGenericError(xmlGenericErrorContext,
+        -:   54:		"Cannot create automata\n");
+    #####:   55:	fclose(input);
+    #####:   56:	return;
+        -:   57:    }
+    #####:   58:    states[0] = xmlAutomataGetInitState(am);
+    #####:   59:    if (states[0] == NULL) {
+    #####:   60:        xmlGenericError(xmlGenericErrorContext,
+        -:   61:		"Cannot get start state\n");
+    #####:   62:	xmlFreeAutomata(am);
+    #####:   63:	fclose(input);
+    #####:   64:	return;
+        -:   65:    }
+    #####:   66:    ret = 0;
+        -:   67:
+    #####:   68:    while (fgets(expr, 4500, input) != NULL) {
+    #####:   69:	if (expr[0] == '#')
+    #####:   70:	    continue;
+    #####:   71:	len = strlen(expr);
+    #####:   72:	len--;
+    #####:   73:	while ((len >= 0) &&
+    #####:   74:	       ((expr[len] == '\n') || (expr[len] == '\t') ||
+    #####:   75:		(expr[len] == '\r') || (expr[len] == ' '))) len--;
+    #####:   76:	expr[len + 1] = 0;
+    #####:   77:	if (len >= 0) {
+    #####:   78:	    if ((am != NULL) && (expr[0] == 't') && (expr[1] == ' ')) {
+    #####:   79:		char *ptr = &expr[2];
+        -:   80:		int from, to;
+        -:   81:
+    #####:   82:		from = scanNumber(&ptr);
+    #####:   83:		if (*ptr != ' ') {
+    #####:   84:		    xmlGenericError(xmlGenericErrorContext,
+        -:   85:			    "Bad line %s\n", expr);
+    #####:   86:		    break;
+        -:   87:		}
+    #####:   88:		if (states[from] == NULL)
+    #####:   89:		    states[from] = xmlAutomataNewState(am);
+    #####:   90:		ptr++;
+    #####:   91:		to = scanNumber(&ptr);
+    #####:   92:		if (*ptr != ' ') {
+    #####:   93:		    xmlGenericError(xmlGenericErrorContext,
+        -:   94:			    "Bad line %s\n", expr);
+    #####:   95:		    break;
+        -:   96:		}
+    #####:   97:		if (states[to] == NULL)
+    #####:   98:		    states[to] = xmlAutomataNewState(am);
+    #####:   99:		ptr++;
+    #####:  100:		xmlAutomataNewTransition(am, states[from], states[to],
+        -:  101:			                 BAD_CAST ptr, NULL);
+    #####:  102:	    } else if ((am != NULL) && (expr[0] == 'e') && (expr[1] == ' ')) {
+    #####:  103:		char *ptr = &expr[2];
+        -:  104:		int from, to;
+        -:  105:
+    #####:  106:		from = scanNumber(&ptr);
+    #####:  107:		if (*ptr != ' ') {
+    #####:  108:		    xmlGenericError(xmlGenericErrorContext,
+        -:  109:			    "Bad line %s\n", expr);
+    #####:  110:		    break;
+        -:  111:		}
+    #####:  112:		if (states[from] == NULL)
+    #####:  113:		    states[from] = xmlAutomataNewState(am);
+    #####:  114:		ptr++;
+    #####:  115:		to = scanNumber(&ptr);
+    #####:  116:		if (states[to] == NULL)
+    #####:  117:		    states[to] = xmlAutomataNewState(am);
+    #####:  118:		xmlAutomataNewEpsilon(am, states[from], states[to]);
+    #####:  119:	    } else if ((am != NULL) && (expr[0] == 'f') && (expr[1] == ' ')) {
+    #####:  120:		char *ptr = &expr[2];
+        -:  121:		int state;
+        -:  122:
+    #####:  123:		state = scanNumber(&ptr);
+    #####:  124:		if (states[state] == NULL) {
+    #####:  125:		    xmlGenericError(xmlGenericErrorContext,
+        -:  126:			    "Bad state %d : %s\n", state, expr);
+    #####:  127:		    break;
+        -:  128:		}
+    #####:  129:		xmlAutomataSetFinalState(am, states[state]);
+    #####:  130:	    } else if ((am != NULL) && (expr[0] == 'c') && (expr[1] == ' ')) {
+    #####:  131:		char *ptr = &expr[2];
+        -:  132:		int from, to;
+        -:  133:		int min, max;
+        -:  134:
+    #####:  135:		from = scanNumber(&ptr);
+    #####:  136:		if (*ptr != ' ') {
+    #####:  137:		    xmlGenericError(xmlGenericErrorContext,
+        -:  138:			    "Bad line %s\n", expr);
+    #####:  139:		    break;
+        -:  140:		}
+    #####:  141:		if (states[from] == NULL)
+    #####:  142:		    states[from] = xmlAutomataNewState(am);
+    #####:  143:		ptr++;
+    #####:  144:		to = scanNumber(&ptr);
+    #####:  145:		if (*ptr != ' ') {
+    #####:  146:		    xmlGenericError(xmlGenericErrorContext,
+        -:  147:			    "Bad line %s\n", expr);
+    #####:  148:		    break;
+        -:  149:		}
+    #####:  150:		if (states[to] == NULL)
+    #####:  151:		    states[to] = xmlAutomataNewState(am);
+    #####:  152:		ptr++;
+    #####:  153:		min = scanNumber(&ptr);
+    #####:  154:		if (*ptr != ' ') {
+    #####:  155:		    xmlGenericError(xmlGenericErrorContext,
+        -:  156:			    "Bad line %s\n", expr);
+    #####:  157:		    break;
+        -:  158:		}
+    #####:  159:		ptr++;
+    #####:  160:		max = scanNumber(&ptr);
+    #####:  161:		if (*ptr != ' ') {
+    #####:  162:		    xmlGenericError(xmlGenericErrorContext,
+        -:  163:			    "Bad line %s\n", expr);
+    #####:  164:		    break;
+        -:  165:		}
+    #####:  166:		ptr++;
+    #####:  167:		xmlAutomataNewCountTrans(am, states[from], states[to],
+        -:  168:			                 BAD_CAST ptr, min, max, NULL);
+    #####:  169:	    } else if ((am != NULL) && (expr[0] == '-') && (expr[1] == '-')) {
+        -:  170:		/* end of the automata */
+    #####:  171:		regexp = xmlAutomataCompile(am);
+    #####:  172:		xmlFreeAutomata(am);
+    #####:  173:		am = NULL;
+    #####:  174:		if (regexp == NULL) {
+    #####:  175:		    xmlGenericError(xmlGenericErrorContext,
+        -:  176:			    "Failed to compile the automata");
+    #####:  177:		    break;
+        -:  178:		}
+    #####:  179:	    } else if ((expr[0] == '=') && (expr[1] == '>')) {
+    #####:  180:		if (regexp == NULL) {
+    #####:  181:		    printf("=> failed not compiled\n");
+        -:  182:		} else {
+    #####:  183:		    if (exec == NULL)
+    #####:  184:			exec = xmlRegNewExecCtxt(regexp, NULL, NULL);
+    #####:  185:		    if (ret == 0) {
+    #####:  186:			ret = xmlRegExecPushString(exec, NULL, NULL);
+        -:  187:		    }
+    #####:  188:		    if (ret == 1)
+    #####:  189:			printf("=> Passed\n");
+    #####:  190:		    else if ((ret == 0) || (ret == -1))
+    #####:  191:			printf("=> Failed\n");
+    #####:  192:		    else if (ret < 0)
+    #####:  193:			printf("=> Error\n");
+    #####:  194:		    xmlRegFreeExecCtxt(exec);
+    #####:  195:		    exec = NULL;
+        -:  196:		}
+    #####:  197:		ret = 0;
+    #####:  198:	    } else if (regexp != NULL) {
+    #####:  199:		if (exec == NULL)
+    #####:  200:		    exec = xmlRegNewExecCtxt(regexp, NULL, NULL);
+    #####:  201:		ret = xmlRegExecPushString(exec, BAD_CAST expr, NULL);
+        -:  202:	    } else {
+    #####:  203:		xmlGenericError(xmlGenericErrorContext,
+        -:  204:			"Unexpected line %s\n", expr);
+        -:  205:	    }
+        -:  206:	}
+        -:  207:    }
+    #####:  208:    fclose(input);
+    #####:  209:    if (regexp != NULL)
+    #####:  210:	xmlRegFreeRegexp(regexp);
+    #####:  211:    if (exec != NULL)
+    #####:  212:	xmlRegFreeExecCtxt(exec);
+    #####:  213:    if (am != NULL)
+    #####:  214:	xmlFreeAutomata(am);
+        -:  215:}
+        -:  216:
+    #####:  217:int main(int argc, char **argv) {
+        -:  218:
+    #####:  219:    xmlInitMemory();
+        -:  220:
+    #####:  221:    if (argc == 1) {
+        -:  222:	int ret;
+        -:  223:	xmlAutomataPtr am;
+        -:  224:	xmlAutomataStatePtr start, cur;
+        -:  225:	xmlRegexpPtr regexp;
+        -:  226:	xmlRegExecCtxtPtr exec;
+        -:  227:
+    #####:  228:	am = xmlNewAutomata();
+    #####:  229:	start = xmlAutomataGetInitState(am);
+        -:  230:
+        -:  231:	/* generate a[ba]*a */
+    #####:  232:	cur = xmlAutomataNewTransition(am, start, NULL, BAD_CAST"a", NULL);
+    #####:  233:	xmlAutomataNewTransition(am, cur, cur, BAD_CAST"b", NULL);
+    #####:  234:	xmlAutomataNewTransition(am, cur, cur, BAD_CAST"a", NULL);
+    #####:  235:	cur = xmlAutomataNewCountTrans(am, cur, NULL, BAD_CAST"a", 2, 3, NULL);
+    #####:  236:	xmlAutomataSetFinalState(am, cur);
+        -:  237:
+        -:  238:	/* compile it in a regexp and free the automata */
+    #####:  239:	regexp = xmlAutomataCompile(am);
+    #####:  240:	xmlFreeAutomata(am);
+        -:  241:
+        -:  242:	/* test the regexp */
+    #####:  243:	xmlRegexpPrint(stdout, regexp);
+    #####:  244:	exec = xmlRegNewExecCtxt(regexp, NULL, NULL);
+    #####:  245:	ret = xmlRegExecPushString(exec, BAD_CAST"a", NULL);
+    #####:  246:	if (ret == 1)
+    #####:  247:	    printf("final\n");
+    #####:  248:	else if (ret < 0)
+    #####:  249:	    printf("error\n");
+    #####:  250:	ret =xmlRegExecPushString(exec, BAD_CAST"a", NULL);
+    #####:  251:	if (ret == 1)
+    #####:  252:	    printf("final\n");
+    #####:  253:	else if (ret < 0)
+    #####:  254:	    printf("error\n");
+    #####:  255:	ret =xmlRegExecPushString(exec, BAD_CAST"b", NULL);
+    #####:  256:	if (ret == 1)
+    #####:  257:	    printf("final\n");
+    #####:  258:	else if (ret < 0)
+    #####:  259:	    printf("error\n");
+    #####:  260:	ret =xmlRegExecPushString(exec, BAD_CAST"a", NULL);
+    #####:  261:	if (ret == 1)
+    #####:  262:	    printf("final\n");
+    #####:  263:	else if (ret < 0)
+    #####:  264:	    printf("error\n");
+    #####:  265:	ret =xmlRegExecPushString(exec, BAD_CAST"a", NULL);
+    #####:  266:	if (ret == 1)
+    #####:  267:	    printf("final\n");
+    #####:  268:	else if (ret < 0)
+    #####:  269:	    printf("error\n");
+    #####:  270:	ret =xmlRegExecPushString(exec, BAD_CAST"a", NULL);
+    #####:  271:	if (ret == 1)
+    #####:  272:	    printf("final\n");
+    #####:  273:	else if (ret < 0)
+    #####:  274:	    printf("error\n");
+    #####:  275:	ret =xmlRegExecPushString(exec, BAD_CAST"a", NULL);
+    #####:  276:	if (ret == 1)
+    #####:  277:	    printf("final\n");
+    #####:  278:	else if (ret < 0)
+    #####:  279:	    printf("error\n");
+    #####:  280:	if (ret == 0) {
+    #####:  281:	    ret = xmlRegExecPushString(exec, NULL, NULL);
+    #####:  282:	    if (ret == 1)
+    #####:  283:		printf("final\n");
+    #####:  284:	    else if (ret < 0)
+    #####:  285:		printf("error\n");
+        -:  286:	}
+    #####:  287:	xmlRegFreeExecCtxt(exec);
+        -:  288:
+        -:  289:	/* free the regexp */
+    #####:  290:	xmlRegFreeRegexp(regexp);
+        -:  291:    } else {
+        -:  292:	int i;
+        -:  293:
+    #####:  294:	for (i = 1;i < argc;i++)
+    #####:  295:	    testRegexpFile(argv[i]);
+        -:  296:    }
+        -:  297:
+    #####:  298:    xmlCleanupParser();
+    #####:  299:    xmlMemoryDump();
+    #####:  300:    return(0);
+        -:  301:}
+        -:  302:
+        -:  303:#else
+        -:  304:#include <stdio.h>
+        -:  305:int main(int argc ATTRIBUTE_UNUSED, char **argv ATTRIBUTE_UNUSED) {
+        -:  306:    printf("%s : Automata support not compiled in\n", argv[0]);
+        -:  307:    return(0);
+        -:  308:}
+        -:  309:#endif /* LIBXML_AUTOMATA_ENABLED */

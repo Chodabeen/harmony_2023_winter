@@ -1,0 +1,126 @@
+        -:    0:Source:testURI.c
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * testURI.c : a small tester program for XML input.
+        -:    3: *
+        -:    4: * See Copyright for the status of this software.
+        -:    5: *
+        -:    6: * daniel@veillard.com
+        -:    7: */
+        -:    8:
+        -:    9:#include "libxml.h"
+        -:   10:
+        -:   11:#include <string.h>
+        -:   12:#include <stdio.h>
+        -:   13:#include <stdarg.h>
+        -:   14:
+        -:   15:#include <libxml/xmlmemory.h>
+        -:   16:#include <libxml/uri.h>
+        -:   17:#include <libxml/globals.h>
+        -:   18:
+        -:   19:static const char *base = NULL;
+        -:   20:static int escape = 0;
+        -:   21:static int debug = 0;
+        -:   22:
+    #####:   23:static void handleURI(const char *str) {
+        -:   24:    int ret;
+        -:   25:    xmlURIPtr uri;
+    #####:   26:    xmlChar *res = NULL, *parsed = NULL;
+        -:   27:
+    #####:   28:    uri = xmlCreateURI();
+        -:   29:
+    #####:   30:    if (base == NULL) {
+    #####:   31:	ret = xmlParseURIReference(uri, str);
+    #####:   32:	if (ret != 0)
+    #####:   33:	    printf("%s : error %d\n", str, ret);
+        -:   34:	else {
+    #####:   35:	    if (debug) {
+    #####:   36:	        if (uri->scheme) printf("scheme: %s\n", uri->scheme);
+    #####:   37:	        if (uri->opaque) printf("opaque: %s\n", uri->opaque);
+    #####:   38:	        if (uri->authority) printf("authority: %s\n", uri->authority);
+    #####:   39:	        if (uri->server) printf("server: %s\n", uri->server);
+    #####:   40:	        if (uri->user) printf("user: %s\n", uri->user);
+    #####:   41:	        if (uri->port != 0) printf("port: %d\n", uri->port);
+    #####:   42:	        if (uri->path) printf("path: %s\n", uri->path);
+    #####:   43:	        if (uri->query) printf("query: %s\n", uri->query);
+    #####:   44:	        if (uri->fragment) printf("fragment: %s\n", uri->fragment);
+    #####:   45:	        if (uri->query_raw) printf("query_raw: %s\n", uri->query_raw);
+    #####:   46:	        if (uri->cleanup != 0) printf("cleanup\n");
+        -:   47:	    }
+    #####:   48:	    xmlNormalizeURIPath(uri->path);
+    #####:   49:	    if (escape != 0) {
+    #####:   50:		parsed = xmlSaveUri(uri);
+    #####:   51:		res = xmlURIEscape(parsed);
+    #####:   52:		printf("%s\n", (char *) res);
+        -:   53:
+        -:   54:	    } else {
+    #####:   55:		xmlPrintURI(stdout, uri);
+    #####:   56:		printf("\n");
+        -:   57:	    }
+        -:   58:	}
+        -:   59:    } else {
+    #####:   60:	res = xmlBuildURI((xmlChar *)str, (xmlChar *) base);
+    #####:   61:	if (res != NULL) {
+    #####:   62:	    printf("%s\n", (char *) res);
+        -:   63:	}
+        -:   64:	else
+    #####:   65:	    printf("::ERROR::\n");
+        -:   66:    }
+    #####:   67:    if (res != NULL)
+    #####:   68:	xmlFree(res);
+    #####:   69:    if (parsed != NULL)
+    #####:   70:	xmlFree(parsed);
+    #####:   71:    xmlFreeURI(uri);
+    #####:   72:}
+        -:   73:
+    #####:   74:int main(int argc, char **argv) {
+    #####:   75:    int i, arg = 1;
+        -:   76:
+    #####:   77:    if ((argc > arg) && (argv[arg] != NULL) &&
+    #####:   78:	((!strcmp(argv[arg], "-base")) || (!strcmp(argv[arg], "--base")))) {
+    #####:   79:	arg++;
+    #####:   80:	base = argv[arg];
+    #####:   81:	if (base != NULL)
+    #####:   82:	    arg++;
+        -:   83:    }
+    #####:   84:    if ((argc > arg) && (argv[arg] != NULL) &&
+    #####:   85:	((!strcmp(argv[arg], "-escape")) || (!strcmp(argv[arg], "--escape")))) {
+    #####:   86:	arg++;
+    #####:   87:	escape++;
+        -:   88:    }
+    #####:   89:    if ((argc > arg) && (argv[arg] != NULL) &&
+    #####:   90:	((!strcmp(argv[arg], "-debug")) || (!strcmp(argv[arg], "--debug")))) {
+    #####:   91:	arg++;
+    #####:   92:	debug++;
+        -:   93:    }
+    #####:   94:    if (argv[arg] == NULL) {
+        -:   95:	char str[1024];
+        -:   96:
+        -:   97:        while (1) {
+        -:   98:	    /*
+        -:   99:	     * read one line in string buffer.
+        -:  100:	     */
+    #####:  101:	    if (fgets (&str[0], sizeof (str) - 1, stdin) == NULL)
+    #####:  102:	       break;
+        -:  103:
+        -:  104:	    /*
+        -:  105:	     * remove the ending spaces
+        -:  106:	     */
+    #####:  107:	    i = strlen(str);
+    #####:  108:	    while ((i > 0) &&
+    #####:  109:		   ((str[i - 1] == '\n') || (str[i - 1] == '\r') ||
+    #####:  110:		    (str[i - 1] == ' ') || (str[i - 1] == '\t'))) {
+    #####:  111:		i--;
+    #####:  112:		str[i] = 0;
+        -:  113:	    }
+    #####:  114:	    handleURI(str);
+        -:  115:        }
+        -:  116:    } else {
+    #####:  117:	while (argv[arg] != NULL) {
+    #####:  118:	    handleURI(argv[arg]);
+    #####:  119:	    arg++;
+        -:  120:	}
+        -:  121:    }
+    #####:  122:    xmlMemoryDump();
+    #####:  123:    return(0);
+        -:  124:}

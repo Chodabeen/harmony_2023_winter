@@ -1,0 +1,14 @@
+        -:    0:Source:testdso.c
+        -:    0:Programs:38
+        -:    1:#include <stdio.h>
+        -:    2:
+        -:    3:#define IN_LIBXML
+        -:    4:#include "libxml/xmlexports.h"
+        -:    5:
+        -:    6:XMLPUBFUN int hello_world(void);
+        -:    7:
+    #####:    8:int hello_world(void)
+        -:    9:{
+    #####:   10:  printf("Success!\n");
+    #####:   11:  return 0;
+        -:   12:}

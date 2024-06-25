@@ -1,0 +1,986 @@
+        -:    0:Source:xmlstring.c
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * string.c : an XML string utilities module
+        -:    3: *
+        -:    4: * This module provides various utility functions for manipulating
+        -:    5: * the xmlChar* type. All functions named xmlStr* have been moved here
+        -:    6: * from the parser.c file (their original home).
+        -:    7: *
+        -:    8: * See Copyright for the status of this software.
+        -:    9: *
+        -:   10: * UTF8 string routines from:
+        -:   11: * William Brack <wbrack@mmm.com.hk>
+        -:   12: *
+        -:   13: * daniel@veillard.com
+        -:   14: */
+        -:   15:
+        -:   16:#define IN_LIBXML
+        -:   17:#include "libxml.h"
+        -:   18:
+        -:   19:#include <stdlib.h>
+        -:   20:#include <string.h>
+        -:   21:#include <libxml/xmlmemory.h>
+        -:   22:#include <libxml/parserInternals.h>
+        -:   23:#include <libxml/xmlstring.h>
+        -:   24:
+        -:   25:/************************************************************************
+        -:   26: *                                                                      *
+        -:   27: *                Commodity functions to handle xmlChars                *
+        -:   28: *                                                                      *
+        -:   29: ************************************************************************/
+        -:   30:
+        -:   31:/**
+        -:   32: * xmlStrndup:
+        -:   33: * @cur:  the input xmlChar *
+        -:   34: * @len:  the len of @cur
+        -:   35: *
+        -:   36: * a strndup for array of xmlChar's
+        -:   37: *
+        -:   38: * Returns a new xmlChar * or NULL
+        -:   39: */
+        -:   40:xmlChar *
+       78:   41:xmlStrndup(const xmlChar *cur, int len) {
+        -:   42:    xmlChar *ret;
+        -:   43:
+       78:   44:    if ((cur == NULL) || (len < 0)) return(NULL);
+       78:   45:    ret = (xmlChar *) xmlMallocAtomic((len + 1) * sizeof(xmlChar));
+       78:   46:    if (ret == NULL) {
+    #####:   47:        xmlErrMemory(NULL, NULL);
+    #####:   48:        return(NULL);
+        -:   49:    }
+       78:   50:    memcpy(ret, cur, len * sizeof(xmlChar));
+       78:   51:    ret[len] = 0;
+       78:   52:    return(ret);
+        -:   53:}
+        -:   54:
+        -:   55:/**
+        -:   56: * xmlStrdup:
+        -:   57: * @cur:  the input xmlChar *
+        -:   58: *
+        -:   59: * a strdup for array of xmlChar's. Since they are supposed to be
+        -:   60: * encoded in UTF-8 or an encoding with 8bit based chars, we assume
+        -:   61: * a termination mark of '0'.
+        -:   62: *
+        -:   63: * Returns a new xmlChar * or NULL
+        -:   64: */
+        -:   65:xmlChar *
+       60:   66:xmlStrdup(const xmlChar *cur) {
+       60:   67:    const xmlChar *p = cur;
+        -:   68:
+       60:   69:    if (cur == NULL) return(NULL);
+       56:   70:    while (*p != 0) p++; /* non input consuming */
+       56:   71:    return(xmlStrndup(cur, p - cur));
+        -:   72:}
+        -:   73:
+        -:   74:/**
+        -:   75: * xmlCharStrndup:
+        -:   76: * @cur:  the input char *
+        -:   77: * @len:  the len of @cur
+        -:   78: *
+        -:   79: * a strndup for char's to xmlChar's
+        -:   80: *
+        -:   81: * Returns a new xmlChar * or NULL
+        -:   82: */
+        -:   83:
+        -:   84:xmlChar *
+    #####:   85:xmlCharStrndup(const char *cur, int len) {
+        -:   86:    int i;
+        -:   87:    xmlChar *ret;
+        -:   88:
+    #####:   89:    if ((cur == NULL) || (len < 0)) return(NULL);
+    #####:   90:    ret = (xmlChar *) xmlMallocAtomic((len + 1) * sizeof(xmlChar));
+    #####:   91:    if (ret == NULL) {
+    #####:   92:        xmlErrMemory(NULL, NULL);
+    #####:   93:        return(NULL);
+        -:   94:    }
+    #####:   95:    for (i = 0;i < len;i++) {
+    #####:   96:        ret[i] = (xmlChar) cur[i];
+    #####:   97:        if (ret[i] == 0) return(ret);
+        -:   98:    }
+    #####:   99:    ret[len] = 0;
+    #####:  100:    return(ret);
+        -:  101:}
+        -:  102:
+        -:  103:/**
+        -:  104: * xmlCharStrdup:
+        -:  105: * @cur:  the input char *
+        -:  106: *
+        -:  107: * a strdup for char's to xmlChar's
+        -:  108: *
+        -:  109: * Returns a new xmlChar * or NULL
+        -:  110: */
+        -:  111:
+        -:  112:xmlChar *
+    #####:  113:xmlCharStrdup(const char *cur) {
+    #####:  114:    const char *p = cur;
+        -:  115:
+    #####:  116:    if (cur == NULL) return(NULL);
+    #####:  117:    while (*p != '\0') p++; /* non input consuming */
+    #####:  118:    return(xmlCharStrndup(cur, p - cur));
+        -:  119:}
+        -:  120:
+        -:  121:/**
+        -:  122: * xmlStrcmp:
+        -:  123: * @str1:  the first xmlChar *
+        -:  124: * @str2:  the second xmlChar *
+        -:  125: *
+        -:  126: * a strcmp for xmlChar's
+        -:  127: *
+        -:  128: * Returns the integer result of the comparison
+        -:  129: */
+        -:  130:
+        -:  131:int
+    #####:  132:xmlStrcmp(const xmlChar *str1, const xmlChar *str2) {
+        -:  133:    register int tmp;
+        -:  134:
+    #####:  135:    if (str1 == str2) return(0);
+    #####:  136:    if (str1 == NULL) return(-1);
+    #####:  137:    if (str2 == NULL) return(1);
+        -:  138:    do {
+    #####:  139:        tmp = *str1++ - *str2;
+    #####:  140:        if (tmp != 0) return(tmp);
+    #####:  141:    } while (*str2++ != 0);
+    #####:  142:    return 0;
+        -:  143:}
+        -:  144:
+        -:  145:/**
+        -:  146: * xmlStrEqual:
+        -:  147: * @str1:  the first xmlChar *
+        -:  148: * @str2:  the second xmlChar *
+        -:  149: *
+        -:  150: * Check if both strings are equal of have same content.
+        -:  151: * Should be a bit more readable and faster than xmlStrcmp()
+        -:  152: *
+        -:  153: * Returns 1 if they are equal, 0 if they are different
+        -:  154: */
+        -:  155:
+        -:  156:int
+      492:  157:xmlStrEqual(const xmlChar *str1, const xmlChar *str2) {
+      492:  158:    if (str1 == str2) return(1);
+      472:  159:    if (str1 == NULL) return(0);
+      464:  160:    if (str2 == NULL) return(0);
+        -:  161:    do {
+      676:  162:        if (*str1++ != *str2) return(0);
+      258:  163:    } while (*str2++);
+       46:  164:    return(1);
+        -:  165:}
+        -:  166:
+        -:  167:/**
+        -:  168: * xmlStrQEqual:
+        -:  169: * @pref:  the prefix of the QName
+        -:  170: * @name:  the localname of the QName
+        -:  171: * @str:  the second xmlChar *
+        -:  172: *
+        -:  173: * Check if a QName is Equal to a given string
+        -:  174: *
+        -:  175: * Returns 1 if they are equal, 0 if they are different
+        -:  176: */
+        -:  177:
+        -:  178:int
+    #####:  179:xmlStrQEqual(const xmlChar *pref, const xmlChar *name, const xmlChar *str) {
+    #####:  180:    if (pref == NULL) return(xmlStrEqual(name, str));
+    #####:  181:    if (name == NULL) return(0);
+    #####:  182:    if (str == NULL) return(0);
+        -:  183:
+        -:  184:    do {
+    #####:  185:        if (*pref++ != *str) return(0);
+    #####:  186:    } while ((*str++) && (*pref));
+    #####:  187:    if (*str++ != ':') return(0);
+        -:  188:    do {
+    #####:  189:        if (*name++ != *str) return(0);
+    #####:  190:    } while (*str++);
+    #####:  191:    return(1);
+        -:  192:}
+        -:  193:
+        -:  194:/**
+        -:  195: * xmlStrncmp:
+        -:  196: * @str1:  the first xmlChar *
+        -:  197: * @str2:  the second xmlChar *
+        -:  198: * @len:  the max comparison length
+        -:  199: *
+        -:  200: * a strncmp for xmlChar's
+        -:  201: *
+        -:  202: * Returns the integer result of the comparison
+        -:  203: */
+        -:  204:
+        -:  205:int
+    #####:  206:xmlStrncmp(const xmlChar *str1, const xmlChar *str2, int len) {
+        -:  207:    register int tmp;
+        -:  208:
+    #####:  209:    if (len <= 0) return(0);
+    #####:  210:    if (str1 == str2) return(0);
+    #####:  211:    if (str1 == NULL) return(-1);
+    #####:  212:    if (str2 == NULL) return(1);
+        -:  213:#ifdef __GNUC__
+    #####:  214:    tmp = strncmp((const char *)str1, (const char *)str2, len);
+    #####:  215:    return tmp;
+        -:  216:#else
+        -:  217:    do {
+        -:  218:        tmp = *str1++ - *str2;
+        -:  219:        if (tmp != 0 || --len == 0) return(tmp);
+        -:  220:    } while (*str2++ != 0);
+        -:  221:    return 0;
+        -:  222:#endif
+        -:  223:}
+        -:  224:
+        -:  225:static const xmlChar casemap[256] = {
+        -:  226:    0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,
+        -:  227:    0x08,0x09,0x0A,0x0B,0x0C,0x0D,0x0E,0x0F,
+        -:  228:    0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,
+        -:  229:    0x18,0x19,0x1A,0x1B,0x1C,0x1D,0x1E,0x1F,
+        -:  230:    0x20,0x21,0x22,0x23,0x24,0x25,0x26,0x27,
+        -:  231:    0x28,0x29,0x2A,0x2B,0x2C,0x2D,0x2E,0x2F,
+        -:  232:    0x30,0x31,0x32,0x33,0x34,0x35,0x36,0x37,
+        -:  233:    0x38,0x39,0x3A,0x3B,0x3C,0x3D,0x3E,0x3F,
+        -:  234:    0x40,0x61,0x62,0x63,0x64,0x65,0x66,0x67,
+        -:  235:    0x68,0x69,0x6A,0x6B,0x6C,0x6D,0x6E,0x6F,
+        -:  236:    0x70,0x71,0x72,0x73,0x74,0x75,0x76,0x77,
+        -:  237:    0x78,0x79,0x7A,0x7B,0x5C,0x5D,0x5E,0x5F,
+        -:  238:    0x60,0x61,0x62,0x63,0x64,0x65,0x66,0x67,
+        -:  239:    0x68,0x69,0x6A,0x6B,0x6C,0x6D,0x6E,0x6F,
+        -:  240:    0x70,0x71,0x72,0x73,0x74,0x75,0x76,0x77,
+        -:  241:    0x78,0x79,0x7A,0x7B,0x7C,0x7D,0x7E,0x7F,
+        -:  242:    0x80,0x81,0x82,0x83,0x84,0x85,0x86,0x87,
+        -:  243:    0x88,0x89,0x8A,0x8B,0x8C,0x8D,0x8E,0x8F,
+        -:  244:    0x90,0x91,0x92,0x93,0x94,0x95,0x96,0x97,
+        -:  245:    0x98,0x99,0x9A,0x9B,0x9C,0x9D,0x9E,0x9F,
+        -:  246:    0xA0,0xA1,0xA2,0xA3,0xA4,0xA5,0xA6,0xA7,
+        -:  247:    0xA8,0xA9,0xAA,0xAB,0xAC,0xAD,0xAE,0xAF,
+        -:  248:    0xB0,0xB1,0xB2,0xB3,0xB4,0xB5,0xB6,0xB7,
+        -:  249:    0xB8,0xB9,0xBA,0xBB,0xBC,0xBD,0xBE,0xBF,
+        -:  250:    0xC0,0xC1,0xC2,0xC3,0xC4,0xC5,0xC6,0xC7,
+        -:  251:    0xC8,0xC9,0xCA,0xCB,0xCC,0xCD,0xCE,0xCF,
+        -:  252:    0xD0,0xD1,0xD2,0xD3,0xD4,0xD5,0xD6,0xD7,
+        -:  253:    0xD8,0xD9,0xDA,0xDB,0xDC,0xDD,0xDE,0xDF,
+        -:  254:    0xE0,0xE1,0xE2,0xE3,0xE4,0xE5,0xE6,0xE7,
+        -:  255:    0xE8,0xE9,0xEA,0xEB,0xEC,0xED,0xEE,0xEF,
+        -:  256:    0xF0,0xF1,0xF2,0xF3,0xF4,0xF5,0xF6,0xF7,
+        -:  257:    0xF8,0xF9,0xFA,0xFB,0xFC,0xFD,0xFE,0xFF
+        -:  258:};
+        -:  259:
+        -:  260:/**
+        -:  261: * xmlStrcasecmp:
+        -:  262: * @str1:  the first xmlChar *
+        -:  263: * @str2:  the second xmlChar *
+        -:  264: *
+        -:  265: * a strcasecmp for xmlChar's
+        -:  266: *
+        -:  267: * Returns the integer result of the comparison
+        -:  268: */
+        -:  269:
+        -:  270:int
+      682:  271:xmlStrcasecmp(const xmlChar *str1, const xmlChar *str2) {
+        -:  272:    register int tmp;
+        -:  273:
+      682:  274:    if (str1 == str2) return(0);
+      682:  275:    if (str1 == NULL) return(-1);
+      682:  276:    if (str2 == NULL) return(1);
+        -:  277:    do {
+      850:  278:        tmp = casemap[*str1++] - casemap[*str2];
+      850:  279:        if (tmp != 0) return(tmp);
+      186:  280:    } while (*str2++ != 0);
+       18:  281:    return 0;
+        -:  282:}
+        -:  283:
+        -:  284:/**
+        -:  285: * xmlStrncasecmp:
+        -:  286: * @str1:  the first xmlChar *
+        -:  287: * @str2:  the second xmlChar *
+        -:  288: * @len:  the max comparison length
+        -:  289: *
+        -:  290: * a strncasecmp for xmlChar's
+        -:  291: *
+        -:  292: * Returns the integer result of the comparison
+        -:  293: */
+        -:  294:
+        -:  295:int
+       16:  296:xmlStrncasecmp(const xmlChar *str1, const xmlChar *str2, int len) {
+        -:  297:    register int tmp;
+        -:  298:
+       16:  299:    if (len <= 0) return(0);
+       16:  300:    if (str1 == str2) return(0);
+       16:  301:    if (str1 == NULL) return(-1);
+       16:  302:    if (str2 == NULL) return(1);
+        -:  303:    do {
+       16:  304:        tmp = casemap[*str1++] - casemap[*str2];
+       16:  305:        if (tmp != 0 || --len == 0) return(tmp);
+    #####:  306:    } while (*str2++ != 0);
+    #####:  307:    return 0;
+        -:  308:}
+        -:  309:
+        -:  310:/**
+        -:  311: * xmlStrchr:
+        -:  312: * @str:  the xmlChar * array
+        -:  313: * @val:  the xmlChar to search
+        -:  314: *
+        -:  315: * a strchr for xmlChar's
+        -:  316: *
+        -:  317: * Returns the xmlChar * for the first occurrence or NULL.
+        -:  318: */
+        -:  319:
+        -:  320:const xmlChar *
+        8:  321:xmlStrchr(const xmlChar *str, xmlChar val) {
+        8:  322:    if (str == NULL) return(NULL);
+      234:  323:    while (*str != 0) { /* non input consuming */
+      218:  324:        if (*str == val) return((xmlChar *) str);
+      218:  325:        str++;
+        -:  326:    }
+        8:  327:    return(NULL);
+        -:  328:}
+        -:  329:
+        -:  330:/**
+        -:  331: * xmlStrstr:
+        -:  332: * @str:  the xmlChar * array (haystack)
+        -:  333: * @val:  the xmlChar to search (needle)
+        -:  334: *
+        -:  335: * a strstr for xmlChar's
+        -:  336: *
+        -:  337: * Returns the xmlChar * for the first occurrence or NULL.
+        -:  338: */
+        -:  339:
+        -:  340:const xmlChar *
+    #####:  341:xmlStrstr(const xmlChar *str, const xmlChar *val) {
+        -:  342:    int n;
+        -:  343:
+    #####:  344:    if (str == NULL) return(NULL);
+    #####:  345:    if (val == NULL) return(NULL);
+    #####:  346:    n = xmlStrlen(val);
+        -:  347:
+    #####:  348:    if (n == 0) return(str);
+    #####:  349:    while (*str != 0) { /* non input consuming */
+    #####:  350:        if (*str == *val) {
+    #####:  351:            if (!xmlStrncmp(str, val, n)) return((const xmlChar *) str);
+        -:  352:        }
+    #####:  353:        str++;
+        -:  354:    }
+    #####:  355:    return(NULL);
+        -:  356:}
+        -:  357:
+        -:  358:/**
+        -:  359: * xmlStrcasestr:
+        -:  360: * @str:  the xmlChar * array (haystack)
+        -:  361: * @val:  the xmlChar to search (needle)
+        -:  362: *
+        -:  363: * a case-ignoring strstr for xmlChar's
+        -:  364: *
+        -:  365: * Returns the xmlChar * for the first occurrence or NULL.
+        -:  366: */
+        -:  367:
+        -:  368:const xmlChar *
+    #####:  369:xmlStrcasestr(const xmlChar *str, const xmlChar *val) {
+        -:  370:    int n;
+        -:  371:
+    #####:  372:    if (str == NULL) return(NULL);
+    #####:  373:    if (val == NULL) return(NULL);
+    #####:  374:    n = xmlStrlen(val);
+        -:  375:
+    #####:  376:    if (n == 0) return(str);
+    #####:  377:    while (*str != 0) { /* non input consuming */
+    #####:  378:        if (casemap[*str] == casemap[*val])
+    #####:  379:            if (!xmlStrncasecmp(str, val, n)) return(str);
+    #####:  380:        str++;
+        -:  381:    }
+    #####:  382:    return(NULL);
+        -:  383:}
+        -:  384:
+        -:  385:/**
+        -:  386: * xmlStrsub:
+        -:  387: * @str:  the xmlChar * array (haystack)
+        -:  388: * @start:  the index of the first char (zero based)
+        -:  389: * @len:  the length of the substring
+        -:  390: *
+        -:  391: * Extract a substring of a given string
+        -:  392: *
+        -:  393: * Returns the xmlChar * for the first occurrence or NULL.
+        -:  394: */
+        -:  395:
+        -:  396:xmlChar *
+    #####:  397:xmlStrsub(const xmlChar *str, int start, int len) {
+        -:  398:    int i;
+        -:  399:
+    #####:  400:    if (str == NULL) return(NULL);
+    #####:  401:    if (start < 0) return(NULL);
+    #####:  402:    if (len < 0) return(NULL);
+        -:  403:
+    #####:  404:    for (i = 0;i < start;i++) {
+    #####:  405:        if (*str == 0) return(NULL);
+    #####:  406:        str++;
+        -:  407:    }
+    #####:  408:    if (*str == 0) return(NULL);
+    #####:  409:    return(xmlStrndup(str, len));
+        -:  410:}
+        -:  411:
+        -:  412:/**
+        -:  413: * xmlStrlen:
+        -:  414: * @str:  the xmlChar * array
+        -:  415: *
+        -:  416: * length of a xmlChar's string
+        -:  417: *
+        -:  418: * Returns the number of xmlChar contained in the ARRAY.
+        -:  419: */
+        -:  420:
+        -:  421:int
+        8:  422:xmlStrlen(const xmlChar *str) {
+        8:  423:    int len = 0;
+        -:  424:
+        8:  425:    if (str == NULL) return(0);
+      234:  426:    while (*str != 0) { /* non input consuming */
+      218:  427:        str++;
+      218:  428:        len++;
+        -:  429:    }
+        8:  430:    return(len);
+        -:  431:}
+        -:  432:
+        -:  433:/**
+        -:  434: * xmlStrncat:
+        -:  435: * @cur:  the original xmlChar * array
+        -:  436: * @add:  the xmlChar * array added
+        -:  437: * @len:  the length of @add
+        -:  438: *
+        -:  439: * a strncat for array of xmlChar's, it will extend @cur with the len
+        -:  440: * first bytes of @add. Note that if @len < 0 then this is an API error
+        -:  441: * and NULL will be returned.
+        -:  442: *
+        -:  443: * Returns a new xmlChar *, the original @cur is reallocated if needed
+        -:  444: * and should not be freed
+        -:  445: */
+        -:  446:
+        -:  447:xmlChar *
+    #####:  448:xmlStrncat(xmlChar *cur, const xmlChar *add, int len) {
+        -:  449:    int size;
+        -:  450:    xmlChar *ret;
+        -:  451:
+    #####:  452:    if ((add == NULL) || (len == 0))
+    #####:  453:        return(cur);
+    #####:  454:    if (len < 0)
+    #####:  455:	return(NULL);
+    #####:  456:    if (cur == NULL)
+    #####:  457:        return(xmlStrndup(add, len));
+        -:  458:
+    #####:  459:    size = xmlStrlen(cur);
+    #####:  460:    ret = (xmlChar *) xmlRealloc(cur, (size + len + 1) * sizeof(xmlChar));
+    #####:  461:    if (ret == NULL) {
+    #####:  462:        xmlErrMemory(NULL, NULL);
+    #####:  463:        return(cur);
+        -:  464:    }
+    #####:  465:    memcpy(&ret[size], add, len * sizeof(xmlChar));
+    #####:  466:    ret[size + len] = 0;
+    #####:  467:    return(ret);
+        -:  468:}
+        -:  469:
+        -:  470:/**
+        -:  471: * xmlStrncatNew:
+        -:  472: * @str1:  first xmlChar string
+        -:  473: * @str2:  second xmlChar string
+        -:  474: * @len:  the len of @str2 or < 0
+        -:  475: *
+        -:  476: * same as xmlStrncat, but creates a new string.  The original
+        -:  477: * two strings are not freed. If @len is < 0 then the length
+        -:  478: * will be calculated automatically.
+        -:  479: *
+        -:  480: * Returns a new xmlChar * or NULL
+        -:  481: */
+        -:  482:xmlChar *
+    #####:  483:xmlStrncatNew(const xmlChar *str1, const xmlChar *str2, int len) {
+        -:  484:    int size;
+        -:  485:    xmlChar *ret;
+        -:  486:
+    #####:  487:    if (len < 0)
+    #####:  488:        len = xmlStrlen(str2);
+    #####:  489:    if ((str2 == NULL) || (len == 0))
+    #####:  490:        return(xmlStrdup(str1));
+    #####:  491:    if (str1 == NULL)
+    #####:  492:        return(xmlStrndup(str2, len));
+        -:  493:
+    #####:  494:    size = xmlStrlen(str1);
+    #####:  495:    ret = (xmlChar *) xmlMalloc((size + len + 1) * sizeof(xmlChar));
+    #####:  496:    if (ret == NULL) {
+    #####:  497:        xmlErrMemory(NULL, NULL);
+    #####:  498:        return(xmlStrndup(str1, size));
+        -:  499:    }
+    #####:  500:    memcpy(ret, str1, size * sizeof(xmlChar));
+    #####:  501:    memcpy(&ret[size], str2, len * sizeof(xmlChar));
+    #####:  502:    ret[size + len] = 0;
+    #####:  503:    return(ret);
+        -:  504:}
+        -:  505:
+        -:  506:/**
+        -:  507: * xmlStrcat:
+        -:  508: * @cur:  the original xmlChar * array
+        -:  509: * @add:  the xmlChar * array added
+        -:  510: *
+        -:  511: * a strcat for array of xmlChar's. Since they are supposed to be
+        -:  512: * encoded in UTF-8 or an encoding with 8bit based chars, we assume
+        -:  513: * a termination mark of '0'.
+        -:  514: *
+        -:  515: * Returns a new xmlChar * containing the concatenated string.
+        -:  516: */
+        -:  517:xmlChar *
+        4:  518:xmlStrcat(xmlChar *cur, const xmlChar *add) {
+        4:  519:    const xmlChar *p = add;
+        -:  520:
+        4:  521:    if (add == NULL) return(cur);
+        4:  522:    if (cur == NULL)
+        4:  523:        return(xmlStrdup(add));
+        -:  524:
+    #####:  525:    while (*p != 0) p++; /* non input consuming */
+    #####:  526:    return(xmlStrncat(cur, add, p - add));
+        -:  527:}
+        -:  528:
+        -:  529:/**
+        -:  530: * xmlStrPrintf:
+        -:  531: * @buf:   the result buffer.
+        -:  532: * @len:   the result buffer length.
+        -:  533: * @msg:   the message with printf formatting.
+        -:  534: * @...:   extra parameters for the message.
+        -:  535: *
+        -:  536: * Formats @msg and places result into @buf.
+        -:  537: *
+        -:  538: * Returns the number of characters written to @buf or -1 if an error occurs.
+        -:  539: */
+        -:  540:int XMLCDECL
+    #####:  541:xmlStrPrintf(xmlChar *buf, int len, const xmlChar *msg, ...) {
+        -:  542:    va_list args;
+        -:  543:    int ret;
+        -:  544:
+    #####:  545:    if((buf == NULL) || (msg == NULL)) {
+    #####:  546:        return(-1);
+        -:  547:    }
+        -:  548:
+    #####:  549:    va_start(args, msg);
+    #####:  550:    ret = vsnprintf((char *) buf, len, (const char *) msg, args);
+    #####:  551:    va_end(args);
+    #####:  552:    buf[len - 1] = 0; /* be safe ! */
+        -:  553:
+    #####:  554:    return(ret);
+        -:  555:}
+        -:  556:
+        -:  557:/**
+        -:  558: * xmlStrVPrintf:
+        -:  559: * @buf:   the result buffer.
+        -:  560: * @len:   the result buffer length.
+        -:  561: * @msg:   the message with printf formatting.
+        -:  562: * @ap:    extra parameters for the message.
+        -:  563: *
+        -:  564: * Formats @msg and places result into @buf.
+        -:  565: *
+        -:  566: * Returns the number of characters written to @buf or -1 if an error occurs.
+        -:  567: */
+        -:  568:int
+    #####:  569:xmlStrVPrintf(xmlChar *buf, int len, const xmlChar *msg, va_list ap) {
+        -:  570:    int ret;
+        -:  571:
+    #####:  572:    if((buf == NULL) || (msg == NULL)) {
+    #####:  573:        return(-1);
+        -:  574:    }
+        -:  575:
+    #####:  576:    ret = vsnprintf((char *) buf, len, (const char *) msg, ap);
+    #####:  577:    buf[len - 1] = 0; /* be safe ! */
+        -:  578:
+    #####:  579:    return(ret);
+        -:  580:}
+        -:  581:
+        -:  582:/************************************************************************
+        -:  583: *                                                                      *
+        -:  584: *              Generic UTF8 handling routines                          *
+        -:  585: *                                                                      *
+        -:  586: * From rfc2044: encoding of the Unicode values on UTF-8:               *
+        -:  587: *                                                                      *
+        -:  588: * UCS-4 range (hex.)           UTF-8 octet sequence (binary)           *
+        -:  589: * 0000 0000-0000 007F   0xxxxxxx                                       *
+        -:  590: * 0000 0080-0000 07FF   110xxxxx 10xxxxxx                              *
+        -:  591: * 0000 0800-0000 FFFF   1110xxxx 10xxxxxx 10xxxxxx                     *
+        -:  592: *                                                                      *
+        -:  593: * I hope we won't use values > 0xFFFF anytime soon !                   *
+        -:  594: *                                                                      *
+        -:  595: ************************************************************************/
+        -:  596:
+        -:  597:
+        -:  598:/**
+        -:  599: * xmlUTF8Size:
+        -:  600: * @utf: pointer to the UTF8 character
+        -:  601: *
+        -:  602: * calculates the internal size of a UTF8 character
+        -:  603: *
+        -:  604: * returns the numbers of bytes in the character, -1 on format error
+        -:  605: */
+        -:  606:int
+    #####:  607:xmlUTF8Size(const xmlChar *utf) {
+        -:  608:    xmlChar mask;
+        -:  609:    int len;
+        -:  610:
+    #####:  611:    if (utf == NULL)
+    #####:  612:        return -1;
+    #####:  613:    if (*utf < 0x80)
+    #####:  614:        return 1;
+        -:  615:    /* check valid UTF8 character */
+    #####:  616:    if (!(*utf & 0x40))
+    #####:  617:        return -1;
+        -:  618:    /* determine number of bytes in char */
+    #####:  619:    len = 2;
+    #####:  620:    for (mask=0x20; mask != 0; mask>>=1) {
+    #####:  621:        if (!(*utf & mask))
+    #####:  622:            return len;
+    #####:  623:        len++;
+        -:  624:    }
+    #####:  625:    return -1;
+        -:  626:}
+        -:  627:
+        -:  628:/**
+        -:  629: * xmlUTF8Charcmp:
+        -:  630: * @utf1: pointer to first UTF8 char
+        -:  631: * @utf2: pointer to second UTF8 char
+        -:  632: *
+        -:  633: * compares the two UCS4 values
+        -:  634: *
+        -:  635: * returns result of the compare as with xmlStrncmp
+        -:  636: */
+        -:  637:int
+    #####:  638:xmlUTF8Charcmp(const xmlChar *utf1, const xmlChar *utf2) {
+        -:  639:
+    #####:  640:    if (utf1 == NULL ) {
+    #####:  641:        if (utf2 == NULL)
+    #####:  642:            return 0;
+    #####:  643:        return -1;
+        -:  644:    }
+    #####:  645:    return xmlStrncmp(utf1, utf2, xmlUTF8Size(utf1));
+        -:  646:}
+        -:  647:
+        -:  648:/**
+        -:  649: * xmlUTF8Strlen:
+        -:  650: * @utf:  a sequence of UTF-8 encoded bytes
+        -:  651: *
+        -:  652: * compute the length of an UTF8 string, it doesn't do a full UTF8
+        -:  653: * checking of the content of the string.
+        -:  654: *
+        -:  655: * Returns the number of characters in the string or -1 in case of error
+        -:  656: */
+        -:  657:int
+    #####:  658:xmlUTF8Strlen(const xmlChar *utf) {
+    #####:  659:    int ret = 0;
+        -:  660:
+    #####:  661:    if (utf == NULL)
+    #####:  662:        return(-1);
+        -:  663:
+    #####:  664:    while (*utf != 0) {
+    #####:  665:        if (utf[0] & 0x80) {
+    #####:  666:            if ((utf[1] & 0xc0) != 0x80)
+    #####:  667:                return(-1);
+    #####:  668:            if ((utf[0] & 0xe0) == 0xe0) {
+    #####:  669:                if ((utf[2] & 0xc0) != 0x80)
+    #####:  670:                    return(-1);
+    #####:  671:                if ((utf[0] & 0xf0) == 0xf0) {
+    #####:  672:                    if ((utf[0] & 0xf8) != 0xf0 || (utf[3] & 0xc0) != 0x80)
+    #####:  673:                        return(-1);
+    #####:  674:                    utf += 4;
+        -:  675:                } else {
+    #####:  676:                    utf += 3;
+        -:  677:                }
+        -:  678:            } else {
+    #####:  679:                utf += 2;
+        -:  680:            }
+        -:  681:        } else {
+    #####:  682:            utf++;
+        -:  683:        }
+    #####:  684:        ret++;
+        -:  685:    }
+    #####:  686:    return(ret);
+        -:  687:}
+        -:  688:
+        -:  689:/**
+        -:  690: * xmlGetUTF8Char:
+        -:  691: * @utf:  a sequence of UTF-8 encoded bytes
+        -:  692: * @len:  a pointer to the minimum number of bytes present in
+        -:  693: *        the sequence.  This is used to assure the next character
+        -:  694: *        is completely contained within the sequence.
+        -:  695: *
+        -:  696: * Read the first UTF8 character from @utf
+        -:  697: *
+        -:  698: * Returns the char value or -1 in case of error, and sets *len to
+        -:  699: *        the actual number of bytes consumed (0 in case of error)
+        -:  700: */
+        -:  701:int
+    #####:  702:xmlGetUTF8Char(const unsigned char *utf, int *len) {
+        -:  703:    unsigned int c;
+        -:  704:
+    #####:  705:    if (utf == NULL)
+    #####:  706:        goto error;
+    #####:  707:    if (len == NULL)
+    #####:  708:        goto error;
+    #####:  709:    if (*len < 1)
+    #####:  710:        goto error;
+        -:  711:
+    #####:  712:    c = utf[0];
+    #####:  713:    if (c & 0x80) {
+    #####:  714:        if (*len < 2)
+    #####:  715:            goto error;
+    #####:  716:        if ((utf[1] & 0xc0) != 0x80)
+    #####:  717:            goto error;
+    #####:  718:        if ((c & 0xe0) == 0xe0) {
+    #####:  719:            if (*len < 3)
+    #####:  720:                goto error;
+    #####:  721:            if ((utf[2] & 0xc0) != 0x80)
+    #####:  722:                goto error;
+    #####:  723:            if ((c & 0xf0) == 0xf0) {
+    #####:  724:                if (*len < 4)
+    #####:  725:                    goto error;
+    #####:  726:                if ((c & 0xf8) != 0xf0 || (utf[3] & 0xc0) != 0x80)
+        -:  727:                    goto error;
+    #####:  728:                *len = 4;
+        -:  729:                /* 4-byte code */
+    #####:  730:                c = (utf[0] & 0x7) << 18;
+    #####:  731:                c |= (utf[1] & 0x3f) << 12;
+    #####:  732:                c |= (utf[2] & 0x3f) << 6;
+    #####:  733:                c |= utf[3] & 0x3f;
+        -:  734:            } else {
+        -:  735:              /* 3-byte code */
+    #####:  736:                *len = 3;
+    #####:  737:                c = (utf[0] & 0xf) << 12;
+    #####:  738:                c |= (utf[1] & 0x3f) << 6;
+    #####:  739:                c |= utf[2] & 0x3f;
+        -:  740:            }
+        -:  741:        } else {
+        -:  742:          /* 2-byte code */
+    #####:  743:            *len = 2;
+    #####:  744:            c = (utf[0] & 0x1f) << 6;
+    #####:  745:            c |= utf[1] & 0x3f;
+        -:  746:        }
+        -:  747:    } else {
+        -:  748:        /* 1-byte code */
+    #####:  749:        *len = 1;
+        -:  750:    }
+    #####:  751:    return(c);
+        -:  752:
+    #####:  753:error:
+    #####:  754:    if (len != NULL)
+    #####:  755:	*len = 0;
+    #####:  756:    return(-1);
+        -:  757:}
+        -:  758:
+        -:  759:/**
+        -:  760: * xmlCheckUTF8:
+        -:  761: * @utf: Pointer to putative UTF-8 encoded string.
+        -:  762: *
+        -:  763: * Checks @utf for being valid UTF-8. @utf is assumed to be
+        -:  764: * null-terminated. This function is not super-strict, as it will
+        -:  765: * allow longer UTF-8 sequences than necessary. Note that Java is
+        -:  766: * capable of producing these sequences if provoked. Also note, this
+        -:  767: * routine checks for the 4-byte maximum size, but does not check for
+        -:  768: * 0x10ffff maximum value.
+        -:  769: *
+        -:  770: * Return value: true if @utf is valid.
+        -:  771: **/
+        -:  772:int
+    #####:  773:xmlCheckUTF8(const unsigned char *utf)
+        -:  774:{
+        -:  775:    int ix;
+        -:  776:    unsigned char c;
+        -:  777:
+    #####:  778:    if (utf == NULL)
+    #####:  779:        return(0);
+        -:  780:    /*
+        -:  781:     * utf is a string of 1, 2, 3 or 4 bytes.  The valid strings
+        -:  782:     * are as follows (in "bit format"):
+        -:  783:     *    0xxxxxxx                                      valid 1-byte
+        -:  784:     *    110xxxxx 10xxxxxx                             valid 2-byte
+        -:  785:     *    1110xxxx 10xxxxxx 10xxxxxx                    valid 3-byte
+        -:  786:     *    11110xxx 10xxxxxx 10xxxxxx 10xxxxxx           valid 4-byte
+        -:  787:     */
+    #####:  788:    for (ix = 0; (c = utf[ix]);) {      /* string is 0-terminated */
+    #####:  789:        if ((c & 0x80) == 0x00) {	/* 1-byte code, starts with 10 */
+    #####:  790:            ix++;
+    #####:  791:	} else if ((c & 0xe0) == 0xc0) {/* 2-byte code, starts with 110 */
+    #####:  792:	    if ((utf[ix+1] & 0xc0 ) != 0x80)
+    #####:  793:	        return 0;
+    #####:  794:	    ix += 2;
+    #####:  795:	} else if ((c & 0xf0) == 0xe0) {/* 3-byte code, starts with 1110 */
+    #####:  796:	    if (((utf[ix+1] & 0xc0) != 0x80) ||
+    #####:  797:	        ((utf[ix+2] & 0xc0) != 0x80))
+    #####:  798:		    return 0;
+    #####:  799:	    ix += 3;
+    #####:  800:	} else if ((c & 0xf8) == 0xf0) {/* 4-byte code, starts with 11110 */
+    #####:  801:	    if (((utf[ix+1] & 0xc0) != 0x80) ||
+    #####:  802:	        ((utf[ix+2] & 0xc0) != 0x80) ||
+    #####:  803:		((utf[ix+3] & 0xc0) != 0x80))
+    #####:  804:		    return 0;
+    #####:  805:	    ix += 4;
+        -:  806:	} else				/* unknown encoding */
+    #####:  807:	    return 0;
+        -:  808:      }
+    #####:  809:      return(1);
+        -:  810:}
+        -:  811:
+        -:  812:/**
+        -:  813: * xmlUTF8Strsize:
+        -:  814: * @utf:  a sequence of UTF-8 encoded bytes
+        -:  815: * @len:  the number of characters in the array
+        -:  816: *
+        -:  817: * storage size of an UTF8 string
+        -:  818: * the behaviour is not garanteed if the input string is not UTF-8
+        -:  819: *
+        -:  820: * Returns the storage size of
+        -:  821: * the first 'len' characters of ARRAY
+        -:  822: */
+        -:  823:
+        -:  824:int
+    #####:  825:xmlUTF8Strsize(const xmlChar *utf, int len) {
+    #####:  826:    const xmlChar   *ptr=utf;
+        -:  827:    xmlChar         ch;
+        -:  828:
+    #####:  829:    if (utf == NULL)
+    #####:  830:        return(0);
+        -:  831:
+    #####:  832:    if (len <= 0)
+    #####:  833:        return(0);
+        -:  834:
+    #####:  835:    while ( len-- > 0) {
+    #####:  836:        if ( !*ptr )
+    #####:  837:            break;
+    #####:  838:        if ( (ch = *ptr++) & 0x80)
+    #####:  839:            while ((ch<<=1) & 0x80 ) {
+    #####:  840:                ptr++;
+    #####:  841:		if (*ptr == 0) break;
+        -:  842:	    }
+        -:  843:    }
+    #####:  844:    return (ptr - utf);
+        -:  845:}
+        -:  846:
+        -:  847:
+        -:  848:/**
+        -:  849: * xmlUTF8Strndup:
+        -:  850: * @utf:  the input UTF8 *
+        -:  851: * @len:  the len of @utf (in chars)
+        -:  852: *
+        -:  853: * a strndup for array of UTF8's
+        -:  854: *
+        -:  855: * Returns a new UTF8 * or NULL
+        -:  856: */
+        -:  857:xmlChar *
+    #####:  858:xmlUTF8Strndup(const xmlChar *utf, int len) {
+        -:  859:    xmlChar *ret;
+        -:  860:    int i;
+        -:  861:
+    #####:  862:    if ((utf == NULL) || (len < 0)) return(NULL);
+    #####:  863:    i = xmlUTF8Strsize(utf, len);
+    #####:  864:    ret = (xmlChar *) xmlMallocAtomic((i + 1) * sizeof(xmlChar));
+    #####:  865:    if (ret == NULL) {
+    #####:  866:        xmlGenericError(xmlGenericErrorContext,
+        -:  867:                "malloc of %ld byte failed\n",
+    #####:  868:                (len + 1) * (long)sizeof(xmlChar));
+    #####:  869:        return(NULL);
+        -:  870:    }
+    #####:  871:    memcpy(ret, utf, i * sizeof(xmlChar));
+    #####:  872:    ret[i] = 0;
+    #####:  873:    return(ret);
+        -:  874:}
+        -:  875:
+        -:  876:/**
+        -:  877: * xmlUTF8Strpos:
+        -:  878: * @utf:  the input UTF8 *
+        -:  879: * @pos:  the position of the desired UTF8 char (in chars)
+        -:  880: *
+        -:  881: * a function to provide the equivalent of fetching a
+        -:  882: * character from a string array
+        -:  883: *
+        -:  884: * Returns a pointer to the UTF8 character or NULL
+        -:  885: */
+        -:  886:const xmlChar *
+    #####:  887:xmlUTF8Strpos(const xmlChar *utf, int pos) {
+        -:  888:    xmlChar ch;
+        -:  889:
+    #####:  890:    if (utf == NULL) return(NULL);
+    #####:  891:    if (pos < 0)
+    #####:  892:        return(NULL);
+    #####:  893:    while (pos--) {
+    #####:  894:        if ((ch=*utf++) == 0) return(NULL);
+    #####:  895:        if ( ch & 0x80 ) {
+        -:  896:            /* if not simple ascii, verify proper format */
+    #####:  897:            if ( (ch & 0xc0) != 0xc0 )
+    #####:  898:                return(NULL);
+        -:  899:            /* then skip over remaining bytes for this char */
+    #####:  900:            while ( (ch <<= 1) & 0x80 )
+    #####:  901:                if ( (*utf++ & 0xc0) != 0x80 )
+    #####:  902:                    return(NULL);
+        -:  903:        }
+        -:  904:    }
+    #####:  905:    return((xmlChar *)utf);
+        -:  906:}
+        -:  907:
+        -:  908:/**
+        -:  909: * xmlUTF8Strloc:
+        -:  910: * @utf:  the input UTF8 *
+        -:  911: * @utfchar:  the UTF8 character to be found
+        -:  912: *
+        -:  913: * a function to provide the relative location of a UTF8 char
+        -:  914: *
+        -:  915: * Returns the relative character position of the desired char
+        -:  916: * or -1 if not found
+        -:  917: */
+        -:  918:int
+    #####:  919:xmlUTF8Strloc(const xmlChar *utf, const xmlChar *utfchar) {
+        -:  920:    int i, size;
+        -:  921:    xmlChar ch;
+        -:  922:
+    #####:  923:    if (utf==NULL || utfchar==NULL) return -1;
+    #####:  924:    size = xmlUTF8Strsize(utfchar, 1);
+    #####:  925:        for(i=0; (ch=*utf) != 0; i++) {
+    #####:  926:            if (xmlStrncmp(utf, utfchar, size)==0)
+    #####:  927:                return(i);
+    #####:  928:            utf++;
+    #####:  929:            if ( ch & 0x80 ) {
+        -:  930:                /* if not simple ascii, verify proper format */
+    #####:  931:                if ( (ch & 0xc0) != 0xc0 )
+    #####:  932:                    return(-1);
+        -:  933:                /* then skip over remaining bytes for this char */
+    #####:  934:                while ( (ch <<= 1) & 0x80 )
+    #####:  935:                    if ( (*utf++ & 0xc0) != 0x80 )
+    #####:  936:                        return(-1);
+        -:  937:            }
+        -:  938:        }
+        -:  939:
+    #####:  940:    return(-1);
+        -:  941:}
+        -:  942:/**
+        -:  943: * xmlUTF8Strsub:
+        -:  944: * @utf:  a sequence of UTF-8 encoded bytes
+        -:  945: * @start: relative pos of first char
+        -:  946: * @len:   total number to copy
+        -:  947: *
+        -:  948: * Create a substring from a given UTF-8 string
+        -:  949: * Note:  positions are given in units of UTF-8 chars
+        -:  950: *
+        -:  951: * Returns a pointer to a newly created string
+        -:  952: * or NULL if any problem
+        -:  953: */
+        -:  954:
+        -:  955:xmlChar *
+    #####:  956:xmlUTF8Strsub(const xmlChar *utf, int start, int len) {
+        -:  957:    int            i;
+        -:  958:    xmlChar ch;
+        -:  959:
+    #####:  960:    if (utf == NULL) return(NULL);
+    #####:  961:    if (start < 0) return(NULL);
+    #####:  962:    if (len < 0) return(NULL);
+        -:  963:
+        -:  964:    /*
+        -:  965:     * Skip over any leading chars
+        -:  966:     */
+    #####:  967:    for (i = 0;i < start;i++) {
+    #####:  968:        if ((ch=*utf++) == 0) return(NULL);
+    #####:  969:        if ( ch & 0x80 ) {
+        -:  970:            /* if not simple ascii, verify proper format */
+    #####:  971:            if ( (ch & 0xc0) != 0xc0 )
+    #####:  972:                return(NULL);
+        -:  973:            /* then skip over remaining bytes for this char */
+    #####:  974:            while ( (ch <<= 1) & 0x80 )
+    #####:  975:                if ( (*utf++ & 0xc0) != 0x80 )
+    #####:  976:                    return(NULL);
+        -:  977:        }
+        -:  978:    }
+        -:  979:
+    #####:  980:    return(xmlUTF8Strndup(utf, len));
+        -:  981:}
+        -:  982:
+        -:  983:#define bottom_xmlstring
+        -:  984:#include "elfgcchack.h"

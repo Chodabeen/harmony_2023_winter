@@ -1,0 +1,404 @@
+        -:    0:Source:testRegexp.c
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * testRegexp.c: simple module for testing regular expressions
+        -:    3: *
+        -:    4: * See Copyright for the status of this software.
+        -:    5: *
+        -:    6: * Daniel Veillard <veillard@redhat.com>
+        -:    7: */
+        -:    8:
+        -:    9:#include "libxml.h"
+        -:   10:#ifdef LIBXML_REGEXP_ENABLED
+        -:   11:#include <string.h>
+        -:   12:
+        -:   13:#include <libxml/tree.h>
+        -:   14:#include <libxml/xmlregexp.h>
+        -:   15:
+        -:   16:static int repeat = 0;
+        -:   17:static int debug = 0;
+        -:   18:
+    #####:   19:static void testRegexp(xmlRegexpPtr comp, const char *value) {
+        -:   20:    int ret;
+        -:   21:
+    #####:   22:    ret = xmlRegexpExec(comp, (const xmlChar *) value);
+    #####:   23:    if (ret == 1)
+    #####:   24:	printf("%s: Ok\n", value);
+    #####:   25:    else if (ret == 0)
+    #####:   26:	printf("%s: Fail\n", value);
+        -:   27:    else
+    #####:   28:	printf("%s: Error: %d\n", value, ret);
+    #####:   29:    if (repeat) {
+        -:   30:	int j;
+    #####:   31:	for (j = 0;j < 999999;j++)
+    #####:   32:	    xmlRegexpExec(comp, (const xmlChar *) value);
+        -:   33:    }
+    #####:   34:}
+        -:   35:
+        -:   36:static void
+    #####:   37:testRegexpFile(const char *filename) {
+    #####:   38:    xmlRegexpPtr comp = NULL;
+        -:   39:    FILE *input;
+        -:   40:    char expression[5000];
+        -:   41:    int len;
+        -:   42:
+    #####:   43:    input = fopen(filename, "r");
+    #####:   44:    if (input == NULL) {
+    #####:   45:        xmlGenericError(xmlGenericErrorContext,
+        -:   46:		"Cannot open %s for reading\n", filename);
+    #####:   47:	return;
+        -:   48:    }
+    #####:   49:    while (fgets(expression, 4500, input) != NULL) {
+    #####:   50:	len = strlen(expression);
+    #####:   51:	len--;
+    #####:   52:	while ((len >= 0) &&
+    #####:   53:	       ((expression[len] == '\n') || (expression[len] == '\t') ||
+    #####:   54:		(expression[len] == '\r') || (expression[len] == ' '))) len--;
+    #####:   55:	expression[len + 1] = 0;
+    #####:   56:	if (len >= 0) {
+    #####:   57:	    if (expression[0] == '#')
+    #####:   58:		continue;
+    #####:   59:	    if ((expression[0] == '=') && (expression[1] == '>')) {
+    #####:   60:		char *pattern = &expression[2];
+        -:   61:
+    #####:   62:		if (comp != NULL) {
+    #####:   63:		    xmlRegFreeRegexp(comp);
+    #####:   64:		    comp = NULL;
+        -:   65:		}
+    #####:   66:		printf("Regexp: %s\n", pattern) ;
+    #####:   67:		comp = xmlRegexpCompile((const xmlChar *) pattern);
+    #####:   68:		if (comp == NULL) {
+    #####:   69:		    printf("   failed to compile\n");
+    #####:   70:		    break;
+        -:   71:		}
+    #####:   72:	    } else if (comp == NULL) {
+    #####:   73:		printf("Regexp: %s\n", expression) ;
+    #####:   74:		comp = xmlRegexpCompile((const xmlChar *) expression);
+    #####:   75:		if (comp == NULL) {
+    #####:   76:		    printf("   failed to compile\n");
+    #####:   77:		    break;
+        -:   78:		}
+    #####:   79:	    } else if (comp != NULL) {
+    #####:   80:		testRegexp(comp, expression);
+        -:   81:	    }
+        -:   82:	}
+        -:   83:    }
+    #####:   84:    fclose(input);
+    #####:   85:    if (comp != NULL)
+    #####:   86:	xmlRegFreeRegexp(comp);
+        -:   87:}
+        -:   88:
+        -:   89:#ifdef LIBXML_EXPR_ENABLED
+        -:   90:static void
+    #####:   91:runFileTest(xmlExpCtxtPtr ctxt, const char *filename) {
+    #####:   92:    xmlExpNodePtr expr = NULL, sub;
+        -:   93:    FILE *input;
+        -:   94:    char expression[5000];
+        -:   95:    int len;
+        -:   96:
+    #####:   97:    input = fopen(filename, "r");
+    #####:   98:    if (input == NULL) {
+    #####:   99:        xmlGenericError(xmlGenericErrorContext,
+        -:  100:		"Cannot open %s for reading\n", filename);
+    #####:  101:	return;
+        -:  102:    }
+    #####:  103:    while (fgets(expression, 4500, input) != NULL) {
+    #####:  104:	len = strlen(expression);
+    #####:  105:	len--;
+    #####:  106:	while ((len >= 0) &&
+    #####:  107:	       ((expression[len] == '\n') || (expression[len] == '\t') ||
+    #####:  108:		(expression[len] == '\r') || (expression[len] == ' '))) len--;
+    #####:  109:	expression[len + 1] = 0;
+    #####:  110:	if (len >= 0) {
+    #####:  111:	    if (expression[0] == '#')
+    #####:  112:		continue;
+    #####:  113:	    if ((expression[0] == '=') && (expression[1] == '>')) {
+    #####:  114:		char *str = &expression[2];
+        -:  115:
+    #####:  116:		if (expr != NULL) {
+    #####:  117:		    xmlExpFree(ctxt, expr);
+    #####:  118:		    if (xmlExpCtxtNbNodes(ctxt) != 0)
+    #####:  119:		        printf(" Parse/free of Expression leaked %d\n",
+        -:  120:			       xmlExpCtxtNbNodes(ctxt));
+    #####:  121:		    expr = NULL;
+        -:  122:		}
+    #####:  123:		printf("Expression: %s\n", str) ;
+    #####:  124:		expr = xmlExpParse(ctxt, str);
+    #####:  125:		if (expr == NULL) {
+    #####:  126:		    printf("   parsing Failed\n");
+    #####:  127:		    break;
+        -:  128:		}
+    #####:  129:	    } else if (expr != NULL) {
+    #####:  130:	        int expect = -1;
+        -:  131:		int nodes1, nodes2;
+        -:  132:
+    #####:  133:		if (expression[0] == '0')
+    #####:  134:		    expect = 0;
+    #####:  135:		if (expression[0] == '1')
+    #####:  136:		    expect = 1;
+    #####:  137:		printf("Subexp: %s", expression + 2) ;
+    #####:  138:		nodes1 = xmlExpCtxtNbNodes(ctxt);
+    #####:  139:		sub = xmlExpParse(ctxt, expression + 2);
+    #####:  140:		if (sub == NULL) {
+    #####:  141:		    printf("   parsing Failed\n");
+    #####:  142:		    break;
+        -:  143:		} else {
+        -:  144:		    int ret;
+        -:  145:
+    #####:  146:		    nodes2 = xmlExpCtxtNbNodes(ctxt);
+    #####:  147:		    ret = xmlExpSubsume(ctxt, expr, sub);
+        -:  148:
+    #####:  149:		    if ((expect == 1) && (ret == 1)) {
+    #####:  150:			printf(" => accept, Ok\n");
+    #####:  151:		    } else if ((expect == 0) && (ret == 0)) {
+    #####:  152:		        printf(" => reject, Ok\n");
+    #####:  153:		    } else if ((expect == 1) && (ret == 0)) {
+    #####:  154:			printf(" => reject, Failed\n");
+    #####:  155:		    } else if ((expect == 0) && (ret == 1)) {
+    #####:  156:			printf(" => accept, Failed\n");
+        -:  157:		    } else {
+    #####:  158:		        printf(" => fail internally\n");
+        -:  159:		    }
+    #####:  160:		    if (xmlExpCtxtNbNodes(ctxt) > nodes2) {
+    #####:  161:		        printf(" Subsume leaked %d\n",
+    #####:  162:			       xmlExpCtxtNbNodes(ctxt) - nodes2);
+    #####:  163:			nodes1 += xmlExpCtxtNbNodes(ctxt) - nodes2;
+        -:  164:		    }
+    #####:  165:		    xmlExpFree(ctxt, sub);
+    #####:  166:		    if (xmlExpCtxtNbNodes(ctxt) > nodes1) {
+    #####:  167:		        printf(" Parse/free leaked %d\n",
+    #####:  168:			       xmlExpCtxtNbNodes(ctxt) - nodes1);
+        -:  169:		    }
+        -:  170:		}
+        -:  171:
+        -:  172:	    }
+        -:  173:	}
+        -:  174:    }
+    #####:  175:    if (expr != NULL) {
+    #####:  176:	xmlExpFree(ctxt, expr);
+    #####:  177:	if (xmlExpCtxtNbNodes(ctxt) != 0)
+    #####:  178:	    printf(" Parse/free of Expression leaked %d\n",
+        -:  179:		   xmlExpCtxtNbNodes(ctxt));
+        -:  180:    }
+    #####:  181:    fclose(input);
+        -:  182:}
+        -:  183:
+        -:  184:static void
+    #####:  185:testReduce(xmlExpCtxtPtr ctxt, xmlExpNodePtr expr, const char *tst) {
+        -:  186:    xmlBufferPtr xmlExpBuf;
+        -:  187:    xmlExpNodePtr sub, deriv;
+    #####:  188:    xmlExpBuf = xmlBufferCreate();
+        -:  189:
+    #####:  190:    sub = xmlExpParse(ctxt, tst);
+    #####:  191:    if (sub == NULL) {
+    #####:  192:        printf("Subset %s failed to parse\n", tst);
+    #####:  193:	return;
+        -:  194:    }
+    #####:  195:    xmlExpDump(xmlExpBuf, sub);
+    #####:  196:    printf("Subset parsed as: %s\n",
+    #####:  197:           (const char *) xmlBufferContent(xmlExpBuf));
+    #####:  198:    deriv = xmlExpExpDerive(ctxt, expr, sub);
+    #####:  199:    if (deriv == NULL) {
+    #####:  200:        printf("Derivation led to an internal error, report this !\n");
+    #####:  201:	return;
+        -:  202:    } else {
+    #####:  203:        xmlBufferEmpty(xmlExpBuf);
+    #####:  204:	xmlExpDump(xmlExpBuf, deriv);
+    #####:  205:	if (xmlExpIsNillable(deriv))
+    #####:  206:	    printf("Resulting nillable derivation: %s\n",
+    #####:  207:	           (const char *) xmlBufferContent(xmlExpBuf));
+        -:  208:	else
+    #####:  209:	    printf("Resulting derivation: %s\n",
+    #####:  210:	           (const char *) xmlBufferContent(xmlExpBuf));
+    #####:  211:	xmlExpFree(ctxt, deriv);
+        -:  212:    }
+    #####:  213:    xmlExpFree(ctxt, sub);
+        -:  214:}
+        -:  215:
+        -:  216:static void
+    #####:  217:exprDebug(xmlExpCtxtPtr ctxt, xmlExpNodePtr expr) {
+        -:  218:    xmlBufferPtr xmlExpBuf;
+        -:  219:    xmlExpNodePtr deriv;
+        -:  220:    const char *list[40];
+        -:  221:    int ret;
+        -:  222:
+    #####:  223:    xmlExpBuf = xmlBufferCreate();
+        -:  224:
+    #####:  225:    if (expr == NULL) {
+    #####:  226:        printf("Failed to parse\n");
+    #####:  227:	return;
+        -:  228:    }
+    #####:  229:    xmlExpDump(xmlExpBuf, expr);
+    #####:  230:    printf("Parsed as: %s\n", (const char *) xmlBufferContent(xmlExpBuf));
+    #####:  231:    printf("Max token input = %d\n", xmlExpMaxToken(expr));
+    #####:  232:    if (xmlExpIsNillable(expr) == 1)
+    #####:  233:	printf("Is nillable\n");
+    #####:  234:    ret = xmlExpGetLanguage(ctxt, expr, (const xmlChar **) &list[0], 40);
+    #####:  235:    if (ret < 0)
+    #####:  236:	printf("Failed to get list: %d\n", ret);
+        -:  237:    else {
+        -:  238:	int i;
+        -:  239:
+    #####:  240:	printf("Language has %d strings, testing string derivations\n", ret);
+    #####:  241:	for (i = 0;i < ret;i++) {
+    #####:  242:	    deriv = xmlExpStringDerive(ctxt, expr, BAD_CAST list[i], -1);
+    #####:  243:	    if (deriv == NULL) {
+    #####:  244:		printf("  %s -> derivation failed\n", list[i]);
+        -:  245:	    } else {
+    #####:  246:		xmlBufferEmpty(xmlExpBuf);
+    #####:  247:		xmlExpDump(xmlExpBuf, deriv);
+    #####:  248:		printf("  %s -> %s\n", list[i],
+    #####:  249:		       (const char *) xmlBufferContent(xmlExpBuf));
+        -:  250:	    }
+    #####:  251:	    xmlExpFree(ctxt, deriv);
+        -:  252:	}
+        -:  253:    }
+    #####:  254:    xmlBufferFree(xmlExpBuf);
+        -:  255:}
+        -:  256:#endif
+        -:  257:
+    #####:  258:static void usage(const char *name) {
+    #####:  259:    fprintf(stderr, "Usage: %s [flags]\n", name);
+    #####:  260:    fprintf(stderr, "Testing tool for libxml2 string and pattern regexps\n");
+    #####:  261:    fprintf(stderr, "   --debug: switch on debugging\n");
+    #####:  262:    fprintf(stderr, "   --repeat: loop on the operation\n");
+        -:  263:#ifdef LIBXML_EXPR_ENABLED
+    #####:  264:    fprintf(stderr, "   --expr: test xmlExp and not xmlRegexp\n");
+        -:  265:#endif
+    #####:  266:    fprintf(stderr, "   --input filename: use the given filename for regexp\n");
+    #####:  267:    fprintf(stderr, "   --input filename: use the given filename for exp\n");
+    #####:  268:}
+        -:  269:
+    #####:  270:int main(int argc, char **argv) {
+    #####:  271:    xmlRegexpPtr comp = NULL;
+        -:  272:#ifdef LIBXML_EXPR_ENABLED
+    #####:  273:    xmlExpNodePtr expr = NULL;
+    #####:  274:    int use_exp = 0;
+    #####:  275:    xmlExpCtxtPtr ctxt = NULL;
+        -:  276:#endif
+    #####:  277:    const char *pattern = NULL;
+    #####:  278:    char *filename = NULL;
+        -:  279:    int i;
+        -:  280:
+    #####:  281:    xmlInitMemory();
+        -:  282:
+    #####:  283:    if (argc <= 1) {
+    #####:  284:	usage(argv[0]);
+    #####:  285:	return(1);
+        -:  286:    }
+    #####:  287:    for (i = 1; i < argc ; i++) {
+    #####:  288:	if (!strcmp(argv[i], "-"))
+    #####:  289:	    break;
+        -:  290:
+    #####:  291:	if (argv[i][0] != '-')
+    #####:  292:	    continue;
+    #####:  293:	if (!strcmp(argv[i], "--"))
+    #####:  294:	    break;
+        -:  295:
+    #####:  296:	if ((!strcmp(argv[i], "-debug")) || (!strcmp(argv[i], "--debug"))) {
+    #####:  297:	    debug++;
+    #####:  298:	} else if ((!strcmp(argv[i], "-repeat")) ||
+    #####:  299:	         (!strcmp(argv[i], "--repeat"))) {
+    #####:  300:	    repeat++;
+        -:  301:#ifdef LIBXML_EXPR_ENABLED
+    #####:  302:	} else if ((!strcmp(argv[i], "-expr")) ||
+    #####:  303:	         (!strcmp(argv[i], "--expr"))) {
+    #####:  304:	    use_exp++;
+        -:  305:#endif
+    #####:  306:	} else if ((!strcmp(argv[i], "-i")) || (!strcmp(argv[i], "-f")) ||
+    #####:  307:		   (!strcmp(argv[i], "--input")))
+    #####:  308:	    filename = argv[++i];
+        -:  309:        else {
+    #####:  310:	    fprintf(stderr, "Unknown option %s\n", argv[i]);
+    #####:  311:	    usage(argv[0]);
+        -:  312:	}
+        -:  313:    }
+        -:  314:
+        -:  315:#ifdef LIBXML_EXPR_ENABLED
+    #####:  316:    if (use_exp)
+    #####:  317:	ctxt = xmlExpNewCtxt(0, NULL);
+        -:  318:#endif
+        -:  319:
+    #####:  320:    if (filename != NULL) {
+        -:  321:#ifdef LIBXML_EXPR_ENABLED
+    #####:  322:        if (use_exp)
+    #####:  323:	    runFileTest(ctxt, filename);
+        -:  324:	else
+        -:  325:#endif
+    #####:  326:	    testRegexpFile(filename);
+        -:  327:    } else {
+    #####:  328:        int  data = 0;
+        -:  329:#ifdef LIBXML_EXPR_ENABLED
+        -:  330:
+    #####:  331:        if (use_exp) {
+    #####:  332:	    for (i = 1; i < argc ; i++) {
+    #####:  333:	        if (strcmp(argv[i], "--") == 0)
+    #####:  334:		    data = 1;
+    #####:  335:		else if ((argv[i][0] != '-') || (strcmp(argv[i], "-") == 0) ||
+        -:  336:		    (data == 1)) {
+    #####:  337:		    if (pattern == NULL) {
+    #####:  338:			pattern = argv[i];
+    #####:  339:			printf("Testing expr %s:\n", pattern);
+    #####:  340:			expr = xmlExpParse(ctxt, pattern);
+    #####:  341:			if (expr == NULL) {
+    #####:  342:			    printf("   failed to compile\n");
+    #####:  343:			    break;
+        -:  344:			}
+    #####:  345:			if (debug) {
+    #####:  346:			    exprDebug(ctxt, expr);
+        -:  347:			}
+        -:  348:		    } else {
+    #####:  349:			testReduce(ctxt, expr, argv[i]);
+        -:  350:		    }
+        -:  351:		}
+        -:  352:	    }
+    #####:  353:	    if (expr != NULL) {
+    #####:  354:		xmlExpFree(ctxt, expr);
+    #####:  355:		expr = NULL;
+        -:  356:	    }
+        -:  357:	} else
+        -:  358:#endif
+        -:  359:        {
+    #####:  360:	    for (i = 1; i < argc ; i++) {
+    #####:  361:	        if (strcmp(argv[i], "--") == 0)
+    #####:  362:		    data = 1;
+    #####:  363:		else if ((argv[i][0] != '-') || (strcmp(argv[i], "-") == 0) ||
+        -:  364:		         (data == 1)) {
+    #####:  365:		    if (pattern == NULL) {
+    #####:  366:			pattern = argv[i];
+    #####:  367:			printf("Testing %s:\n", pattern);
+    #####:  368:			comp = xmlRegexpCompile((const xmlChar *) pattern);
+    #####:  369:			if (comp == NULL) {
+    #####:  370:			    printf("   failed to compile\n");
+    #####:  371:			    break;
+        -:  372:			}
+    #####:  373:			if (debug)
+    #####:  374:			    xmlRegexpPrint(stdout, comp);
+        -:  375:		    } else {
+    #####:  376:			testRegexp(comp, argv[i]);
+        -:  377:		    }
+        -:  378:		}
+        -:  379:	    }
+    #####:  380:	    if (comp != NULL)
+    #####:  381:		xmlRegFreeRegexp(comp);
+        -:  382:        }
+        -:  383:    }
+        -:  384:#ifdef LIBXML_EXPR_ENABLED
+    #####:  385:    if (ctxt != NULL) {
+    #####:  386:	printf("Ops: %d nodes, %d cons\n",
+        -:  387:	       xmlExpCtxtNbNodes(ctxt), xmlExpCtxtNbCons(ctxt));
+    #####:  388:	xmlExpFreeCtxt(ctxt);
+        -:  389:    }
+        -:  390:#endif
+    #####:  391:    xmlCleanupParser();
+    #####:  392:    xmlMemoryDump();
+    #####:  393:    return(0);
+        -:  394:}
+        -:  395:
+        -:  396:#else
+        -:  397:#include <stdio.h>
+        -:  398:int main(int argc ATTRIBUTE_UNUSED, char **argv ATTRIBUTE_UNUSED) {
+        -:  399:    printf("%s : Regexp support not compiled in\n", argv[0]);
+        -:  400:    return(0);
+        -:  401:}
+        -:  402:#endif /* LIBXML_REGEXP_ENABLED */

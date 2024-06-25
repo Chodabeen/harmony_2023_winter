@@ -1,0 +1,15 @@
+s tst="a&“m<p tst="a&amp;b" tst2="a&b" tstC//DTD HTML 4.0 Transitional//HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN>
+    <td bgco="4">
+	  <tr>
+	  " "http://www.w3.org/TR/REC-html40/strict.dtd="a & b">
+a&amp;b
+a&b
+a>gnome-xml push mode bug</titltr>
+	  " "http://www.w3.o border="4">
+  <tr>
+    <td bgco="4">
+	  <tr>
+	    <td>Foo2border="4">
+	  <tr&a	    <tF>doo2<p><p></td></tr></table>
+    </td>
+    <td bg

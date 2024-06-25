@@ -1,0 +1,8 @@
+<p tsx="a&amp;b" tstr="a&b" a & b">
+a<amp;a &‹b">
+a b
+</p>
+tst3="a & b">
+a<amp;a &‹b">
+a b
+</p>

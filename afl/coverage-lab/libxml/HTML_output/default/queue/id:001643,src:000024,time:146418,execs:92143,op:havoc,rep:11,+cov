@@ -1,0 +1,23 @@
+<!ramming LangDOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strikt//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<h2="a&b" tst3=tp://www.w3.org/1999/xhtml">
+	<head>
+		rite("Příliš žluťoupt>ťou�
+	<p>
+	Příli�ntfnt-Type" content="text/html; charset=UTF-8" />
+<title>Test Page</title>
+</head>
+<body>
+<div id="ode bug</title>
+</head>�<body>
+
+script">
+	documen.write("Příliš žluťoučký kůň úpěl ďábelksé ódy");
+</scrhpt>ťou�
+	<p>
+	Příliš žluťoučký kůň úpęl ďábelksé ódy;
+	</p>
+</div>
+</body>
+</html>
+

@@ -1,0 +1,3033 @@
+        -:    0:Source:xpointer.c
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * xpointer.c : Code to handle XML Pointer
+        -:    3: *
+        -:    4: * Base implementation was made accordingly to
+        -:    5: * W3C Candidate Recommendation 7 June 2000
+        -:    6: * http://www.w3.org/TR/2000/CR-xptr-20000607
+        -:    7: *
+        -:    8: * Added support for the element() scheme described in:
+        -:    9: * W3C Proposed Recommendation 13 November 2002
+        -:   10: * http://www.w3.org/TR/2002/PR-xptr-element-20021113/
+        -:   11: *
+        -:   12: * See Copyright for the status of this software.
+        -:   13: *
+        -:   14: * daniel@veillard.com
+        -:   15: */
+        -:   16:
+        -:   17:#define IN_LIBXML
+        -:   18:#include "libxml.h"
+        -:   19:
+        -:   20:/*
+        -:   21: * TODO: better handling of error cases, the full expression should
+        -:   22: *       be parsed beforehand instead of a progressive evaluation
+        -:   23: * TODO: Access into entities references are not supported now ...
+        -:   24: *       need a start to be able to pop out of entities refs since
+        -:   25: *       parent is the endity declaration, not the ref.
+        -:   26: */
+        -:   27:
+        -:   28:#include <string.h>
+        -:   29:#include <libxml/xpointer.h>
+        -:   30:#include <libxml/xmlmemory.h>
+        -:   31:#include <libxml/parserInternals.h>
+        -:   32:#include <libxml/uri.h>
+        -:   33:#include <libxml/xpath.h>
+        -:   34:#include <libxml/xpathInternals.h>
+        -:   35:#include <libxml/xmlerror.h>
+        -:   36:#include <libxml/globals.h>
+        -:   37:
+        -:   38:#ifdef LIBXML_XPTR_ENABLED
+        -:   39:
+        -:   40:/* Add support of the xmlns() xpointer scheme to initialize the namespaces */
+        -:   41:#define XPTR_XMLNS_SCHEME
+        -:   42:
+        -:   43:/* #define DEBUG_RANGES */
+        -:   44:#ifdef DEBUG_RANGES
+        -:   45:#ifdef LIBXML_DEBUG_ENABLED
+        -:   46:#include <libxml/debugXML.h>
+        -:   47:#endif
+        -:   48:#endif
+        -:   49:
+        -:   50:#define TODO								\
+        -:   51:    xmlGenericError(xmlGenericErrorContext,				\
+        -:   52:	    "Unimplemented block at %s:%d\n",				\
+        -:   53:            __FILE__, __LINE__);
+        -:   54:
+        -:   55:#define STRANGE							\
+        -:   56:    xmlGenericError(xmlGenericErrorContext,				\
+        -:   57:	    "Internal error at %s:%d\n",				\
+        -:   58:            __FILE__, __LINE__);
+        -:   59:
+        -:   60:/************************************************************************
+        -:   61: *									*
+        -:   62: *		Some factorized error routines				*
+        -:   63: *									*
+        -:   64: ************************************************************************/
+        -:   65:
+        -:   66:/**
+        -:   67: * xmlXPtrErrMemory:
+        -:   68: * @extra:  extra informations
+        -:   69: *
+        -:   70: * Handle a redefinition of attribute error
+        -:   71: */
+        -:   72:static void
+    #####:   73:xmlXPtrErrMemory(const char *extra)
+        -:   74:{
+    #####:   75:    __xmlRaiseError(NULL, NULL, NULL, NULL, NULL, XML_FROM_XPOINTER,
+        -:   76:		    XML_ERR_NO_MEMORY, XML_ERR_ERROR, NULL, 0, extra,
+        -:   77:		    NULL, NULL, 0, 0,
+        -:   78:		    "Memory allocation failed : %s\n", extra);
+    #####:   79:}
+        -:   80:
+        -:   81:/**
+        -:   82: * xmlXPtrErr:
+        -:   83: * @ctxt:  an XPTR evaluation context
+        -:   84: * @extra:  extra informations
+        -:   85: *
+        -:   86: * Handle a redefinition of attribute error
+        -:   87: */
+        -:   88:static void
+    #####:   89:xmlXPtrErr(xmlXPathParserContextPtr ctxt, int error,
+        -:   90:           const char * msg, const xmlChar *extra)
+        -:   91:{
+    #####:   92:    if (ctxt != NULL)
+    #####:   93:        ctxt->error = error;
+    #####:   94:    if ((ctxt == NULL) || (ctxt->context == NULL)) {
+    #####:   95:	__xmlRaiseError(NULL, NULL, NULL,
+        -:   96:			NULL, NULL, XML_FROM_XPOINTER, error,
+        -:   97:			XML_ERR_ERROR, NULL, 0,
+        -:   98:			(const char *) extra, NULL, NULL, 0, 0,
+        -:   99:			msg, extra);
+    #####:  100:	return;
+        -:  101:    }
+    #####:  102:    ctxt->context->lastError.domain = XML_FROM_XPOINTER;
+    #####:  103:    ctxt->context->lastError.code = error;
+    #####:  104:    ctxt->context->lastError.level = XML_ERR_ERROR;
+    #####:  105:    ctxt->context->lastError.str1 = (char *) xmlStrdup(ctxt->base);
+    #####:  106:    ctxt->context->lastError.int1 = ctxt->cur - ctxt->base;
+    #####:  107:    ctxt->context->lastError.node = ctxt->context->debugNode;
+    #####:  108:    if (ctxt->context->error != NULL) {
+    #####:  109:	ctxt->context->error(ctxt->context->userData,
+    #####:  110:	                     &ctxt->context->lastError);
+        -:  111:    } else {
+    #####:  112:	__xmlRaiseError(NULL, NULL, NULL,
+    #####:  113:			NULL, ctxt->context->debugNode, XML_FROM_XPOINTER,
+        -:  114:			error, XML_ERR_ERROR, NULL, 0,
+    #####:  115:			(const char *) extra, (const char *) ctxt->base, NULL,
+    #####:  116:			ctxt->cur - ctxt->base, 0,
+        -:  117:			msg, extra);
+        -:  118:    }
+        -:  119:}
+        -:  120:
+        -:  121:/************************************************************************
+        -:  122: *									*
+        -:  123: *		A few helper functions for child sequences		*
+        -:  124: *									*
+        -:  125: ************************************************************************/
+        -:  126:/* xmlXPtrAdvanceNode is a private function, but used by xinclude.c */
+        -:  127:xmlNodePtr xmlXPtrAdvanceNode(xmlNodePtr cur, int *level);
+        -:  128:/**
+        -:  129: * xmlXPtrGetArity:
+        -:  130: * @cur:  the node
+        -:  131: *
+        -:  132: * Returns the number of child for an element, -1 in case of error
+        -:  133: */
+        -:  134:static int
+    #####:  135:xmlXPtrGetArity(xmlNodePtr cur) {
+        -:  136:    int i;
+    #####:  137:    if ((cur == NULL) || (cur->type == XML_NAMESPACE_DECL))
+    #####:  138:	return(-1);
+    #####:  139:    cur = cur->children;
+    #####:  140:    for (i = 0;cur != NULL;cur = cur->next) {
+    #####:  141:	if ((cur->type == XML_ELEMENT_NODE) ||
+    #####:  142:	    (cur->type == XML_DOCUMENT_NODE) ||
+    #####:  143:	    (cur->type == XML_HTML_DOCUMENT_NODE)) {
+    #####:  144:	    i++;
+        -:  145:	}
+        -:  146:    }
+    #####:  147:    return(i);
+        -:  148:}
+        -:  149:
+        -:  150:/**
+        -:  151: * xmlXPtrGetIndex:
+        -:  152: * @cur:  the node
+        -:  153: *
+        -:  154: * Returns the index of the node in its parent children list, -1
+        -:  155: *         in case of error
+        -:  156: */
+        -:  157:static int
+    #####:  158:xmlXPtrGetIndex(xmlNodePtr cur) {
+        -:  159:    int i;
+    #####:  160:    if ((cur == NULL) || (cur->type == XML_NAMESPACE_DECL))
+    #####:  161:	return(-1);
+    #####:  162:    for (i = 1;cur != NULL;cur = cur->prev) {
+    #####:  163:	if ((cur->type == XML_ELEMENT_NODE) ||
+    #####:  164:	    (cur->type == XML_DOCUMENT_NODE) ||
+    #####:  165:	    (cur->type == XML_HTML_DOCUMENT_NODE)) {
+    #####:  166:	    i++;
+        -:  167:	}
+        -:  168:    }
+    #####:  169:    return(i);
+        -:  170:}
+        -:  171:
+        -:  172:/**
+        -:  173: * xmlXPtrGetNthChild:
+        -:  174: * @cur:  the node
+        -:  175: * @no:  the child number
+        -:  176: *
+        -:  177: * Returns the @no'th element child of @cur or NULL
+        -:  178: */
+        -:  179:static xmlNodePtr
+    #####:  180:xmlXPtrGetNthChild(xmlNodePtr cur, int no) {
+        -:  181:    int i;
+    #####:  182:    if ((cur == NULL) || (cur->type == XML_NAMESPACE_DECL))
+    #####:  183:	return(cur);
+    #####:  184:    cur = cur->children;
+    #####:  185:    for (i = 0;i <= no;cur = cur->next) {
+    #####:  186:	if (cur == NULL)
+    #####:  187:	    return(cur);
+    #####:  188:	if ((cur->type == XML_ELEMENT_NODE) ||
+    #####:  189:	    (cur->type == XML_DOCUMENT_NODE) ||
+    #####:  190:	    (cur->type == XML_HTML_DOCUMENT_NODE)) {
+    #####:  191:	    i++;
+    #####:  192:	    if (i == no)
+    #####:  193:		break;
+        -:  194:	}
+        -:  195:    }
+    #####:  196:    return(cur);
+        -:  197:}
+        -:  198:
+        -:  199:/************************************************************************
+        -:  200: *									*
+        -:  201: *		Handling of XPointer specific types			*
+        -:  202: *									*
+        -:  203: ************************************************************************/
+        -:  204:
+        -:  205:/**
+        -:  206: * xmlXPtrCmpPoints:
+        -:  207: * @node1:  the first node
+        -:  208: * @index1:  the first index
+        -:  209: * @node2:  the second node
+        -:  210: * @index2:  the second index
+        -:  211: *
+        -:  212: * Compare two points w.r.t document order
+        -:  213: *
+        -:  214: * Returns -2 in case of error 1 if first point < second point, 0 if
+        -:  215: *         that's the same point, -1 otherwise
+        -:  216: */
+        -:  217:static int
+    #####:  218:xmlXPtrCmpPoints(xmlNodePtr node1, int index1, xmlNodePtr node2, int index2) {
+    #####:  219:    if ((node1 == NULL) || (node2 == NULL))
+    #####:  220:	return(-2);
+        -:  221:    /*
+        -:  222:     * a couple of optimizations which will avoid computations in most cases
+        -:  223:     */
+    #####:  224:    if (node1 == node2) {
+    #####:  225:	if (index1 < index2)
+    #####:  226:	    return(1);
+    #####:  227:	if (index1 > index2)
+    #####:  228:	    return(-1);
+    #####:  229:	return(0);
+        -:  230:    }
+    #####:  231:    return(xmlXPathCmpNodes(node1, node2));
+        -:  232:}
+        -:  233:
+        -:  234:/**
+        -:  235: * xmlXPtrNewPoint:
+        -:  236: * @node:  the xmlNodePtr
+        -:  237: * @indx:  the indx within the node
+        -:  238: *
+        -:  239: * Create a new xmlXPathObjectPtr of type point
+        -:  240: *
+        -:  241: * Returns the newly created object.
+        -:  242: */
+        -:  243:static xmlXPathObjectPtr
+    #####:  244:xmlXPtrNewPoint(xmlNodePtr node, int indx) {
+        -:  245:    xmlXPathObjectPtr ret;
+        -:  246:
+    #####:  247:    if (node == NULL)
+    #####:  248:	return(NULL);
+    #####:  249:    if (indx < 0)
+    #####:  250:	return(NULL);
+        -:  251:
+    #####:  252:    ret = (xmlXPathObjectPtr) xmlMalloc(sizeof(xmlXPathObject));
+    #####:  253:    if (ret == NULL) {
+    #####:  254:        xmlXPtrErrMemory("allocating point");
+    #####:  255:	return(NULL);
+        -:  256:    }
+    #####:  257:    memset(ret, 0 , (size_t) sizeof(xmlXPathObject));
+    #####:  258:    ret->type = XPATH_POINT;
+    #####:  259:    ret->user = (void *) node;
+    #####:  260:    ret->index = indx;
+    #####:  261:    return(ret);
+        -:  262:}
+        -:  263:
+        -:  264:/**
+        -:  265: * xmlXPtrRangeCheckOrder:
+        -:  266: * @range:  an object range
+        -:  267: *
+        -:  268: * Make sure the points in the range are in the right order
+        -:  269: */
+        -:  270:static void
+    #####:  271:xmlXPtrRangeCheckOrder(xmlXPathObjectPtr range) {
+        -:  272:    int tmp;
+        -:  273:    xmlNodePtr tmp2;
+    #####:  274:    if (range == NULL)
+    #####:  275:	return;
+    #####:  276:    if (range->type != XPATH_RANGE)
+    #####:  277:	return;
+    #####:  278:    if (range->user2 == NULL)
+    #####:  279:	return;
+    #####:  280:    tmp = xmlXPtrCmpPoints(range->user, range->index,
+    #####:  281:	                     range->user2, range->index2);
+    #####:  282:    if (tmp == -1) {
+    #####:  283:	tmp2 = range->user;
+    #####:  284:	range->user = range->user2;
+    #####:  285:	range->user2 = tmp2;
+    #####:  286:	tmp = range->index;
+    #####:  287:	range->index = range->index2;
+    #####:  288:	range->index2 = tmp;
+        -:  289:    }
+        -:  290:}
+        -:  291:
+        -:  292:/**
+        -:  293: * xmlXPtrRangesEqual:
+        -:  294: * @range1:  the first range
+        -:  295: * @range2:  the second range
+        -:  296: *
+        -:  297: * Compare two ranges
+        -:  298: *
+        -:  299: * Returns 1 if equal, 0 otherwise
+        -:  300: */
+        -:  301:static int
+    #####:  302:xmlXPtrRangesEqual(xmlXPathObjectPtr range1, xmlXPathObjectPtr range2) {
+    #####:  303:    if (range1 == range2)
+    #####:  304:	return(1);
+    #####:  305:    if ((range1 == NULL) || (range2 == NULL))
+    #####:  306:	return(0);
+    #####:  307:    if (range1->type != range2->type)
+    #####:  308:	return(0);
+    #####:  309:    if (range1->type != XPATH_RANGE)
+    #####:  310:	return(0);
+    #####:  311:    if (range1->user != range2->user)
+    #####:  312:	return(0);
+    #####:  313:    if (range1->index != range2->index)
+    #####:  314:	return(0);
+    #####:  315:    if (range1->user2 != range2->user2)
+    #####:  316:	return(0);
+    #####:  317:    if (range1->index2 != range2->index2)
+    #####:  318:	return(0);
+    #####:  319:    return(1);
+        -:  320:}
+        -:  321:
+        -:  322:/**
+        -:  323: * xmlXPtrNewRange:
+        -:  324: * @start:  the starting node
+        -:  325: * @startindex:  the start index
+        -:  326: * @end:  the ending point
+        -:  327: * @endindex:  the ending index
+        -:  328: *
+        -:  329: * Create a new xmlXPathObjectPtr of type range
+        -:  330: *
+        -:  331: * Returns the newly created object.
+        -:  332: */
+        -:  333:xmlXPathObjectPtr
+    #####:  334:xmlXPtrNewRange(xmlNodePtr start, int startindex,
+        -:  335:	        xmlNodePtr end, int endindex) {
+        -:  336:    xmlXPathObjectPtr ret;
+        -:  337:
+    #####:  338:    if (start == NULL)
+    #####:  339:	return(NULL);
+    #####:  340:    if (end == NULL)
+    #####:  341:	return(NULL);
+    #####:  342:    if (startindex < 0)
+    #####:  343:	return(NULL);
+    #####:  344:    if (endindex < 0)
+    #####:  345:	return(NULL);
+        -:  346:
+    #####:  347:    ret = (xmlXPathObjectPtr) xmlMalloc(sizeof(xmlXPathObject));
+    #####:  348:    if (ret == NULL) {
+    #####:  349:        xmlXPtrErrMemory("allocating range");
+    #####:  350:	return(NULL);
+        -:  351:    }
+    #####:  352:    memset(ret, 0 , (size_t) sizeof(xmlXPathObject));
+    #####:  353:    ret->type = XPATH_RANGE;
+    #####:  354:    ret->user = start;
+    #####:  355:    ret->index = startindex;
+    #####:  356:    ret->user2 = end;
+    #####:  357:    ret->index2 = endindex;
+    #####:  358:    xmlXPtrRangeCheckOrder(ret);
+    #####:  359:    return(ret);
+        -:  360:}
+        -:  361:
+        -:  362:/**
+        -:  363: * xmlXPtrNewRangePoints:
+        -:  364: * @start:  the starting point
+        -:  365: * @end:  the ending point
+        -:  366: *
+        -:  367: * Create a new xmlXPathObjectPtr of type range using 2 Points
+        -:  368: *
+        -:  369: * Returns the newly created object.
+        -:  370: */
+        -:  371:xmlXPathObjectPtr
+    #####:  372:xmlXPtrNewRangePoints(xmlXPathObjectPtr start, xmlXPathObjectPtr end) {
+        -:  373:    xmlXPathObjectPtr ret;
+        -:  374:
+    #####:  375:    if (start == NULL)
+    #####:  376:	return(NULL);
+    #####:  377:    if (end == NULL)
+    #####:  378:	return(NULL);
+    #####:  379:    if (start->type != XPATH_POINT)
+    #####:  380:	return(NULL);
+    #####:  381:    if (end->type != XPATH_POINT)
+    #####:  382:	return(NULL);
+        -:  383:
+    #####:  384:    ret = (xmlXPathObjectPtr) xmlMalloc(sizeof(xmlXPathObject));
+    #####:  385:    if (ret == NULL) {
+    #####:  386:        xmlXPtrErrMemory("allocating range");
+    #####:  387:	return(NULL);
+        -:  388:    }
+    #####:  389:    memset(ret, 0 , (size_t) sizeof(xmlXPathObject));
+    #####:  390:    ret->type = XPATH_RANGE;
+    #####:  391:    ret->user = start->user;
+    #####:  392:    ret->index = start->index;
+    #####:  393:    ret->user2 = end->user;
+    #####:  394:    ret->index2 = end->index;
+    #####:  395:    xmlXPtrRangeCheckOrder(ret);
+    #####:  396:    return(ret);
+        -:  397:}
+        -:  398:
+        -:  399:/**
+        -:  400: * xmlXPtrNewRangePointNode:
+        -:  401: * @start:  the starting point
+        -:  402: * @end:  the ending node
+        -:  403: *
+        -:  404: * Create a new xmlXPathObjectPtr of type range from a point to a node
+        -:  405: *
+        -:  406: * Returns the newly created object.
+        -:  407: */
+        -:  408:xmlXPathObjectPtr
+    #####:  409:xmlXPtrNewRangePointNode(xmlXPathObjectPtr start, xmlNodePtr end) {
+        -:  410:    xmlXPathObjectPtr ret;
+        -:  411:
+    #####:  412:    if (start == NULL)
+    #####:  413:	return(NULL);
+    #####:  414:    if (end == NULL)
+    #####:  415:	return(NULL);
+    #####:  416:    if (start->type != XPATH_POINT)
+    #####:  417:	return(NULL);
+        -:  418:
+    #####:  419:    ret = (xmlXPathObjectPtr) xmlMalloc(sizeof(xmlXPathObject));
+    #####:  420:    if (ret == NULL) {
+    #####:  421:        xmlXPtrErrMemory("allocating range");
+    #####:  422:	return(NULL);
+        -:  423:    }
+    #####:  424:    memset(ret, 0 , (size_t) sizeof(xmlXPathObject));
+    #####:  425:    ret->type = XPATH_RANGE;
+    #####:  426:    ret->user = start->user;
+    #####:  427:    ret->index = start->index;
+    #####:  428:    ret->user2 = end;
+    #####:  429:    ret->index2 = -1;
+    #####:  430:    xmlXPtrRangeCheckOrder(ret);
+    #####:  431:    return(ret);
+        -:  432:}
+        -:  433:
+        -:  434:/**
+        -:  435: * xmlXPtrNewRangeNodePoint:
+        -:  436: * @start:  the starting node
+        -:  437: * @end:  the ending point
+        -:  438: *
+        -:  439: * Create a new xmlXPathObjectPtr of type range from a node to a point
+        -:  440: *
+        -:  441: * Returns the newly created object.
+        -:  442: */
+        -:  443:xmlXPathObjectPtr
+    #####:  444:xmlXPtrNewRangeNodePoint(xmlNodePtr start, xmlXPathObjectPtr end) {
+        -:  445:    xmlXPathObjectPtr ret;
+        -:  446:
+    #####:  447:    if (start == NULL)
+    #####:  448:	return(NULL);
+    #####:  449:    if (end == NULL)
+    #####:  450:	return(NULL);
+    #####:  451:    if (start->type != XPATH_POINT)
+    #####:  452:	return(NULL);
+    #####:  453:    if (end->type != XPATH_POINT)
+    #####:  454:	return(NULL);
+        -:  455:
+    #####:  456:    ret = (xmlXPathObjectPtr) xmlMalloc(sizeof(xmlXPathObject));
+    #####:  457:    if (ret == NULL) {
+    #####:  458:        xmlXPtrErrMemory("allocating range");
+    #####:  459:	return(NULL);
+        -:  460:    }
+    #####:  461:    memset(ret, 0 , (size_t) sizeof(xmlXPathObject));
+    #####:  462:    ret->type = XPATH_RANGE;
+    #####:  463:    ret->user = start;
+    #####:  464:    ret->index = -1;
+    #####:  465:    ret->user2 = end->user;
+    #####:  466:    ret->index2 = end->index;
+    #####:  467:    xmlXPtrRangeCheckOrder(ret);
+    #####:  468:    return(ret);
+        -:  469:}
+        -:  470:
+        -:  471:/**
+        -:  472: * xmlXPtrNewRangeNodes:
+        -:  473: * @start:  the starting node
+        -:  474: * @end:  the ending node
+        -:  475: *
+        -:  476: * Create a new xmlXPathObjectPtr of type range using 2 nodes
+        -:  477: *
+        -:  478: * Returns the newly created object.
+        -:  479: */
+        -:  480:xmlXPathObjectPtr
+    #####:  481:xmlXPtrNewRangeNodes(xmlNodePtr start, xmlNodePtr end) {
+        -:  482:    xmlXPathObjectPtr ret;
+        -:  483:
+    #####:  484:    if (start == NULL)
+    #####:  485:	return(NULL);
+    #####:  486:    if (end == NULL)
+    #####:  487:	return(NULL);
+        -:  488:
+    #####:  489:    ret = (xmlXPathObjectPtr) xmlMalloc(sizeof(xmlXPathObject));
+    #####:  490:    if (ret == NULL) {
+    #####:  491:        xmlXPtrErrMemory("allocating range");
+    #####:  492:	return(NULL);
+        -:  493:    }
+    #####:  494:    memset(ret, 0 , (size_t) sizeof(xmlXPathObject));
+    #####:  495:    ret->type = XPATH_RANGE;
+    #####:  496:    ret->user = start;
+    #####:  497:    ret->index = -1;
+    #####:  498:    ret->user2 = end;
+    #####:  499:    ret->index2 = -1;
+    #####:  500:    xmlXPtrRangeCheckOrder(ret);
+    #####:  501:    return(ret);
+        -:  502:}
+        -:  503:
+        -:  504:/**
+        -:  505: * xmlXPtrNewCollapsedRange:
+        -:  506: * @start:  the starting and ending node
+        -:  507: *
+        -:  508: * Create a new xmlXPathObjectPtr of type range using a single nodes
+        -:  509: *
+        -:  510: * Returns the newly created object.
+        -:  511: */
+        -:  512:xmlXPathObjectPtr
+    #####:  513:xmlXPtrNewCollapsedRange(xmlNodePtr start) {
+        -:  514:    xmlXPathObjectPtr ret;
+        -:  515:
+    #####:  516:    if (start == NULL)
+    #####:  517:	return(NULL);
+        -:  518:
+    #####:  519:    ret = (xmlXPathObjectPtr) xmlMalloc(sizeof(xmlXPathObject));
+    #####:  520:    if (ret == NULL) {
+    #####:  521:        xmlXPtrErrMemory("allocating range");
+    #####:  522:	return(NULL);
+        -:  523:    }
+    #####:  524:    memset(ret, 0 , (size_t) sizeof(xmlXPathObject));
+    #####:  525:    ret->type = XPATH_RANGE;
+    #####:  526:    ret->user = start;
+    #####:  527:    ret->index = -1;
+    #####:  528:    ret->user2 = NULL;
+    #####:  529:    ret->index2 = -1;
+    #####:  530:    return(ret);
+        -:  531:}
+        -:  532:
+        -:  533:/**
+        -:  534: * xmlXPtrNewRangeNodeObject:
+        -:  535: * @start:  the starting node
+        -:  536: * @end:  the ending object
+        -:  537: *
+        -:  538: * Create a new xmlXPathObjectPtr of type range from a not to an object
+        -:  539: *
+        -:  540: * Returns the newly created object.
+        -:  541: */
+        -:  542:xmlXPathObjectPtr
+    #####:  543:xmlXPtrNewRangeNodeObject(xmlNodePtr start, xmlXPathObjectPtr end) {
+        -:  544:    xmlXPathObjectPtr ret;
+        -:  545:
+    #####:  546:    if (start == NULL)
+    #####:  547:	return(NULL);
+    #####:  548:    if (end == NULL)
+    #####:  549:	return(NULL);
+    #####:  550:    switch (end->type) {
+    #####:  551:	case XPATH_POINT:
+        -:  552:	case XPATH_RANGE:
+    #####:  553:	    break;
+    #####:  554:	case XPATH_NODESET:
+        -:  555:	    /*
+        -:  556:	     * Empty set ...
+        -:  557:	     */
+    #####:  558:	    if (end->nodesetval->nodeNr <= 0)
+    #####:  559:		return(NULL);
+    #####:  560:	    break;
+    #####:  561:	default:
+        -:  562:	    /* TODO */
+    #####:  563:	    return(NULL);
+        -:  564:    }
+        -:  565:
+    #####:  566:    ret = (xmlXPathObjectPtr) xmlMalloc(sizeof(xmlXPathObject));
+    #####:  567:    if (ret == NULL) {
+    #####:  568:        xmlXPtrErrMemory("allocating range");
+    #####:  569:	return(NULL);
+        -:  570:    }
+    #####:  571:    memset(ret, 0 , (size_t) sizeof(xmlXPathObject));
+    #####:  572:    ret->type = XPATH_RANGE;
+    #####:  573:    ret->user = start;
+    #####:  574:    ret->index = -1;
+    #####:  575:    switch (end->type) {
+    #####:  576:	case XPATH_POINT:
+    #####:  577:	    ret->user2 = end->user;
+    #####:  578:	    ret->index2 = end->index;
+    #####:  579:	    break;
+    #####:  580:	case XPATH_RANGE:
+    #####:  581:	    ret->user2 = end->user2;
+    #####:  582:	    ret->index2 = end->index2;
+    #####:  583:	    break;
+    #####:  584:	case XPATH_NODESET: {
+    #####:  585:	    ret->user2 = end->nodesetval->nodeTab[end->nodesetval->nodeNr - 1];
+    #####:  586:	    ret->index2 = -1;
+    #####:  587:	    break;
+        -:  588:	}
+    #####:  589:	default:
+    #####:  590:	    STRANGE
+    #####:  591:	    return(NULL);
+        -:  592:    }
+    #####:  593:    xmlXPtrRangeCheckOrder(ret);
+    #####:  594:    return(ret);
+        -:  595:}
+        -:  596:
+        -:  597:#define XML_RANGESET_DEFAULT	10
+        -:  598:
+        -:  599:/**
+        -:  600: * xmlXPtrLocationSetCreate:
+        -:  601: * @val:  an initial xmlXPathObjectPtr, or NULL
+        -:  602: *
+        -:  603: * Create a new xmlLocationSetPtr of type double and of value @val
+        -:  604: *
+        -:  605: * Returns the newly created object.
+        -:  606: */
+        -:  607:xmlLocationSetPtr
+    #####:  608:xmlXPtrLocationSetCreate(xmlXPathObjectPtr val) {
+        -:  609:    xmlLocationSetPtr ret;
+        -:  610:
+    #####:  611:    ret = (xmlLocationSetPtr) xmlMalloc(sizeof(xmlLocationSet));
+    #####:  612:    if (ret == NULL) {
+    #####:  613:        xmlXPtrErrMemory("allocating locationset");
+    #####:  614:	return(NULL);
+        -:  615:    }
+    #####:  616:    memset(ret, 0 , (size_t) sizeof(xmlLocationSet));
+    #####:  617:    if (val != NULL) {
+    #####:  618:        ret->locTab = (xmlXPathObjectPtr *) xmlMalloc(XML_RANGESET_DEFAULT *
+        -:  619:					     sizeof(xmlXPathObjectPtr));
+    #####:  620:	if (ret->locTab == NULL) {
+    #####:  621:	    xmlXPtrErrMemory("allocating locationset");
+    #####:  622:	    xmlFree(ret);
+    #####:  623:	    return(NULL);
+        -:  624:	}
+    #####:  625:	memset(ret->locTab, 0 ,
+        -:  626:	       XML_RANGESET_DEFAULT * (size_t) sizeof(xmlXPathObjectPtr));
+    #####:  627:        ret->locMax = XML_RANGESET_DEFAULT;
+    #####:  628:	ret->locTab[ret->locNr++] = val;
+        -:  629:    }
+    #####:  630:    return(ret);
+        -:  631:}
+        -:  632:
+        -:  633:/**
+        -:  634: * xmlXPtrLocationSetAdd:
+        -:  635: * @cur:  the initial range set
+        -:  636: * @val:  a new xmlXPathObjectPtr
+        -:  637: *
+        -:  638: * add a new xmlXPathObjectPtr to an existing LocationSet
+        -:  639: * If the location already exist in the set @val is freed.
+        -:  640: */
+        -:  641:void
+    #####:  642:xmlXPtrLocationSetAdd(xmlLocationSetPtr cur, xmlXPathObjectPtr val) {
+        -:  643:    int i;
+        -:  644:
+    #####:  645:    if ((cur == NULL) || (val == NULL)) return;
+        -:  646:
+        -:  647:    /*
+        -:  648:     * check against doublons
+        -:  649:     */
+    #####:  650:    for (i = 0;i < cur->locNr;i++) {
+    #####:  651:	if (xmlXPtrRangesEqual(cur->locTab[i], val)) {
+    #####:  652:	    xmlXPathFreeObject(val);
+    #####:  653:	    return;
+        -:  654:	}
+        -:  655:    }
+        -:  656:
+        -:  657:    /*
+        -:  658:     * grow the locTab if needed
+        -:  659:     */
+    #####:  660:    if (cur->locMax == 0) {
+    #####:  661:        cur->locTab = (xmlXPathObjectPtr *) xmlMalloc(XML_RANGESET_DEFAULT *
+        -:  662:					     sizeof(xmlXPathObjectPtr));
+    #####:  663:	if (cur->locTab == NULL) {
+    #####:  664:	    xmlXPtrErrMemory("adding location to set");
+    #####:  665:	    return;
+        -:  666:	}
+    #####:  667:	memset(cur->locTab, 0 ,
+        -:  668:	       XML_RANGESET_DEFAULT * (size_t) sizeof(xmlXPathObjectPtr));
+    #####:  669:        cur->locMax = XML_RANGESET_DEFAULT;
+    #####:  670:    } else if (cur->locNr == cur->locMax) {
+        -:  671:        xmlXPathObjectPtr *temp;
+        -:  672:
+    #####:  673:        cur->locMax *= 2;
+    #####:  674:	temp = (xmlXPathObjectPtr *) xmlRealloc(cur->locTab, cur->locMax *
+        -:  675:				      sizeof(xmlXPathObjectPtr));
+    #####:  676:	if (temp == NULL) {
+    #####:  677:	    xmlXPtrErrMemory("adding location to set");
+    #####:  678:	    return;
+        -:  679:	}
+    #####:  680:	cur->locTab = temp;
+        -:  681:    }
+    #####:  682:    cur->locTab[cur->locNr++] = val;
+        -:  683:}
+        -:  684:
+        -:  685:/**
+        -:  686: * xmlXPtrLocationSetMerge:
+        -:  687: * @val1:  the first LocationSet
+        -:  688: * @val2:  the second LocationSet
+        -:  689: *
+        -:  690: * Merges two rangesets, all ranges from @val2 are added to @val1
+        -:  691: *
+        -:  692: * Returns val1 once extended or NULL in case of error.
+        -:  693: */
+        -:  694:xmlLocationSetPtr
+    #####:  695:xmlXPtrLocationSetMerge(xmlLocationSetPtr val1, xmlLocationSetPtr val2) {
+        -:  696:    int i;
+        -:  697:
+    #####:  698:    if (val1 == NULL) return(NULL);
+    #####:  699:    if (val2 == NULL) return(val1);
+        -:  700:
+        -:  701:    /*
+        -:  702:     * !!!!! this can be optimized a lot, knowing that both
+        -:  703:     *       val1 and val2 already have unicity of their values.
+        -:  704:     */
+        -:  705:
+    #####:  706:    for (i = 0;i < val2->locNr;i++)
+    #####:  707:        xmlXPtrLocationSetAdd(val1, val2->locTab[i]);
+        -:  708:
+    #####:  709:    return(val1);
+        -:  710:}
+        -:  711:
+        -:  712:/**
+        -:  713: * xmlXPtrLocationSetDel:
+        -:  714: * @cur:  the initial range set
+        -:  715: * @val:  an xmlXPathObjectPtr
+        -:  716: *
+        -:  717: * Removes an xmlXPathObjectPtr from an existing LocationSet
+        -:  718: */
+        -:  719:void
+    #####:  720:xmlXPtrLocationSetDel(xmlLocationSetPtr cur, xmlXPathObjectPtr val) {
+        -:  721:    int i;
+        -:  722:
+    #####:  723:    if (cur == NULL) return;
+    #####:  724:    if (val == NULL) return;
+        -:  725:
+        -:  726:    /*
+        -:  727:     * check against doublons
+        -:  728:     */
+    #####:  729:    for (i = 0;i < cur->locNr;i++)
+    #####:  730:        if (cur->locTab[i] == val) break;
+        -:  731:
+    #####:  732:    if (i >= cur->locNr) {
+        -:  733:#ifdef DEBUG
+        -:  734:        xmlGenericError(xmlGenericErrorContext,
+        -:  735:	        "xmlXPtrLocationSetDel: Range wasn't found in RangeList\n");
+        -:  736:#endif
+    #####:  737:        return;
+        -:  738:    }
+    #####:  739:    cur->locNr--;
+    #####:  740:    for (;i < cur->locNr;i++)
+    #####:  741:        cur->locTab[i] = cur->locTab[i + 1];
+    #####:  742:    cur->locTab[cur->locNr] = NULL;
+        -:  743:}
+        -:  744:
+        -:  745:/**
+        -:  746: * xmlXPtrLocationSetRemove:
+        -:  747: * @cur:  the initial range set
+        -:  748: * @val:  the index to remove
+        -:  749: *
+        -:  750: * Removes an entry from an existing LocationSet list.
+        -:  751: */
+        -:  752:void
+    #####:  753:xmlXPtrLocationSetRemove(xmlLocationSetPtr cur, int val) {
+    #####:  754:    if (cur == NULL) return;
+    #####:  755:    if (val >= cur->locNr) return;
+    #####:  756:    cur->locNr--;
+    #####:  757:    for (;val < cur->locNr;val++)
+    #####:  758:        cur->locTab[val] = cur->locTab[val + 1];
+    #####:  759:    cur->locTab[cur->locNr] = NULL;
+        -:  760:}
+        -:  761:
+        -:  762:/**
+        -:  763: * xmlXPtrFreeLocationSet:
+        -:  764: * @obj:  the xmlLocationSetPtr to free
+        -:  765: *
+        -:  766: * Free the LocationSet compound (not the actual ranges !).
+        -:  767: */
+        -:  768:void
+    #####:  769:xmlXPtrFreeLocationSet(xmlLocationSetPtr obj) {
+        -:  770:    int i;
+        -:  771:
+    #####:  772:    if (obj == NULL) return;
+    #####:  773:    if (obj->locTab != NULL) {
+    #####:  774:	for (i = 0;i < obj->locNr; i++) {
+    #####:  775:            xmlXPathFreeObject(obj->locTab[i]);
+        -:  776:	}
+    #####:  777:	xmlFree(obj->locTab);
+        -:  778:    }
+    #####:  779:    xmlFree(obj);
+        -:  780:}
+        -:  781:
+        -:  782:/**
+        -:  783: * xmlXPtrNewLocationSetNodes:
+        -:  784: * @start:  the start NodePtr value
+        -:  785: * @end:  the end NodePtr value or NULL
+        -:  786: *
+        -:  787: * Create a new xmlXPathObjectPtr of type LocationSet and initialize
+        -:  788: * it with the single range made of the two nodes @start and @end
+        -:  789: *
+        -:  790: * Returns the newly created object.
+        -:  791: */
+        -:  792:xmlXPathObjectPtr
+    #####:  793:xmlXPtrNewLocationSetNodes(xmlNodePtr start, xmlNodePtr end) {
+        -:  794:    xmlXPathObjectPtr ret;
+        -:  795:
+    #####:  796:    ret = (xmlXPathObjectPtr) xmlMalloc(sizeof(xmlXPathObject));
+    #####:  797:    if (ret == NULL) {
+    #####:  798:        xmlXPtrErrMemory("allocating locationset");
+    #####:  799:	return(NULL);
+        -:  800:    }
+    #####:  801:    memset(ret, 0 , (size_t) sizeof(xmlXPathObject));
+    #####:  802:    ret->type = XPATH_LOCATIONSET;
+    #####:  803:    if (end == NULL)
+    #####:  804:	ret->user = xmlXPtrLocationSetCreate(xmlXPtrNewCollapsedRange(start));
+        -:  805:    else
+    #####:  806:	ret->user = xmlXPtrLocationSetCreate(xmlXPtrNewRangeNodes(start,end));
+    #####:  807:    return(ret);
+        -:  808:}
+        -:  809:
+        -:  810:/**
+        -:  811: * xmlXPtrNewLocationSetNodeSet:
+        -:  812: * @set:  a node set
+        -:  813: *
+        -:  814: * Create a new xmlXPathObjectPtr of type LocationSet and initialize
+        -:  815: * it with all the nodes from @set
+        -:  816: *
+        -:  817: * Returns the newly created object.
+        -:  818: */
+        -:  819:xmlXPathObjectPtr
+    #####:  820:xmlXPtrNewLocationSetNodeSet(xmlNodeSetPtr set) {
+        -:  821:    xmlXPathObjectPtr ret;
+        -:  822:
+    #####:  823:    ret = (xmlXPathObjectPtr) xmlMalloc(sizeof(xmlXPathObject));
+    #####:  824:    if (ret == NULL) {
+    #####:  825:        xmlXPtrErrMemory("allocating locationset");
+    #####:  826:	return(NULL);
+        -:  827:    }
+    #####:  828:    memset(ret, 0 , (size_t) sizeof(xmlXPathObject));
+    #####:  829:    ret->type = XPATH_LOCATIONSET;
+    #####:  830:    if (set != NULL) {
+        -:  831:	int i;
+        -:  832:	xmlLocationSetPtr newset;
+        -:  833:
+    #####:  834:	newset = xmlXPtrLocationSetCreate(NULL);
+    #####:  835:	if (newset == NULL)
+    #####:  836:	    return(ret);
+        -:  837:
+    #####:  838:	for (i = 0;i < set->nodeNr;i++)
+    #####:  839:	    xmlXPtrLocationSetAdd(newset,
+    #####:  840:		        xmlXPtrNewCollapsedRange(set->nodeTab[i]));
+        -:  841:
+    #####:  842:	ret->user = (void *) newset;
+        -:  843:    }
+    #####:  844:    return(ret);
+        -:  845:}
+        -:  846:
+        -:  847:/**
+        -:  848: * xmlXPtrWrapLocationSet:
+        -:  849: * @val:  the LocationSet value
+        -:  850: *
+        -:  851: * Wrap the LocationSet @val in a new xmlXPathObjectPtr
+        -:  852: *
+        -:  853: * Returns the newly created object.
+        -:  854: */
+        -:  855:xmlXPathObjectPtr
+    #####:  856:xmlXPtrWrapLocationSet(xmlLocationSetPtr val) {
+        -:  857:    xmlXPathObjectPtr ret;
+        -:  858:
+    #####:  859:    ret = (xmlXPathObjectPtr) xmlMalloc(sizeof(xmlXPathObject));
+    #####:  860:    if (ret == NULL) {
+    #####:  861:        xmlXPtrErrMemory("allocating locationset");
+    #####:  862:	return(NULL);
+        -:  863:    }
+    #####:  864:    memset(ret, 0 , (size_t) sizeof(xmlXPathObject));
+    #####:  865:    ret->type = XPATH_LOCATIONSET;
+    #####:  866:    ret->user = (void *) val;
+    #####:  867:    return(ret);
+        -:  868:}
+        -:  869:
+        -:  870:/************************************************************************
+        -:  871: *									*
+        -:  872: *			The parser					*
+        -:  873: *									*
+        -:  874: ************************************************************************/
+        -:  875:
+        -:  876:static void xmlXPtrEvalChildSeq(xmlXPathParserContextPtr ctxt, xmlChar *name);
+        -:  877:
+        -:  878:/*
+        -:  879: * Macros for accessing the content. Those should be used only by the parser,
+        -:  880: * and not exported.
+        -:  881: *
+        -:  882: * Dirty macros, i.e. one need to make assumption on the context to use them
+        -:  883: *
+        -:  884: *   CUR_PTR return the current pointer to the xmlChar to be parsed.
+        -:  885: *   CUR     returns the current xmlChar value, i.e. a 8 bit value
+        -:  886: *           in ISO-Latin or UTF-8.
+        -:  887: *           This should be used internally by the parser
+        -:  888: *           only to compare to ASCII values otherwise it would break when
+        -:  889: *           running with UTF-8 encoding.
+        -:  890: *   NXT(n)  returns the n'th next xmlChar. Same as CUR is should be used only
+        -:  891: *           to compare on ASCII based substring.
+        -:  892: *   SKIP(n) Skip n xmlChar, and must also be used only to skip ASCII defined
+        -:  893: *           strings within the parser.
+        -:  894: *   CURRENT Returns the current char value, with the full decoding of
+        -:  895: *           UTF-8 if we are using this mode. It returns an int.
+        -:  896: *   NEXT    Skip to the next character, this does the proper decoding
+        -:  897: *           in UTF-8 mode. It also pop-up unfinished entities on the fly.
+        -:  898: *           It returns the pointer to the current xmlChar.
+        -:  899: */
+        -:  900:
+        -:  901:#define CUR (*ctxt->cur)
+        -:  902:#define SKIP(val) ctxt->cur += (val)
+        -:  903:#define NXT(val) ctxt->cur[(val)]
+        -:  904:#define CUR_PTR ctxt->cur
+        -:  905:
+        -:  906:#define SKIP_BLANKS							\
+        -:  907:    while (IS_BLANK_CH(*(ctxt->cur))) NEXT
+        -:  908:
+        -:  909:#define CURRENT (*ctxt->cur)
+        -:  910:#define NEXT ((*ctxt->cur) ?  ctxt->cur++: ctxt->cur)
+        -:  911:
+        -:  912:/*
+        -:  913: * xmlXPtrGetChildNo:
+        -:  914: * @ctxt:  the XPointer Parser context
+        -:  915: * @index:  the child number
+        -:  916: *
+        -:  917: * Move the current node of the nodeset on the stack to the
+        -:  918: * given child if found
+        -:  919: */
+        -:  920:static void
+    #####:  921:xmlXPtrGetChildNo(xmlXPathParserContextPtr ctxt, int indx) {
+    #####:  922:    xmlNodePtr cur = NULL;
+        -:  923:    xmlXPathObjectPtr obj;
+        -:  924:    xmlNodeSetPtr oldset;
+        -:  925:
+    #####:  926:    CHECK_TYPE(XPATH_NODESET);
+    #####:  927:    obj = valuePop(ctxt);
+    #####:  928:    oldset = obj->nodesetval;
+    #####:  929:    if ((indx <= 0) || (oldset == NULL) || (oldset->nodeNr != 1)) {
+    #####:  930:	xmlXPathFreeObject(obj);
+    #####:  931:	valuePush(ctxt, xmlXPathNewNodeSet(NULL));
+    #####:  932:	return;
+        -:  933:    }
+    #####:  934:    cur = xmlXPtrGetNthChild(oldset->nodeTab[0], indx);
+    #####:  935:    if (cur == NULL) {
+    #####:  936:	xmlXPathFreeObject(obj);
+    #####:  937:	valuePush(ctxt, xmlXPathNewNodeSet(NULL));
+    #####:  938:	return;
+        -:  939:    }
+    #####:  940:    oldset->nodeTab[0] = cur;
+    #####:  941:    valuePush(ctxt, obj);
+        -:  942:}
+        -:  943:
+        -:  944:/**
+        -:  945: * xmlXPtrEvalXPtrPart:
+        -:  946: * @ctxt:  the XPointer Parser context
+        -:  947: * @name:  the preparsed Scheme for the XPtrPart
+        -:  948: *
+        -:  949: * XPtrPart ::= 'xpointer' '(' XPtrExpr ')'
+        -:  950: *            | Scheme '(' SchemeSpecificExpr ')'
+        -:  951: *
+        -:  952: * Scheme   ::=  NCName - 'xpointer' [VC: Non-XPointer schemes]
+        -:  953: *
+        -:  954: * SchemeSpecificExpr ::= StringWithBalancedParens
+        -:  955: *
+        -:  956: * StringWithBalancedParens ::=
+        -:  957: *              [^()]* ('(' StringWithBalancedParens ')' [^()]*)*
+        -:  958: *              [VC: Parenthesis escaping]
+        -:  959: *
+        -:  960: * XPtrExpr ::= Expr [VC: Parenthesis escaping]
+        -:  961: *
+        -:  962: * VC: Parenthesis escaping:
+        -:  963: *   The end of an XPointer part is signaled by the right parenthesis ")"
+        -:  964: *   character that is balanced with the left parenthesis "(" character
+        -:  965: *   that began the part. Any unbalanced parenthesis character inside the
+        -:  966: *   expression, even within literals, must be escaped with a circumflex (^)
+        -:  967: *   character preceding it. If the expression contains any literal
+        -:  968: *   occurrences of the circumflex, each must be escaped with an additional
+        -:  969: *   circumflex (that is, ^^). If the unescaped parentheses in the expression
+        -:  970: *   are not balanced, a syntax error results.
+        -:  971: *
+        -:  972: * Parse and evaluate an XPtrPart. Basically it generates the unescaped
+        -:  973: * string and if the scheme is 'xpointer' it will call the XPath interpreter.
+        -:  974: *
+        -:  975: * TODO: there is no new scheme registration mechanism
+        -:  976: */
+        -:  977:
+        -:  978:static void
+    #####:  979:xmlXPtrEvalXPtrPart(xmlXPathParserContextPtr ctxt, xmlChar *name) {
+        -:  980:    xmlChar *buffer, *cur;
+        -:  981:    int len;
+        -:  982:    int level;
+        -:  983:
+    #####:  984:    if (name == NULL)
+    #####:  985:    name = xmlXPathParseName(ctxt);
+    #####:  986:    if (name == NULL)
+    #####:  987:	XP_ERROR(XPATH_EXPR_ERROR);
+        -:  988:
+    #####:  989:    if (CUR != '(')
+    #####:  990:	XP_ERROR(XPATH_EXPR_ERROR);
+    #####:  991:    NEXT;
+    #####:  992:    level = 1;
+        -:  993:
+    #####:  994:    len = xmlStrlen(ctxt->cur);
+    #####:  995:    len++;
+    #####:  996:    buffer = (xmlChar *) xmlMallocAtomic(len * sizeof (xmlChar));
+    #####:  997:    if (buffer == NULL) {
+    #####:  998:        xmlXPtrErrMemory("allocating buffer");
+    #####:  999:	return;
+        -: 1000:    }
+        -: 1001:
+    #####: 1002:    cur = buffer;
+    #####: 1003:    while (CUR != 0) {
+    #####: 1004:	if (CUR == ')') {
+    #####: 1005:	    level--;
+    #####: 1006:	    if (level == 0) {
+    #####: 1007:		NEXT;
+    #####: 1008:		break;
+        -: 1009:	    }
+    #####: 1010:	} else if (CUR == '(') {
+    #####: 1011:	    level++;
+    #####: 1012:	} else if (CUR == '^') {
+    #####: 1013:            if ((NXT(1) == ')') || (NXT(1) == '(') || (NXT(1) == '^')) {
+    #####: 1014:                NEXT;
+        -: 1015:            }
+        -: 1016:	}
+    #####: 1017:        *cur++ = CUR;
+    #####: 1018:	NEXT;
+        -: 1019:    }
+    #####: 1020:    *cur = 0;
+        -: 1021:
+    #####: 1022:    if ((level != 0) && (CUR == 0)) {
+    #####: 1023:	xmlFree(buffer);
+    #####: 1024:	XP_ERROR(XPTR_SYNTAX_ERROR);
+        -: 1025:    }
+        -: 1026:
+    #####: 1027:    if (xmlStrEqual(name, (xmlChar *) "xpointer")) {
+    #####: 1028:	const xmlChar *left = CUR_PTR;
+        -: 1029:
+    #####: 1030:	CUR_PTR = buffer;
+        -: 1031:	/*
+        -: 1032:	 * To evaluate an xpointer scheme element (4.3) we need:
+        -: 1033:	 *   context initialized to the root
+        -: 1034:	 *   context position initalized to 1
+        -: 1035:	 *   context size initialized to 1
+        -: 1036:	 */
+    #####: 1037:	ctxt->context->node = (xmlNodePtr)ctxt->context->doc;
+    #####: 1038:	ctxt->context->proximityPosition = 1;
+    #####: 1039:	ctxt->context->contextSize = 1;
+    #####: 1040:	xmlXPathEvalExpr(ctxt);
+    #####: 1041:	CUR_PTR=left;
+    #####: 1042:    } else if (xmlStrEqual(name, (xmlChar *) "element")) {
+    #####: 1043:	const xmlChar *left = CUR_PTR;
+        -: 1044:	xmlChar *name2;
+        -: 1045:
+    #####: 1046:	CUR_PTR = buffer;
+    #####: 1047:	if (buffer[0] == '/') {
+    #####: 1048:	    xmlXPathRoot(ctxt);
+    #####: 1049:	    xmlXPtrEvalChildSeq(ctxt, NULL);
+        -: 1050:	} else {
+    #####: 1051:	    name2 = xmlXPathParseName(ctxt);
+    #####: 1052:	    if (name2 == NULL) {
+    #####: 1053:		CUR_PTR = left;
+    #####: 1054:		xmlFree(buffer);
+    #####: 1055:		XP_ERROR(XPATH_EXPR_ERROR);
+        -: 1056:	    }
+    #####: 1057:	    xmlXPtrEvalChildSeq(ctxt, name2);
+        -: 1058:	}
+    #####: 1059:	CUR_PTR = left;
+        -: 1060:#ifdef XPTR_XMLNS_SCHEME
+    #####: 1061:    } else if (xmlStrEqual(name, (xmlChar *) "xmlns")) {
+    #####: 1062:	const xmlChar *left = CUR_PTR;
+        -: 1063:	xmlChar *prefix;
+        -: 1064:	xmlChar *URI;
+        -: 1065:	xmlURIPtr value;
+        -: 1066:
+    #####: 1067:	CUR_PTR = buffer;
+    #####: 1068:        prefix = xmlXPathParseNCName(ctxt);
+    #####: 1069:	if (prefix == NULL) {
+    #####: 1070:	    xmlFree(buffer);
+    #####: 1071:	    xmlFree(name);
+    #####: 1072:	    XP_ERROR(XPTR_SYNTAX_ERROR);
+        -: 1073:	}
+    #####: 1074:	SKIP_BLANKS;
+    #####: 1075:	if (CUR != '=') {
+    #####: 1076:	    xmlFree(prefix);
+    #####: 1077:	    xmlFree(buffer);
+    #####: 1078:	    xmlFree(name);
+    #####: 1079:	    XP_ERROR(XPTR_SYNTAX_ERROR);
+        -: 1080:	}
+    #####: 1081:	NEXT;
+    #####: 1082:	SKIP_BLANKS;
+        -: 1083:	/* @@ check escaping in the XPointer WD */
+        -: 1084:
+    #####: 1085:	value = xmlParseURI((const char *)ctxt->cur);
+    #####: 1086:	if (value == NULL) {
+    #####: 1087:	    xmlFree(prefix);
+    #####: 1088:	    xmlFree(buffer);
+    #####: 1089:	    xmlFree(name);
+    #####: 1090:	    XP_ERROR(XPTR_SYNTAX_ERROR);
+        -: 1091:	}
+    #####: 1092:	URI = xmlSaveUri(value);
+    #####: 1093:	xmlFreeURI(value);
+    #####: 1094:	if (URI == NULL) {
+    #####: 1095:	    xmlFree(prefix);
+    #####: 1096:	    xmlFree(buffer);
+    #####: 1097:	    xmlFree(name);
+    #####: 1098:	    XP_ERROR(XPATH_MEMORY_ERROR);
+        -: 1099:	}
+        -: 1100:
+    #####: 1101:	xmlXPathRegisterNs(ctxt->context, prefix, URI);
+    #####: 1102:	CUR_PTR = left;
+    #####: 1103:	xmlFree(URI);
+    #####: 1104:	xmlFree(prefix);
+        -: 1105:#endif /* XPTR_XMLNS_SCHEME */
+        -: 1106:    } else {
+    #####: 1107:        xmlXPtrErr(ctxt, XML_XPTR_UNKNOWN_SCHEME,
+        -: 1108:		   "unsupported scheme '%s'\n", name);
+        -: 1109:    }
+    #####: 1110:    xmlFree(buffer);
+    #####: 1111:    xmlFree(name);
+        -: 1112:}
+        -: 1113:
+        -: 1114:/**
+        -: 1115: * xmlXPtrEvalFullXPtr:
+        -: 1116: * @ctxt:  the XPointer Parser context
+        -: 1117: * @name:  the preparsed Scheme for the first XPtrPart
+        -: 1118: *
+        -: 1119: * FullXPtr ::= XPtrPart (S? XPtrPart)*
+        -: 1120: *
+        -: 1121: * As the specs says:
+        -: 1122: * -----------
+        -: 1123: * When multiple XPtrParts are provided, they must be evaluated in
+        -: 1124: * left-to-right order. If evaluation of one part fails, the nexti
+        -: 1125: * is evaluated. The following conditions cause XPointer part failure:
+        -: 1126: *
+        -: 1127: * - An unknown scheme
+        -: 1128: * - A scheme that does not locate any sub-resource present in the resource
+        -: 1129: * - A scheme that is not applicable to the media type of the resource
+        -: 1130: *
+        -: 1131: * The XPointer application must consume a failed XPointer part and
+        -: 1132: * attempt to evaluate the next one, if any. The result of the first
+        -: 1133: * XPointer part whose evaluation succeeds is taken to be the fragment
+        -: 1134: * located by the XPointer as a whole. If all the parts fail, the result
+        -: 1135: * for the XPointer as a whole is a sub-resource error.
+        -: 1136: * -----------
+        -: 1137: *
+        -: 1138: * Parse and evaluate a Full XPtr i.e. possibly a cascade of XPath based
+        -: 1139: * expressions or other schemes.
+        -: 1140: */
+        -: 1141:static void
+    #####: 1142:xmlXPtrEvalFullXPtr(xmlXPathParserContextPtr ctxt, xmlChar *name) {
+    #####: 1143:    if (name == NULL)
+    #####: 1144:    name = xmlXPathParseName(ctxt);
+    #####: 1145:    if (name == NULL)
+    #####: 1146:	XP_ERROR(XPATH_EXPR_ERROR);
+    #####: 1147:    while (name != NULL) {
+    #####: 1148:	ctxt->error = XPATH_EXPRESSION_OK;
+    #####: 1149:	xmlXPtrEvalXPtrPart(ctxt, name);
+        -: 1150:
+        -: 1151:	/* in case of syntax error, break here */
+    #####: 1152:	if ((ctxt->error != XPATH_EXPRESSION_OK) &&
+    #####: 1153:            (ctxt->error != XML_XPTR_UNKNOWN_SCHEME))
+    #####: 1154:	    return;
+        -: 1155:
+        -: 1156:	/*
+        -: 1157:	 * If the returned value is a non-empty nodeset
+        -: 1158:	 * or location set, return here.
+        -: 1159:	 */
+    #####: 1160:	if (ctxt->value != NULL) {
+    #####: 1161:	    xmlXPathObjectPtr obj = ctxt->value;
+        -: 1162:
+    #####: 1163:	    switch (obj->type) {
+    #####: 1164:		case XPATH_LOCATIONSET: {
+    #####: 1165:		    xmlLocationSetPtr loc = ctxt->value->user;
+    #####: 1166:		    if ((loc != NULL) && (loc->locNr > 0))
+    #####: 1167:			return;
+    #####: 1168:		    break;
+        -: 1169:		}
+    #####: 1170:		case XPATH_NODESET: {
+    #####: 1171:		    xmlNodeSetPtr loc = ctxt->value->nodesetval;
+    #####: 1172:		    if ((loc != NULL) && (loc->nodeNr > 0))
+    #####: 1173:			return;
+    #####: 1174:		    break;
+        -: 1175:		}
+    #####: 1176:		default:
+    #####: 1177:		    break;
+        -: 1178:	    }
+        -: 1179:
+        -: 1180:	    /*
+        -: 1181:	     * Evaluating to improper values is equivalent to
+        -: 1182:	     * a sub-resource error, clean-up the stack
+        -: 1183:	     */
+    #####: 1184:	    do {
+    #####: 1185:		obj = valuePop(ctxt);
+    #####: 1186:		if (obj != NULL) {
+    #####: 1187:		    xmlXPathFreeObject(obj);
+        -: 1188:		}
+    #####: 1189:	    } while (obj != NULL);
+        -: 1190:	}
+        -: 1191:
+        -: 1192:	/*
+        -: 1193:	 * Is there another XPointer part.
+        -: 1194:	 */
+    #####: 1195:	SKIP_BLANKS;
+    #####: 1196:	name = xmlXPathParseName(ctxt);
+        -: 1197:    }
+        -: 1198:}
+        -: 1199:
+        -: 1200:/**
+        -: 1201: * xmlXPtrEvalChildSeq:
+        -: 1202: * @ctxt:  the XPointer Parser context
+        -: 1203: * @name:  a possible ID name of the child sequence
+        -: 1204: *
+        -: 1205: *  ChildSeq ::= '/1' ('/' [0-9]*)*
+        -: 1206: *             | Name ('/' [0-9]*)+
+        -: 1207: *
+        -: 1208: * Parse and evaluate a Child Sequence. This routine also handle the
+        -: 1209: * case of a Bare Name used to get a document ID.
+        -: 1210: */
+        -: 1211:static void
+    #####: 1212:xmlXPtrEvalChildSeq(xmlXPathParserContextPtr ctxt, xmlChar *name) {
+        -: 1213:    /*
+        -: 1214:     * XPointer don't allow by syntax to address in mutirooted trees
+        -: 1215:     * this might prove useful in some cases, warn about it.
+        -: 1216:     */
+    #####: 1217:    if ((name == NULL) && (CUR == '/') && (NXT(1) != '1')) {
+    #####: 1218:        xmlXPtrErr(ctxt, XML_XPTR_CHILDSEQ_START,
+        -: 1219:		   "warning: ChildSeq not starting by /1\n", NULL);
+        -: 1220:    }
+        -: 1221:
+    #####: 1222:    if (name != NULL) {
+    #####: 1223:	valuePush(ctxt, xmlXPathNewString(name));
+    #####: 1224:	xmlFree(name);
+    #####: 1225:	xmlXPathIdFunction(ctxt, 1);
+    #####: 1226:	CHECK_ERROR;
+        -: 1227:    }
+        -: 1228:
+    #####: 1229:    while (CUR == '/') {
+    #####: 1230:	int child = 0;
+    #####: 1231:	NEXT;
+        -: 1232:
+    #####: 1233:	while ((CUR >= '0') && (CUR <= '9')) {
+    #####: 1234:	    child = child * 10 + (CUR - '0');
+    #####: 1235:	    NEXT;
+        -: 1236:	}
+    #####: 1237:	xmlXPtrGetChildNo(ctxt, child);
+        -: 1238:    }
+        -: 1239:}
+        -: 1240:
+        -: 1241:
+        -: 1242:/**
+        -: 1243: * xmlXPtrEvalXPointer:
+        -: 1244: * @ctxt:  the XPointer Parser context
+        -: 1245: *
+        -: 1246: *  XPointer ::= Name
+        -: 1247: *             | ChildSeq
+        -: 1248: *             | FullXPtr
+        -: 1249: *
+        -: 1250: * Parse and evaluate an XPointer
+        -: 1251: */
+        -: 1252:static void
+    #####: 1253:xmlXPtrEvalXPointer(xmlXPathParserContextPtr ctxt) {
+    #####: 1254:    if (ctxt->valueTab == NULL) {
+        -: 1255:	/* Allocate the value stack */
+    #####: 1256:	ctxt->valueTab = (xmlXPathObjectPtr *)
+    #####: 1257:			 xmlMalloc(10 * sizeof(xmlXPathObjectPtr));
+    #####: 1258:	if (ctxt->valueTab == NULL) {
+    #####: 1259:	    xmlXPtrErrMemory("allocating evaluation context");
+    #####: 1260:	    return;
+        -: 1261:	}
+    #####: 1262:	ctxt->valueNr = 0;
+    #####: 1263:	ctxt->valueMax = 10;
+    #####: 1264:	ctxt->value = NULL;
+    #####: 1265:	ctxt->valueFrame = 0;
+        -: 1266:    }
+    #####: 1267:    SKIP_BLANKS;
+    #####: 1268:    if (CUR == '/') {
+    #####: 1269:	xmlXPathRoot(ctxt);
+    #####: 1270:        xmlXPtrEvalChildSeq(ctxt, NULL);
+        -: 1271:    } else {
+        -: 1272:	xmlChar *name;
+        -: 1273:
+    #####: 1274:	name = xmlXPathParseName(ctxt);
+    #####: 1275:	if (name == NULL)
+    #####: 1276:	    XP_ERROR(XPATH_EXPR_ERROR);
+    #####: 1277:	if (CUR == '(') {
+    #####: 1278:	    xmlXPtrEvalFullXPtr(ctxt, name);
+        -: 1279:	    /* Short evaluation */
+    #####: 1280:	    return;
+        -: 1281:	} else {
+        -: 1282:	    /* this handle both Bare Names and Child Sequences */
+    #####: 1283:	    xmlXPtrEvalChildSeq(ctxt, name);
+        -: 1284:	}
+        -: 1285:    }
+    #####: 1286:    SKIP_BLANKS;
+    #####: 1287:    if (CUR != 0)
+    #####: 1288:	XP_ERROR(XPATH_EXPR_ERROR);
+        -: 1289:}
+        -: 1290:
+        -: 1291:
+        -: 1292:/************************************************************************
+        -: 1293: *									*
+        -: 1294: *			General routines				*
+        -: 1295: *									*
+        -: 1296: ************************************************************************/
+        -: 1297:
+        -: 1298:static
+        -: 1299:void xmlXPtrStringRangeFunction(xmlXPathParserContextPtr ctxt, int nargs);
+        -: 1300:static
+        -: 1301:void xmlXPtrStartPointFunction(xmlXPathParserContextPtr ctxt, int nargs);
+        -: 1302:static
+        -: 1303:void xmlXPtrEndPointFunction(xmlXPathParserContextPtr ctxt, int nargs);
+        -: 1304:static
+        -: 1305:void xmlXPtrHereFunction(xmlXPathParserContextPtr ctxt, int nargs);
+        -: 1306:static
+        -: 1307:void xmlXPtrOriginFunction(xmlXPathParserContextPtr ctxt, int nargs);
+        -: 1308:static
+        -: 1309:void xmlXPtrRangeInsideFunction(xmlXPathParserContextPtr ctxt, int nargs);
+        -: 1310:static
+        -: 1311:void xmlXPtrRangeFunction(xmlXPathParserContextPtr ctxt, int nargs);
+        -: 1312:
+        -: 1313:/**
+        -: 1314: * xmlXPtrNewContext:
+        -: 1315: * @doc:  the XML document
+        -: 1316: * @here:  the node that directly contains the XPointer being evaluated or NULL
+        -: 1317: * @origin:  the element from which a user or program initiated traversal of
+        -: 1318: *           the link, or NULL.
+        -: 1319: *
+        -: 1320: * Create a new XPointer context
+        -: 1321: *
+        -: 1322: * Returns the xmlXPathContext just allocated.
+        -: 1323: */
+        -: 1324:xmlXPathContextPtr
+    #####: 1325:xmlXPtrNewContext(xmlDocPtr doc, xmlNodePtr here, xmlNodePtr origin) {
+        -: 1326:    xmlXPathContextPtr ret;
+        -: 1327:
+    #####: 1328:    ret = xmlXPathNewContext(doc);
+    #####: 1329:    if (ret == NULL)
+    #####: 1330:	return(ret);
+    #####: 1331:    ret->xptr = 1;
+    #####: 1332:    ret->here = here;
+    #####: 1333:    ret->origin = origin;
+        -: 1334:
+    #####: 1335:    xmlXPathRegisterFunc(ret, (xmlChar *)"range-to",
+        -: 1336:	                 xmlXPtrRangeToFunction);
+    #####: 1337:    xmlXPathRegisterFunc(ret, (xmlChar *)"range",
+        -: 1338:	                 xmlXPtrRangeFunction);
+    #####: 1339:    xmlXPathRegisterFunc(ret, (xmlChar *)"range-inside",
+        -: 1340:	                 xmlXPtrRangeInsideFunction);
+    #####: 1341:    xmlXPathRegisterFunc(ret, (xmlChar *)"string-range",
+        -: 1342:	                 xmlXPtrStringRangeFunction);
+    #####: 1343:    xmlXPathRegisterFunc(ret, (xmlChar *)"start-point",
+        -: 1344:	                 xmlXPtrStartPointFunction);
+    #####: 1345:    xmlXPathRegisterFunc(ret, (xmlChar *)"end-point",
+        -: 1346:	                 xmlXPtrEndPointFunction);
+    #####: 1347:    xmlXPathRegisterFunc(ret, (xmlChar *)"here",
+        -: 1348:	                 xmlXPtrHereFunction);
+    #####: 1349:    xmlXPathRegisterFunc(ret, (xmlChar *)" origin",
+        -: 1350:	                 xmlXPtrOriginFunction);
+        -: 1351:
+    #####: 1352:    return(ret);
+        -: 1353:}
+        -: 1354:
+        -: 1355:/**
+        -: 1356: * xmlXPtrEval:
+        -: 1357: * @str:  the XPointer expression
+        -: 1358: * @ctx:  the XPointer context
+        -: 1359: *
+        -: 1360: * Evaluate the XPath Location Path in the given context.
+        -: 1361: *
+        -: 1362: * Returns the xmlXPathObjectPtr resulting from the evaluation or NULL.
+        -: 1363: *         the caller has to free the object.
+        -: 1364: */
+        -: 1365:xmlXPathObjectPtr
+    #####: 1366:xmlXPtrEval(const xmlChar *str, xmlXPathContextPtr ctx) {
+        -: 1367:    xmlXPathParserContextPtr ctxt;
+    #####: 1368:    xmlXPathObjectPtr res = NULL, tmp;
+    #####: 1369:    xmlXPathObjectPtr init = NULL;
+    #####: 1370:    int stack = 0;
+        -: 1371:
+    #####: 1372:    xmlXPathInit();
+        -: 1373:
+    #####: 1374:    if ((ctx == NULL) || (str == NULL))
+    #####: 1375:	return(NULL);
+        -: 1376:
+    #####: 1377:    ctxt = xmlXPathNewParserContext(str, ctx);
+    #####: 1378:    if (ctxt == NULL)
+    #####: 1379:	return(NULL);
+    #####: 1380:    ctxt->xptr = 1;
+    #####: 1381:    xmlXPtrEvalXPointer(ctxt);
+        -: 1382:
+    #####: 1383:    if ((ctxt->value != NULL) &&
+    #####: 1384:	(ctxt->value->type != XPATH_NODESET) &&
+    #####: 1385:	(ctxt->value->type != XPATH_LOCATIONSET)) {
+    #####: 1386:        xmlXPtrErr(ctxt, XML_XPTR_EVAL_FAILED,
+        -: 1387:		"xmlXPtrEval: evaluation failed to return a node set\n",
+        -: 1388:		   NULL);
+        -: 1389:    } else {
+    #####: 1390:	res = valuePop(ctxt);
+        -: 1391:    }
+        -: 1392:
+        -: 1393:    do {
+    #####: 1394:        tmp = valuePop(ctxt);
+    #####: 1395:	if (tmp != NULL) {
+    #####: 1396:	    if (tmp != init) {
+    #####: 1397:		if (tmp->type == XPATH_NODESET) {
+        -: 1398:		    /*
+        -: 1399:		     * Evaluation may push a root nodeset which is unused
+        -: 1400:		     */
+        -: 1401:		    xmlNodeSetPtr set;
+    #####: 1402:		    set = tmp->nodesetval;
+    #####: 1403:		    if ((set->nodeNr != 1) ||
+    #####: 1404:			(set->nodeTab[0] != (xmlNodePtr) ctx->doc))
+    #####: 1405:			stack++;
+        -: 1406:		} else
+    #####: 1407:		    stack++;
+        -: 1408:	    }
+    #####: 1409:	    xmlXPathFreeObject(tmp);
+        -: 1410:        }
+    #####: 1411:    } while (tmp != NULL);
+    #####: 1412:    if (stack != 0) {
+    #####: 1413:        xmlXPtrErr(ctxt, XML_XPTR_EXTRA_OBJECTS,
+        -: 1414:		   "xmlXPtrEval: object(s) left on the eval stack\n",
+        -: 1415:		   NULL);
+        -: 1416:    }
+    #####: 1417:    if (ctxt->error != XPATH_EXPRESSION_OK) {
+    #####: 1418:	xmlXPathFreeObject(res);
+    #####: 1419:	res = NULL;
+        -: 1420:    }
+        -: 1421:
+    #####: 1422:    xmlXPathFreeParserContext(ctxt);
+    #####: 1423:    return(res);
+        -: 1424:}
+        -: 1425:
+        -: 1426:/**
+        -: 1427: * xmlXPtrBuildRangeNodeList:
+        -: 1428: * @range:  a range object
+        -: 1429: *
+        -: 1430: * Build a node list tree copy of the range
+        -: 1431: *
+        -: 1432: * Returns an xmlNodePtr list or NULL.
+        -: 1433: *         the caller has to free the node tree.
+        -: 1434: */
+        -: 1435:static xmlNodePtr
+    #####: 1436:xmlXPtrBuildRangeNodeList(xmlXPathObjectPtr range) {
+        -: 1437:    /* pointers to generated nodes */
+    #####: 1438:    xmlNodePtr list = NULL, last = NULL, parent = NULL, tmp;
+        -: 1439:    /* pointers to traversal nodes */
+        -: 1440:    xmlNodePtr start, cur, end;
+        -: 1441:    int index1, index2;
+        -: 1442:
+    #####: 1443:    if (range == NULL)
+    #####: 1444:	return(NULL);
+    #####: 1445:    if (range->type != XPATH_RANGE)
+    #####: 1446:	return(NULL);
+    #####: 1447:    start = (xmlNodePtr) range->user;
+        -: 1448:
+    #####: 1449:    if ((start == NULL) || (start->type == XML_NAMESPACE_DECL))
+    #####: 1450:	return(NULL);
+    #####: 1451:    end = range->user2;
+    #####: 1452:    if (end == NULL)
+    #####: 1453:	return(xmlCopyNode(start, 1));
+    #####: 1454:    if (end->type == XML_NAMESPACE_DECL)
+    #####: 1455:        return(NULL);
+        -: 1456:
+    #####: 1457:    cur = start;
+    #####: 1458:    index1 = range->index;
+    #####: 1459:    index2 = range->index2;
+    #####: 1460:    while (cur != NULL) {
+    #####: 1461:	if (cur == end) {
+    #####: 1462:	    if (cur->type == XML_TEXT_NODE) {
+    #####: 1463:		const xmlChar *content = cur->content;
+        -: 1464:		int len;
+        -: 1465:
+    #####: 1466:		if (content == NULL) {
+    #####: 1467:		    tmp = xmlNewTextLen(NULL, 0);
+        -: 1468:		} else {
+    #####: 1469:		    len = index2;
+    #####: 1470:		    if ((cur == start) && (index1 > 1)) {
+    #####: 1471:			content += (index1 - 1);
+    #####: 1472:			len -= (index1 - 1);
+    #####: 1473:			index1 = 0;
+        -: 1474:		    } else {
+    #####: 1475:			len = index2;
+        -: 1476:		    }
+    #####: 1477:		    tmp = xmlNewTextLen(content, len);
+        -: 1478:		}
+        -: 1479:		/* single sub text node selection */
+    #####: 1480:		if (list == NULL)
+    #####: 1481:		    return(tmp);
+        -: 1482:		/* prune and return full set */
+    #####: 1483:		if (last != NULL)
+    #####: 1484:		    xmlAddNextSibling(last, tmp);
+        -: 1485:		else
+    #####: 1486:		    xmlAddChild(parent, tmp);
+    #####: 1487:		return(list);
+        -: 1488:	    } else {
+    #####: 1489:		tmp = xmlCopyNode(cur, 0);
+    #####: 1490:		if (list == NULL)
+    #####: 1491:		    list = tmp;
+        -: 1492:		else {
+    #####: 1493:		    if (last != NULL)
+    #####: 1494:			xmlAddNextSibling(last, tmp);
+        -: 1495:		    else
+    #####: 1496:			xmlAddChild(parent, tmp);
+        -: 1497:		}
+    #####: 1498:		last = NULL;
+    #####: 1499:		parent = tmp;
+        -: 1500:
+    #####: 1501:		if (index2 > 1) {
+    #####: 1502:		    end = xmlXPtrGetNthChild(cur, index2 - 1);
+    #####: 1503:		    index2 = 0;
+        -: 1504:		}
+    #####: 1505:		if ((cur == start) && (index1 > 1)) {
+    #####: 1506:		    cur = xmlXPtrGetNthChild(cur, index1 - 1);
+    #####: 1507:		    index1 = 0;
+        -: 1508:		} else {
+    #####: 1509:		    cur = cur->children;
+        -: 1510:		}
+        -: 1511:		/*
+        -: 1512:		 * Now gather the remaining nodes from cur to end
+        -: 1513:		 */
+    #####: 1514:		continue; /* while */
+        -: 1515:	    }
+    #####: 1516:	} else if ((cur == start) &&
+        -: 1517:		   (list == NULL) /* looks superfluous but ... */ ) {
+    #####: 1518:	    if ((cur->type == XML_TEXT_NODE) ||
+    #####: 1519:		(cur->type == XML_CDATA_SECTION_NODE)) {
+    #####: 1520:		const xmlChar *content = cur->content;
+        -: 1521:
+    #####: 1522:		if (content == NULL) {
+    #####: 1523:		    tmp = xmlNewTextLen(NULL, 0);
+        -: 1524:		} else {
+    #####: 1525:		    if (index1 > 1) {
+    #####: 1526:			content += (index1 - 1);
+        -: 1527:		    }
+    #####: 1528:		    tmp = xmlNewText(content);
+        -: 1529:		}
+    #####: 1530:		last = list = tmp;
+        -: 1531:	    } else {
+    #####: 1532:		if ((cur == start) && (index1 > 1)) {
+    #####: 1533:		    tmp = xmlCopyNode(cur, 0);
+    #####: 1534:		    list = tmp;
+    #####: 1535:		    parent = tmp;
+    #####: 1536:		    last = NULL;
+    #####: 1537:		    cur = xmlXPtrGetNthChild(cur, index1 - 1);
+    #####: 1538:		    index1 = 0;
+        -: 1539:		    /*
+        -: 1540:		     * Now gather the remaining nodes from cur to end
+        -: 1541:		     */
+    #####: 1542:		    continue; /* while */
+        -: 1543:		}
+    #####: 1544:		tmp = xmlCopyNode(cur, 1);
+    #####: 1545:		list = tmp;
+    #####: 1546:		parent = NULL;
+    #####: 1547:		last = tmp;
+        -: 1548:	    }
+        -: 1549:	} else {
+    #####: 1550:	    tmp = NULL;
+    #####: 1551:	    switch (cur->type) {
+    #####: 1552:		case XML_DTD_NODE:
+        -: 1553:		case XML_ELEMENT_DECL:
+        -: 1554:		case XML_ATTRIBUTE_DECL:
+        -: 1555:		case XML_ENTITY_NODE:
+        -: 1556:		    /* Do not copy DTD informations */
+    #####: 1557:		    break;
+    #####: 1558:		case XML_ENTITY_DECL:
+    #####: 1559:		    TODO /* handle crossing entities -> stack needed */
+    #####: 1560:		    break;
+    #####: 1561:		case XML_XINCLUDE_START:
+        -: 1562:		case XML_XINCLUDE_END:
+        -: 1563:		    /* don't consider it part of the tree content */
+    #####: 1564:		    break;
+    #####: 1565:		case XML_ATTRIBUTE_NODE:
+        -: 1566:		    /* Humm, should not happen ! */
+    #####: 1567:		    STRANGE
+    #####: 1568:		    break;
+    #####: 1569:		default:
+    #####: 1570:		    tmp = xmlCopyNode(cur, 1);
+    #####: 1571:		    break;
+        -: 1572:	    }
+    #####: 1573:	    if (tmp != NULL) {
+    #####: 1574:		if ((list == NULL) || ((last == NULL) && (parent == NULL)))  {
+    #####: 1575:		    STRANGE
+    #####: 1576:		    return(NULL);
+        -: 1577:		}
+    #####: 1578:		if (last != NULL)
+    #####: 1579:		    xmlAddNextSibling(last, tmp);
+        -: 1580:		else {
+    #####: 1581:		    xmlAddChild(parent, tmp);
+    #####: 1582:		    last = tmp;
+        -: 1583:		}
+        -: 1584:	    }
+        -: 1585:	}
+        -: 1586:	/*
+        -: 1587:	 * Skip to next node in document order
+        -: 1588:	 */
+    #####: 1589:	if ((list == NULL) || ((last == NULL) && (parent == NULL)))  {
+    #####: 1590:	    STRANGE
+    #####: 1591:	    return(NULL);
+        -: 1592:	}
+    #####: 1593:	cur = xmlXPtrAdvanceNode(cur, NULL);
+        -: 1594:    }
+    #####: 1595:    return(list);
+        -: 1596:}
+        -: 1597:
+        -: 1598:/**
+        -: 1599: * xmlXPtrBuildNodeList:
+        -: 1600: * @obj:  the XPointer result from the evaluation.
+        -: 1601: *
+        -: 1602: * Build a node list tree copy of the XPointer result.
+        -: 1603: * This will drop Attributes and Namespace declarations.
+        -: 1604: *
+        -: 1605: * Returns an xmlNodePtr list or NULL.
+        -: 1606: *         the caller has to free the node tree.
+        -: 1607: */
+        -: 1608:xmlNodePtr
+    #####: 1609:xmlXPtrBuildNodeList(xmlXPathObjectPtr obj) {
+    #####: 1610:    xmlNodePtr list = NULL, last = NULL;
+        -: 1611:    int i;
+        -: 1612:
+    #####: 1613:    if (obj == NULL)
+    #####: 1614:	return(NULL);
+    #####: 1615:    switch (obj->type) {
+    #####: 1616:        case XPATH_NODESET: {
+    #####: 1617:	    xmlNodeSetPtr set = obj->nodesetval;
+    #####: 1618:	    if (set == NULL)
+    #####: 1619:		return(NULL);
+    #####: 1620:	    for (i = 0;i < set->nodeNr;i++) {
+    #####: 1621:		if (set->nodeTab[i] == NULL)
+    #####: 1622:		    continue;
+    #####: 1623:		switch (set->nodeTab[i]->type) {
+    #####: 1624:		    case XML_TEXT_NODE:
+        -: 1625:		    case XML_CDATA_SECTION_NODE:
+        -: 1626:		    case XML_ELEMENT_NODE:
+        -: 1627:		    case XML_ENTITY_REF_NODE:
+        -: 1628:		    case XML_ENTITY_NODE:
+        -: 1629:		    case XML_PI_NODE:
+        -: 1630:		    case XML_COMMENT_NODE:
+        -: 1631:		    case XML_DOCUMENT_NODE:
+        -: 1632:		    case XML_HTML_DOCUMENT_NODE:
+        -: 1633:#ifdef LIBXML_DOCB_ENABLED
+        -: 1634:		    case XML_DOCB_DOCUMENT_NODE:
+        -: 1635:#endif
+        -: 1636:		    case XML_XINCLUDE_START:
+        -: 1637:		    case XML_XINCLUDE_END:
+    #####: 1638:			break;
+    #####: 1639:		    case XML_ATTRIBUTE_NODE:
+        -: 1640:		    case XML_NAMESPACE_DECL:
+        -: 1641:		    case XML_DOCUMENT_TYPE_NODE:
+        -: 1642:		    case XML_DOCUMENT_FRAG_NODE:
+        -: 1643:		    case XML_NOTATION_NODE:
+        -: 1644:		    case XML_DTD_NODE:
+        -: 1645:		    case XML_ELEMENT_DECL:
+        -: 1646:		    case XML_ATTRIBUTE_DECL:
+        -: 1647:		    case XML_ENTITY_DECL:
+    #####: 1648:			continue; /* for */
+        -: 1649:		}
+    #####: 1650:		if (last == NULL)
+    #####: 1651:		    list = last = xmlCopyNode(set->nodeTab[i], 1);
+        -: 1652:		else {
+    #####: 1653:		    xmlAddNextSibling(last, xmlCopyNode(set->nodeTab[i], 1));
+    #####: 1654:		    if (last->next != NULL)
+    #####: 1655:			last = last->next;
+        -: 1656:		}
+        -: 1657:	    }
+    #####: 1658:	    break;
+        -: 1659:	}
+    #####: 1660:	case XPATH_LOCATIONSET: {
+    #####: 1661:	    xmlLocationSetPtr set = (xmlLocationSetPtr) obj->user;
+    #####: 1662:	    if (set == NULL)
+    #####: 1663:		return(NULL);
+    #####: 1664:	    for (i = 0;i < set->locNr;i++) {
+    #####: 1665:		if (last == NULL)
+    #####: 1666:		    list = last = xmlXPtrBuildNodeList(set->locTab[i]);
+        -: 1667:		else
+    #####: 1668:		    xmlAddNextSibling(last,
+    #####: 1669:			    xmlXPtrBuildNodeList(set->locTab[i]));
+    #####: 1670:		if (last != NULL) {
+    #####: 1671:		    while (last->next != NULL)
+    #####: 1672:			last = last->next;
+        -: 1673:		}
+        -: 1674:	    }
+    #####: 1675:	    break;
+        -: 1676:	}
+    #####: 1677:	case XPATH_RANGE:
+    #####: 1678:	    return(xmlXPtrBuildRangeNodeList(obj));
+    #####: 1679:	case XPATH_POINT:
+    #####: 1680:	    return(xmlCopyNode(obj->user, 0));
+    #####: 1681:	default:
+    #####: 1682:	    break;
+        -: 1683:    }
+    #####: 1684:    return(list);
+        -: 1685:}
+        -: 1686:
+        -: 1687:/************************************************************************
+        -: 1688: *									*
+        -: 1689: *			XPointer functions				*
+        -: 1690: *									*
+        -: 1691: ************************************************************************/
+        -: 1692:
+        -: 1693:/**
+        -: 1694: * xmlXPtrNbLocChildren:
+        -: 1695: * @node:  an xmlNodePtr
+        -: 1696: *
+        -: 1697: * Count the number of location children of @node or the length of the
+        -: 1698: * string value in case of text/PI/Comments nodes
+        -: 1699: *
+        -: 1700: * Returns the number of location children
+        -: 1701: */
+        -: 1702:static int
+    #####: 1703:xmlXPtrNbLocChildren(xmlNodePtr node) {
+    #####: 1704:    int ret = 0;
+    #####: 1705:    if (node == NULL)
+    #####: 1706:	return(-1);
+    #####: 1707:    switch (node->type) {
+    #####: 1708:        case XML_HTML_DOCUMENT_NODE:
+        -: 1709:        case XML_DOCUMENT_NODE:
+        -: 1710:        case XML_ELEMENT_NODE:
+    #####: 1711:	    node = node->children;
+    #####: 1712:	    while (node != NULL) {
+    #####: 1713:		if (node->type == XML_ELEMENT_NODE)
+    #####: 1714:		    ret++;
+    #####: 1715:		node = node->next;
+        -: 1716:	    }
+    #####: 1717:	    break;
+    #####: 1718:        case XML_ATTRIBUTE_NODE:
+    #####: 1719:	    return(-1);
+        -: 1720:
+    #####: 1721:        case XML_PI_NODE:
+        -: 1722:        case XML_COMMENT_NODE:
+        -: 1723:        case XML_TEXT_NODE:
+        -: 1724:        case XML_CDATA_SECTION_NODE:
+        -: 1725:        case XML_ENTITY_REF_NODE:
+    #####: 1726:	    ret = xmlStrlen(node->content);
+    #####: 1727:	    break;
+    #####: 1728:	default:
+    #####: 1729:	    return(-1);
+        -: 1730:    }
+    #####: 1731:    return(ret);
+        -: 1732:}
+        -: 1733:
+        -: 1734:/**
+        -: 1735: * xmlXPtrHereFunction:
+        -: 1736: * @ctxt:  the XPointer Parser context
+        -: 1737: * @nargs:  the number of args
+        -: 1738: *
+        -: 1739: * Function implementing here() operation
+        -: 1740: * as described in 5.4.3
+        -: 1741: */
+        -: 1742:static void
+    #####: 1743:xmlXPtrHereFunction(xmlXPathParserContextPtr ctxt, int nargs) {
+    #####: 1744:    CHECK_ARITY(0);
+        -: 1745:
+    #####: 1746:    if (ctxt->context->here == NULL)
+    #####: 1747:	XP_ERROR(XPTR_SYNTAX_ERROR);
+        -: 1748:
+    #####: 1749:    valuePush(ctxt, xmlXPtrNewLocationSetNodes(ctxt->context->here, NULL));
+        -: 1750:}
+        -: 1751:
+        -: 1752:/**
+        -: 1753: * xmlXPtrOriginFunction:
+        -: 1754: * @ctxt:  the XPointer Parser context
+        -: 1755: * @nargs:  the number of args
+        -: 1756: *
+        -: 1757: * Function implementing origin() operation
+        -: 1758: * as described in 5.4.3
+        -: 1759: */
+        -: 1760:static void
+    #####: 1761:xmlXPtrOriginFunction(xmlXPathParserContextPtr ctxt, int nargs) {
+    #####: 1762:    CHECK_ARITY(0);
+        -: 1763:
+    #####: 1764:    if (ctxt->context->origin == NULL)
+    #####: 1765:	XP_ERROR(XPTR_SYNTAX_ERROR);
+        -: 1766:
+    #####: 1767:    valuePush(ctxt, xmlXPtrNewLocationSetNodes(ctxt->context->origin, NULL));
+        -: 1768:}
+        -: 1769:
+        -: 1770:/**
+        -: 1771: * xmlXPtrStartPointFunction:
+        -: 1772: * @ctxt:  the XPointer Parser context
+        -: 1773: * @nargs:  the number of args
+        -: 1774: *
+        -: 1775: * Function implementing start-point() operation
+        -: 1776: * as described in 5.4.3
+        -: 1777: * ----------------
+        -: 1778: * location-set start-point(location-set)
+        -: 1779: *
+        -: 1780: * For each location x in the argument location-set, start-point adds a
+        -: 1781: * location of type point to the result location-set. That point represents
+        -: 1782: * the start point of location x and is determined by the following rules:
+        -: 1783: *
+        -: 1784: * - If x is of type point, the start point is x.
+        -: 1785: * - If x is of type range, the start point is the start point of x.
+        -: 1786: * - If x is of type root, element, text, comment, or processing instruction,
+        -: 1787: * - the container node of the start point is x and the index is 0.
+        -: 1788: * - If x is of type attribute or namespace, the function must signal a
+        -: 1789: *   syntax error.
+        -: 1790: * ----------------
+        -: 1791: *
+        -: 1792: */
+        -: 1793:static void
+    #####: 1794:xmlXPtrStartPointFunction(xmlXPathParserContextPtr ctxt, int nargs) {
+        -: 1795:    xmlXPathObjectPtr tmp, obj, point;
+    #####: 1796:    xmlLocationSetPtr newset = NULL;
+    #####: 1797:    xmlLocationSetPtr oldset = NULL;
+        -: 1798:
+    #####: 1799:    CHECK_ARITY(1);
+    #####: 1800:    if ((ctxt->value == NULL) ||
+    #####: 1801:	((ctxt->value->type != XPATH_LOCATIONSET) &&
+    #####: 1802:	 (ctxt->value->type != XPATH_NODESET)))
+    #####: 1803:        XP_ERROR(XPATH_INVALID_TYPE)
+        -: 1804:
+    #####: 1805:    obj = valuePop(ctxt);
+    #####: 1806:    if (obj->type == XPATH_NODESET) {
+        -: 1807:	/*
+        -: 1808:	 * First convert to a location set
+        -: 1809:	 */
+    #####: 1810:	tmp = xmlXPtrNewLocationSetNodeSet(obj->nodesetval);
+    #####: 1811:	xmlXPathFreeObject(obj);
+    #####: 1812:	if (tmp == NULL)
+    #####: 1813:            XP_ERROR(XPATH_MEMORY_ERROR)
+    #####: 1814:	obj = tmp;
+        -: 1815:    }
+        -: 1816:
+    #####: 1817:    newset = xmlXPtrLocationSetCreate(NULL);
+    #####: 1818:    if (newset == NULL) {
+    #####: 1819:	xmlXPathFreeObject(obj);
+    #####: 1820:        XP_ERROR(XPATH_MEMORY_ERROR);
+        -: 1821:    }
+    #####: 1822:    oldset = (xmlLocationSetPtr) obj->user;
+    #####: 1823:    if (oldset != NULL) {
+        -: 1824:	int i;
+        -: 1825:
+    #####: 1826:	for (i = 0; i < oldset->locNr; i++) {
+    #####: 1827:	    tmp = oldset->locTab[i];
+    #####: 1828:	    if (tmp == NULL)
+    #####: 1829:		continue;
+    #####: 1830:	    point = NULL;
+    #####: 1831:	    switch (tmp->type) {
+    #####: 1832:		case XPATH_POINT:
+    #####: 1833:		    point = xmlXPtrNewPoint(tmp->user, tmp->index);
+    #####: 1834:		    break;
+    #####: 1835:		case XPATH_RANGE: {
+    #####: 1836:		    xmlNodePtr node = tmp->user;
+    #####: 1837:		    if (node != NULL) {
+    #####: 1838:			if (node->type == XML_ATTRIBUTE_NODE) {
+        -: 1839:			    /* TODO: Namespace Nodes ??? */
+    #####: 1840:			    xmlXPathFreeObject(obj);
+    #####: 1841:			    xmlXPtrFreeLocationSet(newset);
+    #####: 1842:			    XP_ERROR(XPTR_SYNTAX_ERROR);
+        -: 1843:			}
+    #####: 1844:			point = xmlXPtrNewPoint(node, tmp->index);
+        -: 1845:		    }
+    #####: 1846:		    break;
+        -: 1847:	        }
+    #####: 1848:		default:
+        -: 1849:		    /*** Should we raise an error ?
+        -: 1850:		    xmlXPathFreeObject(obj);
+        -: 1851:		    xmlXPathFreeObject(newset);
+        -: 1852:		    XP_ERROR(XPATH_INVALID_TYPE)
+        -: 1853:		    ***/
+    #####: 1854:		    break;
+        -: 1855:	    }
+    #####: 1856:            if (point != NULL)
+    #####: 1857:		xmlXPtrLocationSetAdd(newset, point);
+        -: 1858:	}
+        -: 1859:    }
+    #####: 1860:    xmlXPathFreeObject(obj);
+    #####: 1861:    valuePush(ctxt, xmlXPtrWrapLocationSet(newset));
+        -: 1862:}
+        -: 1863:
+        -: 1864:/**
+        -: 1865: * xmlXPtrEndPointFunction:
+        -: 1866: * @ctxt:  the XPointer Parser context
+        -: 1867: * @nargs:  the number of args
+        -: 1868: *
+        -: 1869: * Function implementing end-point() operation
+        -: 1870: * as described in 5.4.3
+        -: 1871: * ----------------------------
+        -: 1872: * location-set end-point(location-set)
+        -: 1873: *
+        -: 1874: * For each location x in the argument location-set, end-point adds a
+        -: 1875: * location of type point to the result location-set. That point represents
+        -: 1876: * the end point of location x and is determined by the following rules:
+        -: 1877: *
+        -: 1878: * - If x is of type point, the resulting point is x.
+        -: 1879: * - If x is of type range, the resulting point is the end point of x.
+        -: 1880: * - If x is of type root or element, the container node of the resulting
+        -: 1881: *   point is x and the index is the number of location children of x.
+        -: 1882: * - If x is of type text, comment, or processing instruction, the container
+        -: 1883: *   node of the resulting point is x and the index is the length of the
+        -: 1884: *   string-value of x.
+        -: 1885: * - If x is of type attribute or namespace, the function must signal a
+        -: 1886: *   syntax error.
+        -: 1887: * ----------------------------
+        -: 1888: */
+        -: 1889:static void
+    #####: 1890:xmlXPtrEndPointFunction(xmlXPathParserContextPtr ctxt, int nargs) {
+        -: 1891:    xmlXPathObjectPtr tmp, obj, point;
+    #####: 1892:    xmlLocationSetPtr newset = NULL;
+    #####: 1893:    xmlLocationSetPtr oldset = NULL;
+        -: 1894:
+    #####: 1895:    CHECK_ARITY(1);
+    #####: 1896:    if ((ctxt->value == NULL) ||
+    #####: 1897:	((ctxt->value->type != XPATH_LOCATIONSET) &&
+    #####: 1898:	 (ctxt->value->type != XPATH_NODESET)))
+    #####: 1899:        XP_ERROR(XPATH_INVALID_TYPE)
+        -: 1900:
+    #####: 1901:    obj = valuePop(ctxt);
+    #####: 1902:    if (obj->type == XPATH_NODESET) {
+        -: 1903:	/*
+        -: 1904:	 * First convert to a location set
+        -: 1905:	 */
+    #####: 1906:	tmp = xmlXPtrNewLocationSetNodeSet(obj->nodesetval);
+    #####: 1907:	xmlXPathFreeObject(obj);
+    #####: 1908:	if (tmp == NULL)
+    #####: 1909:            XP_ERROR(XPATH_MEMORY_ERROR)
+    #####: 1910:	obj = tmp;
+        -: 1911:    }
+        -: 1912:
+    #####: 1913:    newset = xmlXPtrLocationSetCreate(NULL);
+    #####: 1914:    if (newset == NULL) {
+    #####: 1915:	xmlXPathFreeObject(obj);
+    #####: 1916:        XP_ERROR(XPATH_MEMORY_ERROR);
+        -: 1917:    }
+    #####: 1918:    oldset = (xmlLocationSetPtr) obj->user;
+    #####: 1919:    if (oldset != NULL) {
+        -: 1920:	int i;
+        -: 1921:
+    #####: 1922:	for (i = 0; i < oldset->locNr; i++) {
+    #####: 1923:	    tmp = oldset->locTab[i];
+    #####: 1924:	    if (tmp == NULL)
+    #####: 1925:		continue;
+    #####: 1926:	    point = NULL;
+    #####: 1927:	    switch (tmp->type) {
+    #####: 1928:		case XPATH_POINT:
+    #####: 1929:		    point = xmlXPtrNewPoint(tmp->user, tmp->index);
+    #####: 1930:		    break;
+    #####: 1931:		case XPATH_RANGE: {
+    #####: 1932:		    xmlNodePtr node = tmp->user2;
+    #####: 1933:		    if (node != NULL) {
+    #####: 1934:			if (node->type == XML_ATTRIBUTE_NODE) {
+        -: 1935:			    /* TODO: Namespace Nodes ??? */
+    #####: 1936:			    xmlXPathFreeObject(obj);
+    #####: 1937:			    xmlXPtrFreeLocationSet(newset);
+    #####: 1938:			    XP_ERROR(XPTR_SYNTAX_ERROR);
+        -: 1939:			}
+    #####: 1940:			point = xmlXPtrNewPoint(node, tmp->index2);
+    #####: 1941:		    } else if (tmp->user == NULL) {
+    #####: 1942:			point = xmlXPtrNewPoint(node,
+        -: 1943:				       xmlXPtrNbLocChildren(node));
+        -: 1944:		    }
+    #####: 1945:		    break;
+        -: 1946:	        }
+    #####: 1947:		default:
+        -: 1948:		    /*** Should we raise an error ?
+        -: 1949:		    xmlXPathFreeObject(obj);
+        -: 1950:		    xmlXPathFreeObject(newset);
+        -: 1951:		    XP_ERROR(XPATH_INVALID_TYPE)
+        -: 1952:		    ***/
+    #####: 1953:		    break;
+        -: 1954:	    }
+    #####: 1955:            if (point != NULL)
+    #####: 1956:		xmlXPtrLocationSetAdd(newset, point);
+        -: 1957:	}
+        -: 1958:    }
+    #####: 1959:    xmlXPathFreeObject(obj);
+    #####: 1960:    valuePush(ctxt, xmlXPtrWrapLocationSet(newset));
+        -: 1961:}
+        -: 1962:
+        -: 1963:
+        -: 1964:/**
+        -: 1965: * xmlXPtrCoveringRange:
+        -: 1966: * @ctxt:  the XPointer Parser context
+        -: 1967: * @loc:  the location for which the covering range must be computed
+        -: 1968: *
+        -: 1969: * A covering range is a range that wholly encompasses a location
+        -: 1970: * Section 5.3.3. Covering Ranges for All Location Types
+        -: 1971: *        http://www.w3.org/TR/xptr#N2267
+        -: 1972: *
+        -: 1973: * Returns a new location or NULL in case of error
+        -: 1974: */
+        -: 1975:static xmlXPathObjectPtr
+    #####: 1976:xmlXPtrCoveringRange(xmlXPathParserContextPtr ctxt, xmlXPathObjectPtr loc) {
+    #####: 1977:    if (loc == NULL)
+    #####: 1978:	return(NULL);
+    #####: 1979:    if ((ctxt == NULL) || (ctxt->context == NULL) ||
+    #####: 1980:	(ctxt->context->doc == NULL))
+    #####: 1981:	return(NULL);
+    #####: 1982:    switch (loc->type) {
+    #####: 1983:        case XPATH_POINT:
+    #####: 1984:	    return(xmlXPtrNewRange(loc->user, loc->index,
+    #####: 1985:			           loc->user, loc->index));
+    #####: 1986:        case XPATH_RANGE:
+    #####: 1987:	    if (loc->user2 != NULL) {
+    #####: 1988:		return(xmlXPtrNewRange(loc->user, loc->index,
+    #####: 1989:			              loc->user2, loc->index2));
+        -: 1990:	    } else {
+    #####: 1991:		xmlNodePtr node = (xmlNodePtr) loc->user;
+    #####: 1992:		if (node == (xmlNodePtr) ctxt->context->doc) {
+    #####: 1993:		    return(xmlXPtrNewRange(node, 0, node,
+        -: 1994:					   xmlXPtrGetArity(node)));
+        -: 1995:		} else {
+    #####: 1996:		    switch (node->type) {
+    #####: 1997:			case XML_ATTRIBUTE_NODE:
+        -: 1998:			/* !!! our model is slightly different than XPath */
+    #####: 1999:			    return(xmlXPtrNewRange(node, 0, node,
+        -: 2000:					           xmlXPtrGetArity(node)));
+    #####: 2001:			case XML_ELEMENT_NODE:
+        -: 2002:			case XML_TEXT_NODE:
+        -: 2003:			case XML_CDATA_SECTION_NODE:
+        -: 2004:			case XML_ENTITY_REF_NODE:
+        -: 2005:			case XML_PI_NODE:
+        -: 2006:			case XML_COMMENT_NODE:
+        -: 2007:			case XML_DOCUMENT_NODE:
+        -: 2008:			case XML_NOTATION_NODE:
+        -: 2009:			case XML_HTML_DOCUMENT_NODE: {
+    #####: 2010:			    int indx = xmlXPtrGetIndex(node);
+        -: 2011:
+    #####: 2012:			    node = node->parent;
+    #####: 2013:			    return(xmlXPtrNewRange(node, indx - 1,
+        -: 2014:					           node, indx + 1));
+        -: 2015:			}
+    #####: 2016:			default:
+    #####: 2017:			    return(NULL);
+        -: 2018:		    }
+        -: 2019:		}
+        -: 2020:	    }
+    #####: 2021:	default:
+    #####: 2022:	    TODO /* missed one case ??? */
+        -: 2023:    }
+    #####: 2024:    return(NULL);
+        -: 2025:}
+        -: 2026:
+        -: 2027:/**
+        -: 2028: * xmlXPtrRangeFunction:
+        -: 2029: * @ctxt:  the XPointer Parser context
+        -: 2030: * @nargs:  the number of args
+        -: 2031: *
+        -: 2032: * Function implementing the range() function 5.4.3
+        -: 2033: *  location-set range(location-set )
+        -: 2034: *
+        -: 2035: *  The range function returns ranges covering the locations in
+        -: 2036: *  the argument location-set. For each location x in the argument
+        -: 2037: *  location-set, a range location representing the covering range of
+        -: 2038: *  x is added to the result location-set.
+        -: 2039: */
+        -: 2040:static void
+    #####: 2041:xmlXPtrRangeFunction(xmlXPathParserContextPtr ctxt, int nargs) {
+        -: 2042:    int i;
+        -: 2043:    xmlXPathObjectPtr set;
+        -: 2044:    xmlLocationSetPtr oldset;
+        -: 2045:    xmlLocationSetPtr newset;
+        -: 2046:
+    #####: 2047:    CHECK_ARITY(1);
+    #####: 2048:    if ((ctxt->value == NULL) ||
+    #####: 2049:	((ctxt->value->type != XPATH_LOCATIONSET) &&
+    #####: 2050:	 (ctxt->value->type != XPATH_NODESET)))
+    #####: 2051:        XP_ERROR(XPATH_INVALID_TYPE)
+        -: 2052:
+    #####: 2053:    set = valuePop(ctxt);
+    #####: 2054:    if (set->type == XPATH_NODESET) {
+        -: 2055:	xmlXPathObjectPtr tmp;
+        -: 2056:
+        -: 2057:	/*
+        -: 2058:	 * First convert to a location set
+        -: 2059:	 */
+    #####: 2060:	tmp = xmlXPtrNewLocationSetNodeSet(set->nodesetval);
+    #####: 2061:	xmlXPathFreeObject(set);
+    #####: 2062:	if (tmp == NULL)
+    #####: 2063:            XP_ERROR(XPATH_MEMORY_ERROR)
+    #####: 2064:	set = tmp;
+        -: 2065:    }
+    #####: 2066:    oldset = (xmlLocationSetPtr) set->user;
+        -: 2067:
+        -: 2068:    /*
+        -: 2069:     * The loop is to compute the covering range for each item and add it
+        -: 2070:     */
+    #####: 2071:    newset = xmlXPtrLocationSetCreate(NULL);
+    #####: 2072:    if (newset == NULL) {
+    #####: 2073:	xmlXPathFreeObject(set);
+    #####: 2074:        XP_ERROR(XPATH_MEMORY_ERROR);
+        -: 2075:    }
+    #####: 2076:    for (i = 0;i < oldset->locNr;i++) {
+    #####: 2077:	xmlXPtrLocationSetAdd(newset,
+    #####: 2078:		xmlXPtrCoveringRange(ctxt, oldset->locTab[i]));
+        -: 2079:    }
+        -: 2080:
+        -: 2081:    /*
+        -: 2082:     * Save the new value and cleanup
+        -: 2083:     */
+    #####: 2084:    valuePush(ctxt, xmlXPtrWrapLocationSet(newset));
+    #####: 2085:    xmlXPathFreeObject(set);
+        -: 2086:}
+        -: 2087:
+        -: 2088:/**
+        -: 2089: * xmlXPtrInsideRange:
+        -: 2090: * @ctxt:  the XPointer Parser context
+        -: 2091: * @loc:  the location for which the inside range must be computed
+        -: 2092: *
+        -: 2093: * A inside range is a range described in the range-inside() description
+        -: 2094: *
+        -: 2095: * Returns a new location or NULL in case of error
+        -: 2096: */
+        -: 2097:static xmlXPathObjectPtr
+    #####: 2098:xmlXPtrInsideRange(xmlXPathParserContextPtr ctxt, xmlXPathObjectPtr loc) {
+    #####: 2099:    if (loc == NULL)
+    #####: 2100:	return(NULL);
+    #####: 2101:    if ((ctxt == NULL) || (ctxt->context == NULL) ||
+    #####: 2102:	(ctxt->context->doc == NULL))
+    #####: 2103:	return(NULL);
+    #####: 2104:    switch (loc->type) {
+    #####: 2105:        case XPATH_POINT: {
+    #####: 2106:	    xmlNodePtr node = (xmlNodePtr) loc->user;
+    #####: 2107:	    switch (node->type) {
+    #####: 2108:		case XML_PI_NODE:
+        -: 2109:		case XML_COMMENT_NODE:
+        -: 2110:		case XML_TEXT_NODE:
+        -: 2111:		case XML_CDATA_SECTION_NODE: {
+    #####: 2112:		    if (node->content == NULL) {
+    #####: 2113:			return(xmlXPtrNewRange(node, 0, node, 0));
+        -: 2114:		    } else {
+    #####: 2115:			return(xmlXPtrNewRange(node, 0, node,
+    #####: 2116:					       xmlStrlen(node->content)));
+        -: 2117:		    }
+        -: 2118:		}
+    #####: 2119:		case XML_ATTRIBUTE_NODE:
+        -: 2120:		case XML_ELEMENT_NODE:
+        -: 2121:		case XML_ENTITY_REF_NODE:
+        -: 2122:		case XML_DOCUMENT_NODE:
+        -: 2123:		case XML_NOTATION_NODE:
+        -: 2124:		case XML_HTML_DOCUMENT_NODE: {
+    #####: 2125:		    return(xmlXPtrNewRange(node, 0, node,
+        -: 2126:					   xmlXPtrGetArity(node)));
+        -: 2127:		}
+    #####: 2128:		default:
+    #####: 2129:		    break;
+        -: 2130:	    }
+    #####: 2131:	    return(NULL);
+        -: 2132:	}
+    #####: 2133:        case XPATH_RANGE: {
+    #####: 2134:	    xmlNodePtr node = (xmlNodePtr) loc->user;
+    #####: 2135:	    if (loc->user2 != NULL) {
+    #####: 2136:		return(xmlXPtrNewRange(node, loc->index,
+    #####: 2137:			               loc->user2, loc->index2));
+        -: 2138:	    } else {
+    #####: 2139:		switch (node->type) {
+    #####: 2140:		    case XML_PI_NODE:
+        -: 2141:		    case XML_COMMENT_NODE:
+        -: 2142:		    case XML_TEXT_NODE:
+        -: 2143:		    case XML_CDATA_SECTION_NODE: {
+    #####: 2144:			if (node->content == NULL) {
+    #####: 2145:			    return(xmlXPtrNewRange(node, 0, node, 0));
+        -: 2146:			} else {
+    #####: 2147:			    return(xmlXPtrNewRange(node, 0, node,
+    #####: 2148:						   xmlStrlen(node->content)));
+        -: 2149:			}
+        -: 2150:		    }
+    #####: 2151:		    case XML_ATTRIBUTE_NODE:
+        -: 2152:		    case XML_ELEMENT_NODE:
+        -: 2153:		    case XML_ENTITY_REF_NODE:
+        -: 2154:		    case XML_DOCUMENT_NODE:
+        -: 2155:		    case XML_NOTATION_NODE:
+        -: 2156:		    case XML_HTML_DOCUMENT_NODE: {
+    #####: 2157:			return(xmlXPtrNewRange(node, 0, node,
+        -: 2158:					       xmlXPtrGetArity(node)));
+        -: 2159:		    }
+    #####: 2160:		    default:
+    #####: 2161:			break;
+        -: 2162:		}
+    #####: 2163:		return(NULL);
+        -: 2164:	    }
+        -: 2165:        }
+    #####: 2166:	default:
+    #####: 2167:	    TODO /* missed one case ??? */
+        -: 2168:    }
+    #####: 2169:    return(NULL);
+        -: 2170:}
+        -: 2171:
+        -: 2172:/**
+        -: 2173: * xmlXPtrRangeInsideFunction:
+        -: 2174: * @ctxt:  the XPointer Parser context
+        -: 2175: * @nargs:  the number of args
+        -: 2176: *
+        -: 2177: * Function implementing the range-inside() function 5.4.3
+        -: 2178: *  location-set range-inside(location-set )
+        -: 2179: *
+        -: 2180: *  The range-inside function returns ranges covering the contents of
+        -: 2181: *  the locations in the argument location-set. For each location x in
+        -: 2182: *  the argument location-set, a range location is added to the result
+        -: 2183: *  location-set. If x is a range location, then x is added to the
+        -: 2184: *  result location-set. If x is not a range location, then x is used
+        -: 2185: *  as the container location of the start and end points of the range
+        -: 2186: *  location to be added; the index of the start point of the range is
+        -: 2187: *  zero; if the end point is a character point then its index is the
+        -: 2188: *  length of the string-value of x, and otherwise is the number of
+        -: 2189: *  location children of x.
+        -: 2190: *
+        -: 2191: */
+        -: 2192:static void
+    #####: 2193:xmlXPtrRangeInsideFunction(xmlXPathParserContextPtr ctxt, int nargs) {
+        -: 2194:    int i;
+        -: 2195:    xmlXPathObjectPtr set;
+        -: 2196:    xmlLocationSetPtr oldset;
+        -: 2197:    xmlLocationSetPtr newset;
+        -: 2198:
+    #####: 2199:    CHECK_ARITY(1);
+    #####: 2200:    if ((ctxt->value == NULL) ||
+    #####: 2201:	((ctxt->value->type != XPATH_LOCATIONSET) &&
+    #####: 2202:	 (ctxt->value->type != XPATH_NODESET)))
+    #####: 2203:        XP_ERROR(XPATH_INVALID_TYPE)
+        -: 2204:
+    #####: 2205:    set = valuePop(ctxt);
+    #####: 2206:    if (set->type == XPATH_NODESET) {
+        -: 2207:	xmlXPathObjectPtr tmp;
+        -: 2208:
+        -: 2209:	/*
+        -: 2210:	 * First convert to a location set
+        -: 2211:	 */
+    #####: 2212:	tmp = xmlXPtrNewLocationSetNodeSet(set->nodesetval);
+    #####: 2213:	xmlXPathFreeObject(set);
+    #####: 2214:	if (tmp == NULL)
+    #####: 2215:	     XP_ERROR(XPATH_MEMORY_ERROR)
+    #####: 2216:	set = tmp;
+        -: 2217:    }
+    #####: 2218:    oldset = (xmlLocationSetPtr) set->user;
+        -: 2219:
+        -: 2220:    /*
+        -: 2221:     * The loop is to compute the covering range for each item and add it
+        -: 2222:     */
+    #####: 2223:    newset = xmlXPtrLocationSetCreate(NULL);
+    #####: 2224:    if (newset == NULL) {
+    #####: 2225:	xmlXPathFreeObject(set);
+    #####: 2226:        XP_ERROR(XPATH_MEMORY_ERROR);
+        -: 2227:    }
+    #####: 2228:    for (i = 0;i < oldset->locNr;i++) {
+    #####: 2229:	xmlXPtrLocationSetAdd(newset,
+    #####: 2230:		xmlXPtrInsideRange(ctxt, oldset->locTab[i]));
+        -: 2231:    }
+        -: 2232:
+        -: 2233:    /*
+        -: 2234:     * Save the new value and cleanup
+        -: 2235:     */
+    #####: 2236:    valuePush(ctxt, xmlXPtrWrapLocationSet(newset));
+    #####: 2237:    xmlXPathFreeObject(set);
+        -: 2238:}
+        -: 2239:
+        -: 2240:/**
+        -: 2241: * xmlXPtrRangeToFunction:
+        -: 2242: * @ctxt:  the XPointer Parser context
+        -: 2243: * @nargs:  the number of args
+        -: 2244: *
+        -: 2245: * Implement the range-to() XPointer function
+        -: 2246: */
+        -: 2247:void
+    #####: 2248:xmlXPtrRangeToFunction(xmlXPathParserContextPtr ctxt, int nargs) {
+        -: 2249:    xmlXPathObjectPtr range;
+        -: 2250:    const xmlChar *cur;
+        -: 2251:    xmlXPathObjectPtr res, obj;
+        -: 2252:    xmlXPathObjectPtr tmp;
+    #####: 2253:    xmlLocationSetPtr newset = NULL;
+        -: 2254:    xmlNodeSetPtr oldset;
+        -: 2255:    int i;
+        -: 2256:
+    #####: 2257:    if (ctxt == NULL) return;
+    #####: 2258:    CHECK_ARITY(1);
+        -: 2259:    /*
+        -: 2260:     * Save the expression pointer since we will have to evaluate
+        -: 2261:     * it multiple times. Initialize the new set.
+        -: 2262:     */
+    #####: 2263:    CHECK_TYPE(XPATH_NODESET);
+    #####: 2264:    obj = valuePop(ctxt);
+    #####: 2265:    oldset = obj->nodesetval;
+    #####: 2266:    ctxt->context->node = NULL;
+        -: 2267:
+    #####: 2268:    cur = ctxt->cur;
+    #####: 2269:    newset = xmlXPtrLocationSetCreate(NULL);
+        -: 2270:
+    #####: 2271:    for (i = 0; i < oldset->nodeNr; i++) {
+    #####: 2272:	ctxt->cur = cur;
+        -: 2273:
+        -: 2274:	/*
+        -: 2275:	 * Run the evaluation with a node list made of a single item
+        -: 2276:	 * in the nodeset.
+        -: 2277:	 */
+    #####: 2278:	ctxt->context->node = oldset->nodeTab[i];
+    #####: 2279:	tmp = xmlXPathNewNodeSet(ctxt->context->node);
+    #####: 2280:	valuePush(ctxt, tmp);
+        -: 2281:
+    #####: 2282:	xmlXPathEvalExpr(ctxt);
+    #####: 2283:	CHECK_ERROR;
+        -: 2284:
+        -: 2285:	/*
+        -: 2286:	 * The result of the evaluation need to be tested to
+        -: 2287:	 * decided whether the filter succeeded or not
+        -: 2288:	 */
+    #####: 2289:	res = valuePop(ctxt);
+    #####: 2290:	range = xmlXPtrNewRangeNodeObject(oldset->nodeTab[i], res);
+    #####: 2291:	if (range != NULL) {
+    #####: 2292:	    xmlXPtrLocationSetAdd(newset, range);
+        -: 2293:	}
+        -: 2294:
+        -: 2295:	/*
+        -: 2296:	 * Cleanup
+        -: 2297:	 */
+    #####: 2298:	if (res != NULL)
+    #####: 2299:	    xmlXPathFreeObject(res);
+    #####: 2300:	if (ctxt->value == tmp) {
+    #####: 2301:	    res = valuePop(ctxt);
+    #####: 2302:	    xmlXPathFreeObject(res);
+        -: 2303:	}
+        -: 2304:
+    #####: 2305:	ctxt->context->node = NULL;
+        -: 2306:    }
+        -: 2307:
+        -: 2308:    /*
+        -: 2309:     * The result is used as the new evaluation set.
+        -: 2310:     */
+    #####: 2311:    xmlXPathFreeObject(obj);
+    #####: 2312:    ctxt->context->node = NULL;
+    #####: 2313:    ctxt->context->contextSize = -1;
+    #####: 2314:    ctxt->context->proximityPosition = -1;
+    #####: 2315:    valuePush(ctxt, xmlXPtrWrapLocationSet(newset));
+        -: 2316:}
+        -: 2317:
+        -: 2318:/**
+        -: 2319: * xmlXPtrAdvanceNode:
+        -: 2320: * @cur:  the node
+        -: 2321: * @level: incremented/decremented to show level in tree
+        -: 2322: *
+        -: 2323: * Advance to the next element or text node in document order
+        -: 2324: * TODO: add a stack for entering/exiting entities
+        -: 2325: *
+        -: 2326: * Returns -1 in case of failure, 0 otherwise
+        -: 2327: */
+        -: 2328:xmlNodePtr
+    #####: 2329:xmlXPtrAdvanceNode(xmlNodePtr cur, int *level) {
+    #####: 2330:next:
+    #####: 2331:    if ((cur == NULL) || (cur->type == XML_NAMESPACE_DECL))
+    #####: 2332:	return(NULL);
+    #####: 2333:    if (cur->children != NULL) {
+    #####: 2334:        cur = cur->children ;
+    #####: 2335:	if (level != NULL)
+    #####: 2336:	    (*level)++;
+    #####: 2337:	goto found;
+        -: 2338:    }
+    #####: 2339:skip:		/* This label should only be needed if something is wrong! */
+    #####: 2340:    if (cur->next != NULL) {
+    #####: 2341:	cur = cur->next;
+    #####: 2342:	goto found;
+        -: 2343:    }
+        -: 2344:    do {
+    #####: 2345:        cur = cur->parent;
+    #####: 2346:	if (level != NULL)
+    #####: 2347:	    (*level)--;
+    #####: 2348:        if (cur == NULL) return(NULL);
+    #####: 2349:        if (cur->next != NULL) {
+    #####: 2350:	    cur = cur->next;
+    #####: 2351:	    goto found;
+        -: 2352:	}
+    #####: 2353:    } while (cur != NULL);
+        -: 2354:
+    #####: 2355:found:
+    #####: 2356:    if ((cur->type != XML_ELEMENT_NODE) &&
+    #####: 2357:	(cur->type != XML_TEXT_NODE) &&
+    #####: 2358:	(cur->type != XML_DOCUMENT_NODE) &&
+    #####: 2359:	(cur->type != XML_HTML_DOCUMENT_NODE) &&
+    #####: 2360:	(cur->type != XML_CDATA_SECTION_NODE)) {
+    #####: 2361:	    if (cur->type == XML_ENTITY_REF_NODE) {	/* Shouldn't happen */
+    #####: 2362:		TODO
+    #####: 2363:		goto skip;
+        -: 2364:	    }
+    #####: 2365:	    goto next;
+        -: 2366:	}
+    #####: 2367:    return(cur);
+        -: 2368:}
+        -: 2369:
+        -: 2370:/**
+        -: 2371: * xmlXPtrAdvanceChar:
+        -: 2372: * @node:  the node
+        -: 2373: * @indx:  the indx
+        -: 2374: * @bytes:  the number of bytes
+        -: 2375: *
+        -: 2376: * Advance a point of the associated number of bytes (not UTF8 chars)
+        -: 2377: *
+        -: 2378: * Returns -1 in case of failure, 0 otherwise
+        -: 2379: */
+        -: 2380:static int
+    #####: 2381:xmlXPtrAdvanceChar(xmlNodePtr *node, int *indx, int bytes) {
+        -: 2382:    xmlNodePtr cur;
+        -: 2383:    int pos;
+        -: 2384:    int len;
+        -: 2385:
+    #####: 2386:    if ((node == NULL) || (indx == NULL))
+    #####: 2387:	return(-1);
+    #####: 2388:    cur = *node;
+    #####: 2389:    if ((cur == NULL) || (cur->type == XML_NAMESPACE_DECL))
+    #####: 2390:	return(-1);
+    #####: 2391:    pos = *indx;
+        -: 2392:
+    #####: 2393:    while (bytes >= 0) {
+        -: 2394:	/*
+        -: 2395:	 * First position to the beginning of the first text node
+        -: 2396:	 * corresponding to this point
+        -: 2397:	 */
+    #####: 2398:	while ((cur != NULL) &&
+    #####: 2399:	       ((cur->type == XML_ELEMENT_NODE) ||
+    #####: 2400:	        (cur->type == XML_DOCUMENT_NODE) ||
+    #####: 2401:	        (cur->type == XML_HTML_DOCUMENT_NODE))) {
+    #####: 2402:	    if (pos > 0) {
+    #####: 2403:		cur = xmlXPtrGetNthChild(cur, pos);
+    #####: 2404:		pos = 0;
+        -: 2405:	    } else {
+    #####: 2406:		cur = xmlXPtrAdvanceNode(cur, NULL);
+    #####: 2407:		pos = 0;
+        -: 2408:	    }
+        -: 2409:	}
+        -: 2410:
+    #####: 2411:	if (cur == NULL) {
+    #####: 2412:	    *node = NULL;
+    #####: 2413:	    *indx = 0;
+    #####: 2414:	    return(-1);
+        -: 2415:	}
+        -: 2416:
+        -: 2417:	/*
+        -: 2418:	 * if there is no move needed return the current value.
+        -: 2419:	 */
+    #####: 2420:	if (pos == 0) pos = 1;
+    #####: 2421:	if (bytes == 0) {
+    #####: 2422:	    *node = cur;
+    #####: 2423:	    *indx = pos;
+    #####: 2424:	    return(0);
+        -: 2425:	}
+        -: 2426:	/*
+        -: 2427:	 * We should have a text (or cdata) node ...
+        -: 2428:	 */
+    #####: 2429:	len = 0;
+    #####: 2430:	if ((cur->type != XML_ELEMENT_NODE) &&
+    #####: 2431:            (cur->content != NULL)) {
+    #####: 2432:	    len = xmlStrlen(cur->content);
+        -: 2433:	}
+    #####: 2434:	if (pos > len) {
+        -: 2435:	    /* Strange, the indx in the text node is greater than it's len */
+    #####: 2436:	    STRANGE
+    #####: 2437:	    pos = len;
+        -: 2438:	}
+    #####: 2439:	if (pos + bytes >= len) {
+    #####: 2440:	    bytes -= (len - pos);
+    #####: 2441:	    cur = xmlXPtrAdvanceNode(cur, NULL);
+    #####: 2442:	    pos = 0;
+    #####: 2443:	} else if (pos + bytes < len) {
+    #####: 2444:	    pos += bytes;
+    #####: 2445:	    *node = cur;
+    #####: 2446:	    *indx = pos;
+    #####: 2447:	    return(0);
+        -: 2448:	}
+        -: 2449:    }
+    #####: 2450:    return(-1);
+        -: 2451:}
+        -: 2452:
+        -: 2453:/**
+        -: 2454: * xmlXPtrMatchString:
+        -: 2455: * @string:  the string to search
+        -: 2456: * @start:  the start textnode
+        -: 2457: * @startindex:  the start index
+        -: 2458: * @end:  the end textnode IN/OUT
+        -: 2459: * @endindex:  the end index IN/OUT
+        -: 2460: *
+        -: 2461: * Check whether the document contains @string at the position
+        -: 2462: * (@start, @startindex) and limited by the (@end, @endindex) point
+        -: 2463: *
+        -: 2464: * Returns -1 in case of failure, 0 if not found, 1 if found in which case
+        -: 2465: *            (@start, @startindex) will indicate the position of the beginning
+        -: 2466: *            of the range and (@end, @endindex) will indicate the end
+        -: 2467: *            of the range
+        -: 2468: */
+        -: 2469:static int
+    #####: 2470:xmlXPtrMatchString(const xmlChar *string, xmlNodePtr start, int startindex,
+        -: 2471:	            xmlNodePtr *end, int *endindex) {
+        -: 2472:    xmlNodePtr cur;
+        -: 2473:    int pos; /* 0 based */
+        -: 2474:    int len; /* in bytes */
+        -: 2475:    int stringlen; /* in bytes */
+        -: 2476:    int match;
+        -: 2477:
+    #####: 2478:    if (string == NULL)
+    #####: 2479:	return(-1);
+    #####: 2480:    if ((start == NULL) || (start->type == XML_NAMESPACE_DECL))
+    #####: 2481:	return(-1);
+    #####: 2482:    if ((end == NULL) || (*end == NULL) ||
+    #####: 2483:        ((*end)->type == XML_NAMESPACE_DECL) || (endindex == NULL))
+    #####: 2484:	return(-1);
+    #####: 2485:    cur = start;
+    #####: 2486:    pos = startindex - 1;
+    #####: 2487:    stringlen = xmlStrlen(string);
+        -: 2488:
+    #####: 2489:    while (stringlen > 0) {
+    #####: 2490:	if ((cur == *end) && (pos + stringlen > *endindex))
+    #####: 2491:	    return(0);
+        -: 2492:
+    #####: 2493:	if ((cur->type != XML_ELEMENT_NODE) && (cur->content != NULL)) {
+    #####: 2494:	    len = xmlStrlen(cur->content);
+    #####: 2495:	    if (len >= pos + stringlen) {
+    #####: 2496:		match = (!xmlStrncmp(&cur->content[pos], string, stringlen));
+    #####: 2497:		if (match) {
+        -: 2498:#ifdef DEBUG_RANGES
+        -: 2499:		    xmlGenericError(xmlGenericErrorContext,
+        -: 2500:			    "found range %d bytes at index %d of ->",
+        -: 2501:			    stringlen, pos + 1);
+        -: 2502:		    xmlDebugDumpString(stdout, cur->content);
+        -: 2503:		    xmlGenericError(xmlGenericErrorContext, "\n");
+        -: 2504:#endif
+    #####: 2505:		    *end = cur;
+    #####: 2506:		    *endindex = pos + stringlen;
+    #####: 2507:		    return(1);
+        -: 2508:		} else {
+    #####: 2509:		    return(0);
+        -: 2510:		}
+        -: 2511:	    } else {
+    #####: 2512:                int sub = len - pos;
+    #####: 2513:		match = (!xmlStrncmp(&cur->content[pos], string, sub));
+    #####: 2514:		if (match) {
+        -: 2515:#ifdef DEBUG_RANGES
+        -: 2516:		    xmlGenericError(xmlGenericErrorContext,
+        -: 2517:			    "found subrange %d bytes at index %d of ->",
+        -: 2518:			    sub, pos + 1);
+        -: 2519:		    xmlDebugDumpString(stdout, cur->content);
+        -: 2520:		    xmlGenericError(xmlGenericErrorContext, "\n");
+        -: 2521:#endif
+    #####: 2522:                    string = &string[sub];
+    #####: 2523:		    stringlen -= sub;
+        -: 2524:		} else {
+    #####: 2525:		    return(0);
+        -: 2526:		}
+        -: 2527:	    }
+        -: 2528:	}
+    #####: 2529:	cur = xmlXPtrAdvanceNode(cur, NULL);
+    #####: 2530:	if (cur == NULL)
+    #####: 2531:	    return(0);
+    #####: 2532:	pos = 0;
+        -: 2533:    }
+    #####: 2534:    return(1);
+        -: 2535:}
+        -: 2536:
+        -: 2537:/**
+        -: 2538: * xmlXPtrSearchString:
+        -: 2539: * @string:  the string to search
+        -: 2540: * @start:  the start textnode IN/OUT
+        -: 2541: * @startindex:  the start index IN/OUT
+        -: 2542: * @end:  the end textnode
+        -: 2543: * @endindex:  the end index
+        -: 2544: *
+        -: 2545: * Search the next occurrence of @string within the document content
+        -: 2546: * until the (@end, @endindex) point is reached
+        -: 2547: *
+        -: 2548: * Returns -1 in case of failure, 0 if not found, 1 if found in which case
+        -: 2549: *            (@start, @startindex) will indicate the position of the beginning
+        -: 2550: *            of the range and (@end, @endindex) will indicate the end
+        -: 2551: *            of the range
+        -: 2552: */
+        -: 2553:static int
+    #####: 2554:xmlXPtrSearchString(const xmlChar *string, xmlNodePtr *start, int *startindex,
+        -: 2555:	            xmlNodePtr *end, int *endindex) {
+        -: 2556:    xmlNodePtr cur;
+        -: 2557:    const xmlChar *str;
+        -: 2558:    int pos; /* 0 based */
+        -: 2559:    int len; /* in bytes */
+        -: 2560:    xmlChar first;
+        -: 2561:
+    #####: 2562:    if (string == NULL)
+    #####: 2563:	return(-1);
+    #####: 2564:    if ((start == NULL) || (*start == NULL) ||
+    #####: 2565:        ((*start)->type == XML_NAMESPACE_DECL) || (startindex == NULL))
+    #####: 2566:	return(-1);
+    #####: 2567:    if ((end == NULL) || (endindex == NULL))
+    #####: 2568:	return(-1);
+    #####: 2569:    cur = *start;
+    #####: 2570:    pos = *startindex - 1;
+    #####: 2571:    first = string[0];
+        -: 2572:
+    #####: 2573:    while (cur != NULL) {
+    #####: 2574:	if ((cur->type != XML_ELEMENT_NODE) && (cur->content != NULL)) {
+    #####: 2575:	    len = xmlStrlen(cur->content);
+    #####: 2576:	    while (pos <= len) {
+    #####: 2577:		if (first != 0) {
+    #####: 2578:		    str = xmlStrchr(&cur->content[pos], first);
+    #####: 2579:		    if (str != NULL) {
+    #####: 2580:			pos = (str - (xmlChar *)(cur->content));
+        -: 2581:#ifdef DEBUG_RANGES
+        -: 2582:			xmlGenericError(xmlGenericErrorContext,
+        -: 2583:				"found '%c' at index %d of ->",
+        -: 2584:				first, pos + 1);
+        -: 2585:			xmlDebugDumpString(stdout, cur->content);
+        -: 2586:			xmlGenericError(xmlGenericErrorContext, "\n");
+        -: 2587:#endif
+    #####: 2588:			if (xmlXPtrMatchString(string, cur, pos + 1,
+        -: 2589:					       end, endindex)) {
+    #####: 2590:			    *start = cur;
+    #####: 2591:			    *startindex = pos + 1;
+    #####: 2592:			    return(1);
+        -: 2593:			}
+    #####: 2594:			pos++;
+        -: 2595:		    } else {
+    #####: 2596:			pos = len + 1;
+        -: 2597:		    }
+        -: 2598:		} else {
+        -: 2599:		    /*
+        -: 2600:		     * An empty string is considered to match before each
+        -: 2601:		     * character of the string-value and after the final
+        -: 2602:		     * character.
+        -: 2603:		     */
+        -: 2604:#ifdef DEBUG_RANGES
+        -: 2605:		    xmlGenericError(xmlGenericErrorContext,
+        -: 2606:			    "found '' at index %d of ->",
+        -: 2607:			    pos + 1);
+        -: 2608:		    xmlDebugDumpString(stdout, cur->content);
+        -: 2609:		    xmlGenericError(xmlGenericErrorContext, "\n");
+        -: 2610:#endif
+    #####: 2611:		    *start = cur;
+    #####: 2612:		    *startindex = pos + 1;
+    #####: 2613:		    *end = cur;
+    #####: 2614:		    *endindex = pos + 1;
+    #####: 2615:		    return(1);
+        -: 2616:		}
+        -: 2617:	    }
+        -: 2618:	}
+    #####: 2619:	if ((cur == *end) && (pos >= *endindex))
+    #####: 2620:	    return(0);
+    #####: 2621:	cur = xmlXPtrAdvanceNode(cur, NULL);
+    #####: 2622:	if (cur == NULL)
+    #####: 2623:	    return(0);
+    #####: 2624:	pos = 1;
+        -: 2625:    }
+    #####: 2626:    return(0);
+        -: 2627:}
+        -: 2628:
+        -: 2629:/**
+        -: 2630: * xmlXPtrGetLastChar:
+        -: 2631: * @node:  the node
+        -: 2632: * @index:  the index
+        -: 2633: *
+        -: 2634: * Computes the point coordinates of the last char of this point
+        -: 2635: *
+        -: 2636: * Returns -1 in case of failure, 0 otherwise
+        -: 2637: */
+        -: 2638:static int
+    #####: 2639:xmlXPtrGetLastChar(xmlNodePtr *node, int *indx) {
+        -: 2640:    xmlNodePtr cur;
+    #####: 2641:    int pos, len = 0;
+        -: 2642:
+    #####: 2643:    if ((node == NULL) || (*node == NULL) ||
+    #####: 2644:        ((*node)->type == XML_NAMESPACE_DECL) || (indx == NULL))
+    #####: 2645:	return(-1);
+    #####: 2646:    cur = *node;
+    #####: 2647:    pos = *indx;
+        -: 2648:
+    #####: 2649:    if ((cur->type == XML_ELEMENT_NODE) ||
+    #####: 2650:	(cur->type == XML_DOCUMENT_NODE) ||
+    #####: 2651:	(cur->type == XML_HTML_DOCUMENT_NODE)) {
+    #####: 2652:	if (pos > 0) {
+    #####: 2653:	    cur = xmlXPtrGetNthChild(cur, pos);
+        -: 2654:	}
+        -: 2655:    }
+    #####: 2656:    while (cur != NULL) {
+    #####: 2657:	if (cur->last != NULL)
+    #####: 2658:	    cur = cur->last;
+    #####: 2659:	else if ((cur->type != XML_ELEMENT_NODE) &&
+    #####: 2660:	         (cur->content != NULL)) {
+    #####: 2661:	    len = xmlStrlen(cur->content);
+    #####: 2662:	    break;
+        -: 2663:	} else {
+    #####: 2664:	    return(-1);
+        -: 2665:	}
+        -: 2666:    }
+    #####: 2667:    if (cur == NULL)
+    #####: 2668:	return(-1);
+    #####: 2669:    *node = cur;
+    #####: 2670:    *indx = len;
+    #####: 2671:    return(0);
+        -: 2672:}
+        -: 2673:
+        -: 2674:/**
+        -: 2675: * xmlXPtrGetStartPoint:
+        -: 2676: * @obj:  an range
+        -: 2677: * @node:  the resulting node
+        -: 2678: * @indx:  the resulting index
+        -: 2679: *
+        -: 2680: * read the object and return the start point coordinates.
+        -: 2681: *
+        -: 2682: * Returns -1 in case of failure, 0 otherwise
+        -: 2683: */
+        -: 2684:static int
+    #####: 2685:xmlXPtrGetStartPoint(xmlXPathObjectPtr obj, xmlNodePtr *node, int *indx) {
+    #####: 2686:    if ((obj == NULL) || (node == NULL) || (indx == NULL))
+    #####: 2687:	return(-1);
+        -: 2688:
+    #####: 2689:    switch (obj->type) {
+    #####: 2690:        case XPATH_POINT:
+    #####: 2691:	    *node = obj->user;
+    #####: 2692:	    if (obj->index <= 0)
+    #####: 2693:		*indx = 0;
+        -: 2694:	    else
+    #####: 2695:		*indx = obj->index;
+    #####: 2696:	    return(0);
+    #####: 2697:        case XPATH_RANGE:
+    #####: 2698:	    *node = obj->user;
+    #####: 2699:	    if (obj->index <= 0)
+    #####: 2700:		*indx = 0;
+        -: 2701:	    else
+    #####: 2702:		*indx = obj->index;
+    #####: 2703:	    return(0);
+    #####: 2704:	default:
+    #####: 2705:	    break;
+        -: 2706:    }
+    #####: 2707:    return(-1);
+        -: 2708:}
+        -: 2709:
+        -: 2710:/**
+        -: 2711: * xmlXPtrGetEndPoint:
+        -: 2712: * @obj:  an range
+        -: 2713: * @node:  the resulting node
+        -: 2714: * @indx:  the resulting indx
+        -: 2715: *
+        -: 2716: * read the object and return the end point coordinates.
+        -: 2717: *
+        -: 2718: * Returns -1 in case of failure, 0 otherwise
+        -: 2719: */
+        -: 2720:static int
+    #####: 2721:xmlXPtrGetEndPoint(xmlXPathObjectPtr obj, xmlNodePtr *node, int *indx) {
+    #####: 2722:    if ((obj == NULL) || (node == NULL) || (indx == NULL))
+    #####: 2723:	return(-1);
+        -: 2724:
+    #####: 2725:    switch (obj->type) {
+    #####: 2726:        case XPATH_POINT:
+    #####: 2727:	    *node = obj->user;
+    #####: 2728:	    if (obj->index <= 0)
+    #####: 2729:		*indx = 0;
+        -: 2730:	    else
+    #####: 2731:		*indx = obj->index;
+    #####: 2732:	    return(0);
+    #####: 2733:        case XPATH_RANGE:
+    #####: 2734:	    *node = obj->user;
+    #####: 2735:	    if (obj->index <= 0)
+    #####: 2736:		*indx = 0;
+        -: 2737:	    else
+    #####: 2738:		*indx = obj->index;
+    #####: 2739:	    return(0);
+    #####: 2740:	default:
+    #####: 2741:	    break;
+        -: 2742:    }
+    #####: 2743:    return(-1);
+        -: 2744:}
+        -: 2745:
+        -: 2746:/**
+        -: 2747: * xmlXPtrStringRangeFunction:
+        -: 2748: * @ctxt:  the XPointer Parser context
+        -: 2749: * @nargs:  the number of args
+        -: 2750: *
+        -: 2751: * Function implementing the string-range() function
+        -: 2752: * range as described in 5.4.2
+        -: 2753: *
+        -: 2754: * ------------------------------
+        -: 2755: * [Definition: For each location in the location-set argument,
+        -: 2756: * string-range returns a set of string ranges, a set of substrings in a
+        -: 2757: * string. Specifically, the string-value of the location is searched for
+        -: 2758: * substrings that match the string argument, and the resulting location-set
+        -: 2759: * will contain a range location for each non-overlapping match.]
+        -: 2760: * An empty string is considered to match before each character of the
+        -: 2761: * string-value and after the final character. Whitespace in a string
+        -: 2762: * is matched literally, with no normalization except that provided by
+        -: 2763: * XML for line ends. The third argument gives the position of the first
+        -: 2764: * character to be in the resulting range, relative to the start of the
+        -: 2765: * match. The default value is 1, which makes the range start immediately
+        -: 2766: * before the first character of the matched string. The fourth argument
+        -: 2767: * gives the number of characters in the range; the default is that the
+        -: 2768: * range extends to the end of the matched string.
+        -: 2769: *
+        -: 2770: * Element boundaries, as well as entire embedded nodes such as processing
+        -: 2771: * instructions and comments, are ignored as defined in [XPath].
+        -: 2772: *
+        -: 2773: * If the string in the second argument is not found in the string-value
+        -: 2774: * of the location, or if a value in the third or fourth argument indicates
+        -: 2775: * a string that is beyond the beginning or end of the document, the
+        -: 2776: * expression fails.
+        -: 2777: *
+        -: 2778: * The points of the range-locations in the returned location-set will
+        -: 2779: * all be character points.
+        -: 2780: * ------------------------------
+        -: 2781: */
+        -: 2782:static void
+    #####: 2783:xmlXPtrStringRangeFunction(xmlXPathParserContextPtr ctxt, int nargs) {
+    #####: 2784:    int i, startindex, endindex = 0, fendindex;
+    #####: 2785:    xmlNodePtr start, end = 0, fend;
+        -: 2786:    xmlXPathObjectPtr set;
+        -: 2787:    xmlLocationSetPtr oldset;
+        -: 2788:    xmlLocationSetPtr newset;
+        -: 2789:    xmlXPathObjectPtr string;
+    #####: 2790:    xmlXPathObjectPtr position = NULL;
+    #####: 2791:    xmlXPathObjectPtr number = NULL;
+    #####: 2792:    int found, pos = 0, num = 0;
+        -: 2793:
+        -: 2794:    /*
+        -: 2795:     * Grab the arguments
+        -: 2796:     */
+    #####: 2797:    if ((nargs < 2) || (nargs > 4))
+    #####: 2798:	XP_ERROR(XPATH_INVALID_ARITY);
+        -: 2799:
+    #####: 2800:    if (nargs >= 4) {
+    #####: 2801:	CHECK_TYPE(XPATH_NUMBER);
+    #####: 2802:	number = valuePop(ctxt);
+    #####: 2803:	if (number != NULL)
+    #####: 2804:	    num = (int) number->floatval;
+        -: 2805:    }
+    #####: 2806:    if (nargs >= 3) {
+    #####: 2807:	CHECK_TYPE(XPATH_NUMBER);
+    #####: 2808:	position = valuePop(ctxt);
+    #####: 2809:	if (position != NULL)
+    #####: 2810:	    pos = (int) position->floatval;
+        -: 2811:    }
+    #####: 2812:    CHECK_TYPE(XPATH_STRING);
+    #####: 2813:    string = valuePop(ctxt);
+    #####: 2814:    if ((ctxt->value == NULL) ||
+    #####: 2815:	((ctxt->value->type != XPATH_LOCATIONSET) &&
+    #####: 2816:	 (ctxt->value->type != XPATH_NODESET)))
+    #####: 2817:        XP_ERROR(XPATH_INVALID_TYPE)
+        -: 2818:
+    #####: 2819:    set = valuePop(ctxt);
+    #####: 2820:    newset = xmlXPtrLocationSetCreate(NULL);
+    #####: 2821:    if (newset == NULL) {
+    #####: 2822:	xmlXPathFreeObject(set);
+    #####: 2823:        XP_ERROR(XPATH_MEMORY_ERROR);
+        -: 2824:    }
+    #####: 2825:    if (set->nodesetval == NULL) {
+    #####: 2826:        goto error;
+        -: 2827:    }
+    #####: 2828:    if (set->type == XPATH_NODESET) {
+        -: 2829:	xmlXPathObjectPtr tmp;
+        -: 2830:
+        -: 2831:	/*
+        -: 2832:	 * First convert to a location set
+        -: 2833:	 */
+    #####: 2834:	tmp = xmlXPtrNewLocationSetNodeSet(set->nodesetval);
+    #####: 2835:	xmlXPathFreeObject(set);
+    #####: 2836:	if (tmp == NULL)
+    #####: 2837:	     XP_ERROR(XPATH_MEMORY_ERROR)
+    #####: 2838:	set = tmp;
+        -: 2839:    }
+    #####: 2840:    oldset = (xmlLocationSetPtr) set->user;
+        -: 2841:
+        -: 2842:    /*
+        -: 2843:     * The loop is to search for each element in the location set
+        -: 2844:     * the list of location set corresponding to that search
+        -: 2845:     */
+    #####: 2846:    for (i = 0;i < oldset->locNr;i++) {
+        -: 2847:#ifdef DEBUG_RANGES
+        -: 2848:	xmlXPathDebugDumpObject(stdout, oldset->locTab[i], 0);
+        -: 2849:#endif
+        -: 2850:
+    #####: 2851:	xmlXPtrGetStartPoint(oldset->locTab[i], &start, &startindex);
+    #####: 2852:	xmlXPtrGetEndPoint(oldset->locTab[i], &end, &endindex);
+    #####: 2853:	xmlXPtrAdvanceChar(&start, &startindex, 0);
+    #####: 2854:	xmlXPtrGetLastChar(&end, &endindex);
+        -: 2855:
+        -: 2856:#ifdef DEBUG_RANGES
+        -: 2857:	xmlGenericError(xmlGenericErrorContext,
+        -: 2858:		"from index %d of ->", startindex);
+        -: 2859:	xmlDebugDumpString(stdout, start->content);
+        -: 2860:	xmlGenericError(xmlGenericErrorContext, "\n");
+        -: 2861:	xmlGenericError(xmlGenericErrorContext,
+        -: 2862:		"to index %d of ->", endindex);
+        -: 2863:	xmlDebugDumpString(stdout, end->content);
+        -: 2864:	xmlGenericError(xmlGenericErrorContext, "\n");
+        -: 2865:#endif
+        -: 2866:	do {
+    #####: 2867:            fend = end;
+    #####: 2868:            fendindex = endindex;
+    #####: 2869:	    found = xmlXPtrSearchString(string->stringval, &start, &startindex,
+        -: 2870:		                        &fend, &fendindex);
+    #####: 2871:	    if (found == 1) {
+    #####: 2872:		if (position == NULL) {
+    #####: 2873:		    xmlXPtrLocationSetAdd(newset,
+        -: 2874:			 xmlXPtrNewRange(start, startindex, fend, fendindex));
+    #####: 2875:		} else if (xmlXPtrAdvanceChar(&start, &startindex,
+        -: 2876:			                      pos - 1) == 0) {
+    #####: 2877:		    if ((number != NULL) && (num > 0)) {
+        -: 2878:			int rindx;
+        -: 2879:			xmlNodePtr rend;
+    #####: 2880:			rend = start;
+    #####: 2881:			rindx = startindex - 1;
+    #####: 2882:			if (xmlXPtrAdvanceChar(&rend, &rindx,
+        -: 2883:				               num) == 0) {
+    #####: 2884:			    xmlXPtrLocationSetAdd(newset,
+        -: 2885:					xmlXPtrNewRange(start, startindex,
+        -: 2886:							rend, rindx));
+        -: 2887:			}
+    #####: 2888:		    } else if ((number != NULL) && (num <= 0)) {
+    #####: 2889:			xmlXPtrLocationSetAdd(newset,
+        -: 2890:				    xmlXPtrNewRange(start, startindex,
+        -: 2891:						    start, startindex));
+        -: 2892:		    } else {
+    #####: 2893:			xmlXPtrLocationSetAdd(newset,
+        -: 2894:				    xmlXPtrNewRange(start, startindex,
+        -: 2895:						    fend, fendindex));
+        -: 2896:		    }
+        -: 2897:		}
+    #####: 2898:		start = fend;
+    #####: 2899:		startindex = fendindex;
+    #####: 2900:		if (string->stringval[0] == 0)
+    #####: 2901:		    startindex++;
+        -: 2902:	    }
+    #####: 2903:	} while (found == 1);
+        -: 2904:    }
+        -: 2905:
+        -: 2906:    /*
+        -: 2907:     * Save the new value and cleanup
+        -: 2908:     */
+    #####: 2909:error:
+    #####: 2910:    valuePush(ctxt, xmlXPtrWrapLocationSet(newset));
+    #####: 2911:    xmlXPathFreeObject(set);
+    #####: 2912:    xmlXPathFreeObject(string);
+    #####: 2913:    if (position) xmlXPathFreeObject(position);
+    #####: 2914:    if (number) xmlXPathFreeObject(number);
+        -: 2915:}
+        -: 2916:
+        -: 2917:/**
+        -: 2918: * xmlXPtrEvalRangePredicate:
+        -: 2919: * @ctxt:  the XPointer Parser context
+        -: 2920: *
+        -: 2921: *  [8]   Predicate ::=   '[' PredicateExpr ']'
+        -: 2922: *  [9]   PredicateExpr ::=   Expr
+        -: 2923: *
+        -: 2924: * Evaluate a predicate as in xmlXPathEvalPredicate() but for
+        -: 2925: * a Location Set instead of a node set
+        -: 2926: */
+        -: 2927:void
+    #####: 2928:xmlXPtrEvalRangePredicate(xmlXPathParserContextPtr ctxt) {
+        -: 2929:    const xmlChar *cur;
+        -: 2930:    xmlXPathObjectPtr res;
+        -: 2931:    xmlXPathObjectPtr obj, tmp;
+    #####: 2932:    xmlLocationSetPtr newset = NULL;
+        -: 2933:    xmlLocationSetPtr oldset;
+        -: 2934:    int i;
+        -: 2935:
+    #####: 2936:    if (ctxt == NULL) return;
+        -: 2937:
+    #####: 2938:    SKIP_BLANKS;
+    #####: 2939:    if (CUR != '[') {
+    #####: 2940:	XP_ERROR(XPATH_INVALID_PREDICATE_ERROR);
+        -: 2941:    }
+    #####: 2942:    NEXT;
+    #####: 2943:    SKIP_BLANKS;
+        -: 2944:
+        -: 2945:    /*
+        -: 2946:     * Extract the old set, and then evaluate the result of the
+        -: 2947:     * expression for all the element in the set. use it to grow
+        -: 2948:     * up a new set.
+        -: 2949:     */
+    #####: 2950:    CHECK_TYPE(XPATH_LOCATIONSET);
+    #####: 2951:    obj = valuePop(ctxt);
+    #####: 2952:    oldset = obj->user;
+    #####: 2953:    ctxt->context->node = NULL;
+        -: 2954:
+    #####: 2955:    if ((oldset == NULL) || (oldset->locNr == 0)) {
+    #####: 2956:	ctxt->context->contextSize = 0;
+    #####: 2957:	ctxt->context->proximityPosition = 0;
+    #####: 2958:	xmlXPathEvalExpr(ctxt);
+    #####: 2959:	res = valuePop(ctxt);
+    #####: 2960:	if (res != NULL)
+    #####: 2961:	    xmlXPathFreeObject(res);
+    #####: 2962:	valuePush(ctxt, obj);
+    #####: 2963:	CHECK_ERROR;
+        -: 2964:    } else {
+        -: 2965:	/*
+        -: 2966:	 * Save the expression pointer since we will have to evaluate
+        -: 2967:	 * it multiple times. Initialize the new set.
+        -: 2968:	 */
+    #####: 2969:        cur = ctxt->cur;
+    #####: 2970:	newset = xmlXPtrLocationSetCreate(NULL);
+        -: 2971:
+    #####: 2972:        for (i = 0; i < oldset->locNr; i++) {
+    #####: 2973:	    ctxt->cur = cur;
+        -: 2974:
+        -: 2975:	    /*
+        -: 2976:	     * Run the evaluation with a node list made of a single item
+        -: 2977:	     * in the nodeset.
+        -: 2978:	     */
+    #####: 2979:	    ctxt->context->node = oldset->locTab[i]->user;
+    #####: 2980:	    tmp = xmlXPathNewNodeSet(ctxt->context->node);
+    #####: 2981:	    valuePush(ctxt, tmp);
+    #####: 2982:	    ctxt->context->contextSize = oldset->locNr;
+    #####: 2983:	    ctxt->context->proximityPosition = i + 1;
+        -: 2984:
+    #####: 2985:	    xmlXPathEvalExpr(ctxt);
+    #####: 2986:	    CHECK_ERROR;
+        -: 2987:
+        -: 2988:	    /*
+        -: 2989:	     * The result of the evaluation need to be tested to
+        -: 2990:	     * decided whether the filter succeeded or not
+        -: 2991:	     */
+    #####: 2992:	    res = valuePop(ctxt);
+    #####: 2993:	    if (xmlXPathEvaluatePredicateResult(ctxt, res)) {
+    #####: 2994:	        xmlXPtrLocationSetAdd(newset,
+    #####: 2995:			xmlXPathObjectCopy(oldset->locTab[i]));
+        -: 2996:	    }
+        -: 2997:
+        -: 2998:	    /*
+        -: 2999:	     * Cleanup
+        -: 3000:	     */
+    #####: 3001:	    if (res != NULL)
+    #####: 3002:		xmlXPathFreeObject(res);
+    #####: 3003:	    if (ctxt->value == tmp) {
+    #####: 3004:		res = valuePop(ctxt);
+    #####: 3005:		xmlXPathFreeObject(res);
+        -: 3006:	    }
+        -: 3007:
+    #####: 3008:	    ctxt->context->node = NULL;
+        -: 3009:	}
+        -: 3010:
+        -: 3011:	/*
+        -: 3012:	 * The result is used as the new evaluation set.
+        -: 3013:	 */
+    #####: 3014:	xmlXPathFreeObject(obj);
+    #####: 3015:	ctxt->context->node = NULL;
+    #####: 3016:	ctxt->context->contextSize = -1;
+    #####: 3017:	ctxt->context->proximityPosition = -1;
+    #####: 3018:	valuePush(ctxt, xmlXPtrWrapLocationSet(newset));
+        -: 3019:    }
+    #####: 3020:    if (CUR != ']') {
+    #####: 3021:	XP_ERROR(XPATH_INVALID_PREDICATE_ERROR);
+        -: 3022:    }
+        -: 3023:
+    #####: 3024:    NEXT;
+    #####: 3025:    SKIP_BLANKS;
+        -: 3026:}
+        -: 3027:
+        -: 3028:#define bottom_xpointer
+        -: 3029:#include "elfgcchack.h"
+        -: 3030:#endif
+        -: 3031:

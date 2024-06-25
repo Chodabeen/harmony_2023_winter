@@ -1,0 +1,7 @@
+<p tst="a&amp;b" tst3="a&b" tst3="a & b">
+a&amp;b
+a&b
+a & bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+<amp;b
+a&b
+a & bbbbbbbbbbbbbbbbbb/p>

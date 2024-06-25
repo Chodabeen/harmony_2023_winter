@@ -1,0 +1,2 @@
+/usr/bin/ar qc libflib.a CMakeFiles/flib.dir/fshare.o
+/usr/bin/ranlib libflib.a

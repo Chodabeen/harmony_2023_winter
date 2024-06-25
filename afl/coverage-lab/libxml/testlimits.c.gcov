@@ -1,0 +1,1639 @@
+        -:    0:Source:testlimits.c
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * testlimits.c: C program to run libxml2 regression tests checking various
+        -:    3: *       limits in document size. Will consume a lot of RAM and CPU cycles
+        -:    4: *
+        -:    5: * To compile on Unixes:
+        -:    6: * cc -o testlimits `xml2-config --cflags` testlimits.c `xml2-config --libs` -lpthread
+        -:    7: *
+        -:    8: * See Copyright for the status of this software.
+        -:    9: *
+        -:   10: * daniel@veillard.com
+        -:   11: */
+        -:   12:
+        -:   13:#include "libxml.h"
+        -:   14:#include <stdio.h>
+        -:   15:
+        -:   16:#if !defined(_WIN32) || defined(__CYGWIN__)
+        -:   17:#include <unistd.h>
+        -:   18:#endif
+        -:   19:#include <string.h>
+        -:   20:#include <sys/types.h>
+        -:   21:#include <sys/stat.h>
+        -:   22:#include <fcntl.h>
+        -:   23:#include <time.h>
+        -:   24:
+        -:   25:#include <libxml/parser.h>
+        -:   26:#include <libxml/parserInternals.h>
+        -:   27:#include <libxml/tree.h>
+        -:   28:#include <libxml/uri.h>
+        -:   29:#ifdef LIBXML_READER_ENABLED
+        -:   30:#include <libxml/xmlreader.h>
+        -:   31:#endif
+        -:   32:
+        -:   33:static int verbose = 0;
+        -:   34:static int tests_quiet = 0;
+        -:   35:
+        -:   36:/************************************************************************
+        -:   37: *									*
+        -:   38: *		time handling                                           *
+        -:   39: *									*
+        -:   40: ************************************************************************/
+        -:   41:
+        -:   42:/* maximum time for one parsing before declaring a timeout */
+        -:   43:#define MAX_TIME 2 /* seconds */
+        -:   44:
+        -:   45:static clock_t t0;
+        -:   46:int timeout = 0;
+        -:   47:
+    #####:   48:static void reset_timout(void) {
+    #####:   49:    timeout = 0;
+    #####:   50:    t0 = clock();
+    #####:   51:}
+        -:   52:
+    #####:   53:static int check_time(void) {
+    #####:   54:    clock_t tnow = clock();
+    #####:   55:    if (((tnow - t0) / CLOCKS_PER_SEC) > MAX_TIME) {
+    #####:   56:        timeout = 1;
+    #####:   57:        return(0);
+        -:   58:    }
+    #####:   59:    return(1);
+        -:   60:}
+        -:   61:
+        -:   62:/************************************************************************
+        -:   63: *									*
+        -:   64: *		Huge document generator					*
+        -:   65: *									*
+        -:   66: ************************************************************************/
+        -:   67:
+        -:   68:#include <libxml/xmlIO.h>
+        -:   69:
+        -:   70:/*
+        -:   71: * Huge documents are built using fixed start and end chunks
+        -:   72: * and filling between the two an unconventional amount of char data
+        -:   73: */
+        -:   74:typedef struct hugeTest hugeTest;
+        -:   75:typedef hugeTest *hugeTestPtr;
+        -:   76:struct hugeTest {
+        -:   77:    const char *description;
+        -:   78:    const char *name;
+        -:   79:    const char *start;
+        -:   80:    const char *end;
+        -:   81:};
+        -:   82:
+        -:   83:static struct hugeTest hugeTests[] = {
+        -:   84:    { "Huge text node", "huge:textNode", "<foo>", "</foo>" },
+        -:   85:    { "Huge attribute node", "huge:attrNode", "<foo bar='", "'/>" },
+        -:   86:    { "Huge comment node", "huge:commentNode", "<foo><!--", "--></foo>" },
+        -:   87:    { "Huge PI node", "huge:piNode", "<foo><?bar ", "?></foo>" },
+        -:   88:};
+        -:   89:
+        -:   90:static const char *current;
+        -:   91:static int rlen;
+        -:   92:static unsigned int currentTest = 0;
+        -:   93:static int instate = 0;
+        -:   94:
+        -:   95:/**
+        -:   96: * hugeMatch:
+        -:   97: * @URI: an URI to test
+        -:   98: *
+        -:   99: * Check for an huge: query
+        -:  100: *
+        -:  101: * Returns 1 if yes and 0 if another Input module should be used
+        -:  102: */
+        -:  103:static int
+    #####:  104:hugeMatch(const char * URI) {
+    #####:  105:    if ((URI != NULL) && (!strncmp(URI, "huge:", 5)))
+    #####:  106:        return(1);
+    #####:  107:    return(0);
+        -:  108:}
+        -:  109:
+        -:  110:/**
+        -:  111: * hugeOpen:
+        -:  112: * @URI: an URI to test
+        -:  113: *
+        -:  114: * Return a pointer to the huge: query handler, in this example simply
+        -:  115: * the current pointer...
+        -:  116: *
+        -:  117: * Returns an Input context or NULL in case or error
+        -:  118: */
+        -:  119:static void *
+    #####:  120:hugeOpen(const char * URI) {
+    #####:  121:    if ((URI == NULL) || (strncmp(URI, "huge:", 5)))
+    #####:  122:        return(NULL);
+        -:  123:
+    #####:  124:    for (currentTest = 0;currentTest < sizeof(hugeTests)/sizeof(hugeTests[0]);
+    #####:  125:         currentTest++)
+    #####:  126:         if (!strcmp(hugeTests[currentTest].name, URI))
+    #####:  127:             goto found;
+        -:  128:
+    #####:  129:    return(NULL);
+        -:  130:
+    #####:  131:found:
+    #####:  132:    rlen = strlen(hugeTests[currentTest].start);
+    #####:  133:    current = hugeTests[currentTest].start;
+    #####:  134:    instate = 0;
+    #####:  135:    return((void *) current);
+        -:  136:}
+        -:  137:
+        -:  138:/**
+        -:  139: * hugeClose:
+        -:  140: * @context: the read context
+        -:  141: *
+        -:  142: * Close the huge: query handler
+        -:  143: *
+        -:  144: * Returns 0 or -1 in case of error
+        -:  145: */
+        -:  146:static int
+    #####:  147:hugeClose(void * context) {
+    #####:  148:    if (context == NULL) return(-1);
+    #####:  149:    fprintf(stderr, "\n");
+    #####:  150:    return(0);
+        -:  151:}
+        -:  152:
+        -:  153:#define CHUNK 4096
+        -:  154:
+        -:  155:char filling[CHUNK + 1];
+        -:  156:
+    #####:  157:static void fillFilling(void) {
+        -:  158:    int i;
+        -:  159:
+    #####:  160:    for (i = 0;i < CHUNK;i++) {
+    #####:  161:        filling[i] = 'a';
+        -:  162:    }
+    #####:  163:    filling[CHUNK] = 0;
+    #####:  164:}
+        -:  165:
+        -:  166:size_t maxlen = 64 * 1024 * 1024;
+        -:  167:size_t curlen = 0;
+        -:  168:size_t dotlen;
+        -:  169:
+        -:  170:/**
+        -:  171: * hugeRead:
+        -:  172: * @context: the read context
+        -:  173: * @buffer: where to store data
+        -:  174: * @len: number of bytes to read
+        -:  175: *
+        -:  176: * Implement an huge: query read.
+        -:  177: *
+        -:  178: * Returns the number of bytes read or -1 in case of error
+        -:  179: */
+        -:  180:static int
+    #####:  181:hugeRead(void *context, char *buffer, int len)
+        -:  182:{
+    #####:  183:    if ((context == NULL) || (buffer == NULL) || (len < 0))
+    #####:  184:        return (-1);
+        -:  185:
+    #####:  186:    if (instate == 0) {
+    #####:  187:        if (len >= rlen) {
+    #####:  188:            len = rlen;
+    #####:  189:            rlen = 0;
+    #####:  190:            memcpy(buffer, current, len);
+    #####:  191:            instate = 1;
+    #####:  192:            curlen = 0;
+    #####:  193:            dotlen = maxlen / 10;
+        -:  194:        } else {
+    #####:  195:            memcpy(buffer, current, len);
+    #####:  196:            rlen -= len;
+    #####:  197:            current += len;
+        -:  198:        }
+    #####:  199:    } else if (instate == 2) {
+    #####:  200:        if (len >= rlen) {
+    #####:  201:            len = rlen;
+    #####:  202:            rlen = 0;
+    #####:  203:            memcpy(buffer, current, len);
+    #####:  204:            instate = 3;
+    #####:  205:            curlen = 0;
+        -:  206:        } else {
+    #####:  207:            memcpy(buffer, current, len);
+    #####:  208:            rlen -= len;
+    #####:  209:            current += len;
+        -:  210:        }
+    #####:  211:    } else if (instate == 1) {
+    #####:  212:        if (len > CHUNK) len = CHUNK;
+    #####:  213:        memcpy(buffer, &filling[0], len);
+    #####:  214:        curlen += len;
+    #####:  215:        if (curlen >= maxlen) {
+    #####:  216:            rlen = strlen(hugeTests[currentTest].end);
+    #####:  217:            current = hugeTests[currentTest].end;
+    #####:  218:            instate = 2;
+        -:  219:	} else {
+    #####:  220:            if (curlen > dotlen) {
+    #####:  221:                fprintf(stderr, ".");
+    #####:  222:                dotlen += maxlen / 10;
+        -:  223:            }
+        -:  224:        }
+        -:  225:    } else
+    #####:  226:      len = 0;
+    #####:  227:    return (len);
+        -:  228:}
+        -:  229:
+        -:  230:/************************************************************************
+        -:  231: *									*
+        -:  232: *		Crazy document generator				*
+        -:  233: *									*
+        -:  234: ************************************************************************/
+        -:  235:
+        -:  236:unsigned int crazy_indx = 0;
+        -:  237:
+        -:  238:const char *crazy = "<?xml version='1.0' encoding='UTF-8'?>\
+        -:  239:<?tst ?>\
+        -:  240:<!-- tst -->\
+        -:  241:<!DOCTYPE foo [\
+        -:  242:<?tst ?>\
+        -:  243:<!-- tst -->\
+        -:  244:<!ELEMENT foo (#PCDATA)>\
+        -:  245:<!ELEMENT p (#PCDATA|emph)* >\
+        -:  246:]>\
+        -:  247:<?tst ?>\
+        -:  248:<!-- tst -->\
+        -:  249:<foo bar='foo'>\
+        -:  250:<?tst ?>\
+        -:  251:<!-- tst -->\
+        -:  252:foo\
+        -:  253:<![CDATA[ ]]>\
+        -:  254:</foo>\
+        -:  255:<?tst ?>\
+        -:  256:<!-- tst -->";
+        -:  257:
+        -:  258:/**
+        -:  259: * crazyMatch:
+        -:  260: * @URI: an URI to test
+        -:  261: *
+        -:  262: * Check for a crazy: query
+        -:  263: *
+        -:  264: * Returns 1 if yes and 0 if another Input module should be used
+        -:  265: */
+        -:  266:static int
+    #####:  267:crazyMatch(const char * URI) {
+    #####:  268:    if ((URI != NULL) && (!strncmp(URI, "crazy:", 6)))
+    #####:  269:        return(1);
+    #####:  270:    return(0);
+        -:  271:}
+        -:  272:
+        -:  273:/**
+        -:  274: * crazyOpen:
+        -:  275: * @URI: an URI to test
+        -:  276: *
+        -:  277: * Return a pointer to the crazy: query handler, in this example simply
+        -:  278: * the current pointer...
+        -:  279: *
+        -:  280: * Returns an Input context or NULL in case or error
+        -:  281: */
+        -:  282:static void *
+    #####:  283:crazyOpen(const char * URI) {
+    #####:  284:    if ((URI == NULL) || (strncmp(URI, "crazy:", 6)))
+    #####:  285:        return(NULL);
+        -:  286:
+    #####:  287:    if (crazy_indx > strlen(crazy))
+    #####:  288:        return(NULL);
+    #####:  289:    reset_timout();
+    #####:  290:    rlen = crazy_indx;
+    #####:  291:    current = &crazy[0];
+    #####:  292:    instate = 0;
+    #####:  293:    return((void *) current);
+        -:  294:}
+        -:  295:
+        -:  296:/**
+        -:  297: * crazyClose:
+        -:  298: * @context: the read context
+        -:  299: *
+        -:  300: * Close the crazy: query handler
+        -:  301: *
+        -:  302: * Returns 0 or -1 in case of error
+        -:  303: */
+        -:  304:static int
+    #####:  305:crazyClose(void * context) {
+    #####:  306:    if (context == NULL) return(-1);
+    #####:  307:    return(0);
+        -:  308:}
+        -:  309:
+        -:  310:
+        -:  311:/**
+        -:  312: * crazyRead:
+        -:  313: * @context: the read context
+        -:  314: * @buffer: where to store data
+        -:  315: * @len: number of bytes to read
+        -:  316: *
+        -:  317: * Implement an crazy: query read.
+        -:  318: *
+        -:  319: * Returns the number of bytes read or -1 in case of error
+        -:  320: */
+        -:  321:static int
+    #####:  322:crazyRead(void *context, char *buffer, int len)
+        -:  323:{
+    #####:  324:    if ((context == NULL) || (buffer == NULL) || (len < 0))
+    #####:  325:        return (-1);
+        -:  326:
+    #####:  327:    if ((check_time() <= 0) && (instate == 1)) {
+    #####:  328:        fprintf(stderr, "\ntimeout in crazy(%d)\n", crazy_indx);
+    #####:  329:        rlen = strlen(crazy) - crazy_indx;
+    #####:  330:        current = &crazy[crazy_indx];
+    #####:  331:        instate = 2;
+        -:  332:    }
+    #####:  333:    if (instate == 0) {
+    #####:  334:        if (len >= rlen) {
+    #####:  335:            len = rlen;
+    #####:  336:            rlen = 0;
+    #####:  337:            memcpy(buffer, current, len);
+    #####:  338:            instate = 1;
+    #####:  339:            curlen = 0;
+        -:  340:        } else {
+    #####:  341:            memcpy(buffer, current, len);
+    #####:  342:            rlen -= len;
+    #####:  343:            current += len;
+        -:  344:        }
+    #####:  345:    } else if (instate == 2) {
+    #####:  346:        if (len >= rlen) {
+    #####:  347:            len = rlen;
+    #####:  348:            rlen = 0;
+    #####:  349:            memcpy(buffer, current, len);
+    #####:  350:            instate = 3;
+    #####:  351:            curlen = 0;
+        -:  352:        } else {
+    #####:  353:            memcpy(buffer, current, len);
+    #####:  354:            rlen -= len;
+    #####:  355:            current += len;
+        -:  356:        }
+    #####:  357:    } else if (instate == 1) {
+    #####:  358:        if (len > CHUNK) len = CHUNK;
+    #####:  359:        memcpy(buffer, &filling[0], len);
+    #####:  360:        curlen += len;
+    #####:  361:        if (curlen >= maxlen) {
+    #####:  362:            rlen = strlen(crazy) - crazy_indx;
+    #####:  363:            current = &crazy[crazy_indx];
+    #####:  364:            instate = 2;
+        -:  365:        }
+        -:  366:    } else
+    #####:  367:      len = 0;
+    #####:  368:    return (len);
+        -:  369:}
+        -:  370:/************************************************************************
+        -:  371: *									*
+        -:  372: *		Libxml2 specific routines				*
+        -:  373: *									*
+        -:  374: ************************************************************************/
+        -:  375:
+        -:  376:static int nb_tests = 0;
+        -:  377:static int nb_errors = 0;
+        -:  378:static int nb_leaks = 0;
+        -:  379:static int extraMemoryFromResolver = 0;
+        -:  380:
+        -:  381:/*
+        -:  382: * We need to trap calls to the resolver to not account memory for the catalog
+        -:  383: * which is shared to the current running test. We also don't want to have
+        -:  384: * network downloads modifying tests.
+        -:  385: */
+        -:  386:static xmlParserInputPtr
+    #####:  387:testExternalEntityLoader(const char *URL, const char *ID,
+        -:  388:			 xmlParserCtxtPtr ctxt) {
+        -:  389:    xmlParserInputPtr ret;
+    #####:  390:    int memused = xmlMemUsed();
+        -:  391:
+    #####:  392:    ret = xmlNoNetExternalEntityLoader(URL, ID, ctxt);
+    #####:  393:    extraMemoryFromResolver += xmlMemUsed() - memused;
+        -:  394:
+    #####:  395:    return(ret);
+        -:  396:}
+        -:  397:
+        -:  398:/*
+        -:  399: * Trapping the error messages at the generic level to grab the equivalent of
+        -:  400: * stderr messages on CLI tools.
+        -:  401: */
+        -:  402:static char testErrors[32769];
+        -:  403:static int testErrorsSize = 0;
+        -:  404:
+        -:  405:static void XMLCDECL
+    #####:  406:channel(void *ctx  ATTRIBUTE_UNUSED, const char *msg, ...) {
+        -:  407:    va_list args;
+        -:  408:    int res;
+        -:  409:
+    #####:  410:    if (testErrorsSize >= 32768)
+    #####:  411:        return;
+    #####:  412:    va_start(args, msg);
+    #####:  413:    res = vsnprintf(&testErrors[testErrorsSize],
+    #####:  414:                    32768 - testErrorsSize,
+        -:  415:		    msg, args);
+    #####:  416:    va_end(args);
+    #####:  417:    if (testErrorsSize + res >= 32768) {
+        -:  418:        /* buffer is full */
+    #####:  419:	testErrorsSize = 32768;
+    #####:  420:	testErrors[testErrorsSize] = 0;
+        -:  421:    } else {
+    #####:  422:        testErrorsSize += res;
+        -:  423:    }
+    #####:  424:    testErrors[testErrorsSize] = 0;
+        -:  425:}
+        -:  426:
+        -:  427:/**
+        -:  428: * xmlParserPrintFileContext:
+        -:  429: * @input:  an xmlParserInputPtr input
+        -:  430: *
+        -:  431: * Displays current context within the input content for error tracking
+        -:  432: */
+        -:  433:
+        -:  434:static void
+    #####:  435:xmlParserPrintFileContextInternal(xmlParserInputPtr input ,
+        -:  436:		xmlGenericErrorFunc chanl, void *data ) {
+        -:  437:    const xmlChar *cur, *base;
+        -:  438:    unsigned int n, col;	/* GCC warns if signed, because compared with sizeof() */
+        -:  439:    xmlChar  content[81]; /* space for 80 chars + line terminator */
+        -:  440:    xmlChar *ctnt;
+        -:  441:
+    #####:  442:    if (input == NULL) return;
+    #####:  443:    cur = input->cur;
+    #####:  444:    base = input->base;
+        -:  445:    /* skip backwards over any end-of-lines */
+    #####:  446:    while ((cur > base) && ((*(cur) == '\n') || (*(cur) == '\r'))) {
+    #####:  447:	cur--;
+        -:  448:    }
+    #####:  449:    n = 0;
+        -:  450:    /* search backwards for beginning-of-line (to max buff size) */
+    #####:  451:    while ((n++ < (sizeof(content)-1)) && (cur > base) &&
+    #####:  452:   (*(cur) != '\n') && (*(cur) != '\r'))
+    #####:  453:        cur--;
+    #####:  454:    if ((*(cur) == '\n') || (*(cur) == '\r')) cur++;
+        -:  455:    /* calculate the error position in terms of the current position */
+    #####:  456:    col = input->cur - cur;
+        -:  457:    /* search forward for end-of-line (to max buff size) */
+    #####:  458:    n = 0;
+    #####:  459:    ctnt = content;
+        -:  460:    /* copy selected text to our buffer */
+    #####:  461:    while ((*cur != 0) && (*(cur) != '\n') &&
+    #####:  462:   (*(cur) != '\r') && (n < sizeof(content)-1)) {
+    #####:  463:		*ctnt++ = *cur++;
+    #####:  464:	n++;
+        -:  465:    }
+    #####:  466:    *ctnt = 0;
+        -:  467:    /* print out the selected text */
+    #####:  468:    chanl(data ,"%s\n", content);
+        -:  469:    /* create blank line with problem pointer */
+    #####:  470:    n = 0;
+    #####:  471:    ctnt = content;
+        -:  472:    /* (leave buffer space for pointer + line terminator) */
+    #####:  473:    while ((n<col) && (n++ < sizeof(content)-2) && (*ctnt != 0)) {
+    #####:  474:	if (*(ctnt) != '\t')
+    #####:  475:	    *(ctnt) = ' ';
+    #####:  476:	ctnt++;
+        -:  477:    }
+    #####:  478:    *ctnt++ = '^';
+    #####:  479:    *ctnt = 0;
+    #####:  480:    chanl(data ,"%s\n", content);
+        -:  481:}
+        -:  482:
+        -:  483:static void
+    #####:  484:testStructuredErrorHandler(void *ctx  ATTRIBUTE_UNUSED, xmlErrorPtr err) {
+    #####:  485:    char *file = NULL;
+    #####:  486:    int line = 0;
+    #####:  487:    int code = -1;
+        -:  488:    int domain;
+    #####:  489:    void *data = NULL;
+        -:  490:    const char *str;
+    #####:  491:    const xmlChar *name = NULL;
+        -:  492:    xmlNodePtr node;
+        -:  493:    xmlErrorLevel level;
+    #####:  494:    xmlParserInputPtr input = NULL;
+    #####:  495:    xmlParserInputPtr cur = NULL;
+    #####:  496:    xmlParserCtxtPtr ctxt = NULL;
+        -:  497:
+    #####:  498:    if (err == NULL)
+    #####:  499:        return;
+        -:  500:
+    #####:  501:    file = err->file;
+    #####:  502:    line = err->line;
+    #####:  503:    code = err->code;
+    #####:  504:    domain = err->domain;
+    #####:  505:    level = err->level;
+    #####:  506:    node = err->node;
+    #####:  507:    if ((domain == XML_FROM_PARSER) || (domain == XML_FROM_HTML) ||
+    #####:  508:        (domain == XML_FROM_DTD) || (domain == XML_FROM_NAMESPACE) ||
+    #####:  509:	(domain == XML_FROM_IO) || (domain == XML_FROM_VALID)) {
+    #####:  510:	ctxt = err->ctxt;
+        -:  511:    }
+    #####:  512:    str = err->message;
+        -:  513:
+    #####:  514:    if (code == XML_ERR_OK)
+    #####:  515:        return;
+        -:  516:
+    #####:  517:    if ((node != NULL) && (node->type == XML_ELEMENT_NODE))
+    #####:  518:        name = node->name;
+        -:  519:
+        -:  520:    /*
+        -:  521:     * Maintain the compatibility with the legacy error handling
+        -:  522:     */
+    #####:  523:    if (ctxt != NULL) {
+    #####:  524:        input = ctxt->input;
+    #####:  525:        if ((input != NULL) && (input->filename == NULL) &&
+    #####:  526:            (ctxt->inputNr > 1)) {
+    #####:  527:            cur = input;
+    #####:  528:            input = ctxt->inputTab[ctxt->inputNr - 2];
+        -:  529:        }
+    #####:  530:        if (input != NULL) {
+    #####:  531:            if (input->filename)
+    #####:  532:                channel(data, "%s:%d: ", input->filename, input->line);
+    #####:  533:            else if ((line != 0) && (domain == XML_FROM_PARSER))
+    #####:  534:                channel(data, "Entity: line %d: ", input->line);
+        -:  535:        }
+        -:  536:    } else {
+    #####:  537:        if (file != NULL)
+    #####:  538:            channel(data, "%s:%d: ", file, line);
+    #####:  539:        else if ((line != 0) && (domain == XML_FROM_PARSER))
+    #####:  540:            channel(data, "Entity: line %d: ", line);
+        -:  541:    }
+    #####:  542:    if (name != NULL) {
+    #####:  543:        channel(data, "element %s: ", name);
+        -:  544:    }
+    #####:  545:    if (code == XML_ERR_OK)
+    #####:  546:        return;
+    #####:  547:    switch (domain) {
+    #####:  548:        case XML_FROM_PARSER:
+    #####:  549:            channel(data, "parser ");
+    #####:  550:            break;
+    #####:  551:        case XML_FROM_NAMESPACE:
+    #####:  552:            channel(data, "namespace ");
+    #####:  553:            break;
+    #####:  554:        case XML_FROM_DTD:
+        -:  555:        case XML_FROM_VALID:
+    #####:  556:            channel(data, "validity ");
+    #####:  557:            break;
+    #####:  558:        case XML_FROM_HTML:
+    #####:  559:            channel(data, "HTML parser ");
+    #####:  560:            break;
+    #####:  561:        case XML_FROM_MEMORY:
+    #####:  562:            channel(data, "memory ");
+    #####:  563:            break;
+    #####:  564:        case XML_FROM_OUTPUT:
+    #####:  565:            channel(data, "output ");
+    #####:  566:            break;
+    #####:  567:        case XML_FROM_IO:
+    #####:  568:            channel(data, "I/O ");
+    #####:  569:            break;
+    #####:  570:        case XML_FROM_XINCLUDE:
+    #####:  571:            channel(data, "XInclude ");
+    #####:  572:            break;
+    #####:  573:        case XML_FROM_XPATH:
+    #####:  574:            channel(data, "XPath ");
+    #####:  575:            break;
+    #####:  576:        case XML_FROM_XPOINTER:
+    #####:  577:            channel(data, "parser ");
+    #####:  578:            break;
+    #####:  579:        case XML_FROM_REGEXP:
+    #####:  580:            channel(data, "regexp ");
+    #####:  581:            break;
+    #####:  582:        case XML_FROM_MODULE:
+    #####:  583:            channel(data, "module ");
+    #####:  584:            break;
+    #####:  585:        case XML_FROM_SCHEMASV:
+    #####:  586:            channel(data, "Schemas validity ");
+    #####:  587:            break;
+    #####:  588:        case XML_FROM_SCHEMASP:
+    #####:  589:            channel(data, "Schemas parser ");
+    #####:  590:            break;
+    #####:  591:        case XML_FROM_RELAXNGP:
+    #####:  592:            channel(data, "Relax-NG parser ");
+    #####:  593:            break;
+    #####:  594:        case XML_FROM_RELAXNGV:
+    #####:  595:            channel(data, "Relax-NG validity ");
+    #####:  596:            break;
+    #####:  597:        case XML_FROM_CATALOG:
+    #####:  598:            channel(data, "Catalog ");
+    #####:  599:            break;
+    #####:  600:        case XML_FROM_C14N:
+    #####:  601:            channel(data, "C14N ");
+    #####:  602:            break;
+    #####:  603:        case XML_FROM_XSLT:
+    #####:  604:            channel(data, "XSLT ");
+    #####:  605:            break;
+    #####:  606:        default:
+    #####:  607:            break;
+        -:  608:    }
+    #####:  609:    if (code == XML_ERR_OK)
+    #####:  610:        return;
+    #####:  611:    switch (level) {
+    #####:  612:        case XML_ERR_NONE:
+    #####:  613:            channel(data, ": ");
+    #####:  614:            break;
+    #####:  615:        case XML_ERR_WARNING:
+    #####:  616:            channel(data, "warning : ");
+    #####:  617:            break;
+    #####:  618:        case XML_ERR_ERROR:
+    #####:  619:            channel(data, "error : ");
+    #####:  620:            break;
+    #####:  621:        case XML_ERR_FATAL:
+    #####:  622:            channel(data, "error : ");
+    #####:  623:            break;
+        -:  624:    }
+    #####:  625:    if (code == XML_ERR_OK)
+    #####:  626:        return;
+    #####:  627:    if (str != NULL) {
+        -:  628:        int len;
+    #####:  629:	len = xmlStrlen((const xmlChar *)str);
+    #####:  630:	if ((len > 0) && (str[len - 1] != '\n'))
+    #####:  631:	    channel(data, "%s\n", str);
+        -:  632:	else
+    #####:  633:	    channel(data, "%s", str);
+        -:  634:    } else {
+    #####:  635:        channel(data, "%s\n", "out of memory error");
+        -:  636:    }
+    #####:  637:    if (code == XML_ERR_OK)
+    #####:  638:        return;
+        -:  639:
+    #####:  640:    if (ctxt != NULL) {
+    #####:  641:        xmlParserPrintFileContextInternal(input, channel, data);
+    #####:  642:        if (cur != NULL) {
+    #####:  643:            if (cur->filename)
+    #####:  644:                channel(data, "%s:%d: \n", cur->filename, cur->line);
+    #####:  645:            else if ((line != 0) && (domain == XML_FROM_PARSER))
+    #####:  646:                channel(data, "Entity: line %d: \n", cur->line);
+    #####:  647:            xmlParserPrintFileContextInternal(cur, channel, data);
+        -:  648:        }
+        -:  649:    }
+    #####:  650:    if ((domain == XML_FROM_XPATH) && (err->str1 != NULL) &&
+    #####:  651:        (err->int1 < 100) &&
+    #####:  652:	(err->int1 < xmlStrlen((const xmlChar *)err->str1))) {
+        -:  653:	xmlChar buf[150];
+        -:  654:	int i;
+        -:  655:
+    #####:  656:	channel(data, "%s\n", err->str1);
+    #####:  657:	for (i=0;i < err->int1;i++)
+    #####:  658:	     buf[i] = ' ';
+    #####:  659:	buf[i++] = '^';
+    #####:  660:	buf[i] = 0;
+    #####:  661:	channel(data, "%s\n", buf);
+        -:  662:    }
+        -:  663:}
+        -:  664:
+        -:  665:static void
+    #####:  666:initializeLibxml2(void) {
+    #####:  667:    xmlGetWarningsDefaultValue = 0;
+    #####:  668:    xmlPedanticParserDefault(0);
+        -:  669:
+    #####:  670:    xmlMemSetup(xmlMemFree, xmlMemMalloc, xmlMemRealloc, xmlMemoryStrdup);
+    #####:  671:    xmlInitParser();
+    #####:  672:    xmlSetExternalEntityLoader(testExternalEntityLoader);
+    #####:  673:    xmlSetStructuredErrorFunc(NULL, testStructuredErrorHandler);
+        -:  674:    /*
+        -:  675:     * register the new I/O handlers
+        -:  676:     */
+    #####:  677:    if (xmlRegisterInputCallbacks(hugeMatch, hugeOpen,
+        -:  678:                                  hugeRead, hugeClose) < 0) {
+    #####:  679:        fprintf(stderr, "failed to register Huge handlers\n");
+    #####:  680:	exit(1);
+        -:  681:    }
+    #####:  682:    if (xmlRegisterInputCallbacks(crazyMatch, crazyOpen,
+        -:  683:                                  crazyRead, crazyClose) < 0) {
+    #####:  684:        fprintf(stderr, "failed to register Crazy handlers\n");
+    #####:  685:	exit(1);
+        -:  686:    }
+    #####:  687:}
+        -:  688:
+        -:  689:/************************************************************************
+        -:  690: *									*
+        -:  691: *		SAX empty callbacks                                     *
+        -:  692: *									*
+        -:  693: ************************************************************************/
+        -:  694:
+        -:  695:unsigned long callbacks = 0;
+        -:  696:
+        -:  697:/**
+        -:  698: * isStandaloneCallback:
+        -:  699: * @ctxt:  An XML parser context
+        -:  700: *
+        -:  701: * Is this document tagged standalone ?
+        -:  702: *
+        -:  703: * Returns 1 if true
+        -:  704: */
+        -:  705:static int
+    #####:  706:isStandaloneCallback(void *ctx ATTRIBUTE_UNUSED)
+        -:  707:{
+    #####:  708:    callbacks++;
+    #####:  709:    return (0);
+        -:  710:}
+        -:  711:
+        -:  712:/**
+        -:  713: * hasInternalSubsetCallback:
+        -:  714: * @ctxt:  An XML parser context
+        -:  715: *
+        -:  716: * Does this document has an internal subset
+        -:  717: *
+        -:  718: * Returns 1 if true
+        -:  719: */
+        -:  720:static int
+    #####:  721:hasInternalSubsetCallback(void *ctx ATTRIBUTE_UNUSED)
+        -:  722:{
+    #####:  723:    callbacks++;
+    #####:  724:    return (0);
+        -:  725:}
+        -:  726:
+        -:  727:/**
+        -:  728: * hasExternalSubsetCallback:
+        -:  729: * @ctxt:  An XML parser context
+        -:  730: *
+        -:  731: * Does this document has an external subset
+        -:  732: *
+        -:  733: * Returns 1 if true
+        -:  734: */
+        -:  735:static int
+    #####:  736:hasExternalSubsetCallback(void *ctx ATTRIBUTE_UNUSED)
+        -:  737:{
+    #####:  738:    callbacks++;
+    #####:  739:    return (0);
+        -:  740:}
+        -:  741:
+        -:  742:/**
+        -:  743: * internalSubsetCallback:
+        -:  744: * @ctxt:  An XML parser context
+        -:  745: *
+        -:  746: * Does this document has an internal subset
+        -:  747: */
+        -:  748:static void
+    #####:  749:internalSubsetCallback(void *ctx ATTRIBUTE_UNUSED,
+        -:  750:                       const xmlChar * name ATTRIBUTE_UNUSED,
+        -:  751:                       const xmlChar * ExternalID ATTRIBUTE_UNUSED,
+        -:  752:                       const xmlChar * SystemID ATTRIBUTE_UNUSED)
+        -:  753:{
+    #####:  754:    callbacks++;
+    #####:  755:    return;
+        -:  756:}
+        -:  757:
+        -:  758:/**
+        -:  759: * externalSubsetCallback:
+        -:  760: * @ctxt:  An XML parser context
+        -:  761: *
+        -:  762: * Does this document has an external subset
+        -:  763: */
+        -:  764:static void
+    #####:  765:externalSubsetCallback(void *ctx ATTRIBUTE_UNUSED,
+        -:  766:                       const xmlChar * name ATTRIBUTE_UNUSED,
+        -:  767:                       const xmlChar * ExternalID ATTRIBUTE_UNUSED,
+        -:  768:                       const xmlChar * SystemID ATTRIBUTE_UNUSED)
+        -:  769:{
+    #####:  770:    callbacks++;
+    #####:  771:    return;
+        -:  772:}
+        -:  773:
+        -:  774:/**
+        -:  775: * resolveEntityCallback:
+        -:  776: * @ctxt:  An XML parser context
+        -:  777: * @publicId: The public ID of the entity
+        -:  778: * @systemId: The system ID of the entity
+        -:  779: *
+        -:  780: * Special entity resolver, better left to the parser, it has
+        -:  781: * more context than the application layer.
+        -:  782: * The default behaviour is to NOT resolve the entities, in that case
+        -:  783: * the ENTITY_REF nodes are built in the structure (and the parameter
+        -:  784: * values).
+        -:  785: *
+        -:  786: * Returns the xmlParserInputPtr if inlined or NULL for DOM behaviour.
+        -:  787: */
+        -:  788:static xmlParserInputPtr
+    #####:  789:resolveEntityCallback(void *ctx ATTRIBUTE_UNUSED,
+        -:  790:                      const xmlChar * publicId ATTRIBUTE_UNUSED,
+        -:  791:                      const xmlChar * systemId ATTRIBUTE_UNUSED)
+        -:  792:{
+    #####:  793:    callbacks++;
+    #####:  794:    return (NULL);
+        -:  795:}
+        -:  796:
+        -:  797:/**
+        -:  798: * getEntityCallback:
+        -:  799: * @ctxt:  An XML parser context
+        -:  800: * @name: The entity name
+        -:  801: *
+        -:  802: * Get an entity by name
+        -:  803: *
+        -:  804: * Returns the xmlParserInputPtr if inlined or NULL for DOM behaviour.
+        -:  805: */
+        -:  806:static xmlEntityPtr
+    #####:  807:getEntityCallback(void *ctx ATTRIBUTE_UNUSED,
+        -:  808:                  const xmlChar * name ATTRIBUTE_UNUSED)
+        -:  809:{
+    #####:  810:    callbacks++;
+    #####:  811:    return (NULL);
+        -:  812:}
+        -:  813:
+        -:  814:/**
+        -:  815: * getParameterEntityCallback:
+        -:  816: * @ctxt:  An XML parser context
+        -:  817: * @name: The entity name
+        -:  818: *
+        -:  819: * Get a parameter entity by name
+        -:  820: *
+        -:  821: * Returns the xmlParserInputPtr
+        -:  822: */
+        -:  823:static xmlEntityPtr
+    #####:  824:getParameterEntityCallback(void *ctx ATTRIBUTE_UNUSED,
+        -:  825:                           const xmlChar * name ATTRIBUTE_UNUSED)
+        -:  826:{
+    #####:  827:    callbacks++;
+    #####:  828:    return (NULL);
+        -:  829:}
+        -:  830:
+        -:  831:
+        -:  832:/**
+        -:  833: * entityDeclCallback:
+        -:  834: * @ctxt:  An XML parser context
+        -:  835: * @name:  the entity name
+        -:  836: * @type:  the entity type
+        -:  837: * @publicId: The public ID of the entity
+        -:  838: * @systemId: The system ID of the entity
+        -:  839: * @content: the entity value (without processing).
+        -:  840: *
+        -:  841: * An entity definition has been parsed
+        -:  842: */
+        -:  843:static void
+    #####:  844:entityDeclCallback(void *ctx ATTRIBUTE_UNUSED,
+        -:  845:                   const xmlChar * name ATTRIBUTE_UNUSED,
+        -:  846:                   int type ATTRIBUTE_UNUSED,
+        -:  847:                   const xmlChar * publicId ATTRIBUTE_UNUSED,
+        -:  848:                   const xmlChar * systemId ATTRIBUTE_UNUSED,
+        -:  849:                   xmlChar * content ATTRIBUTE_UNUSED)
+        -:  850:{
+    #####:  851:    callbacks++;
+    #####:  852:    return;
+        -:  853:}
+        -:  854:
+        -:  855:/**
+        -:  856: * attributeDeclCallback:
+        -:  857: * @ctxt:  An XML parser context
+        -:  858: * @name:  the attribute name
+        -:  859: * @type:  the attribute type
+        -:  860: *
+        -:  861: * An attribute definition has been parsed
+        -:  862: */
+        -:  863:static void
+    #####:  864:attributeDeclCallback(void *ctx ATTRIBUTE_UNUSED,
+        -:  865:                      const xmlChar * elem ATTRIBUTE_UNUSED,
+        -:  866:                      const xmlChar * name ATTRIBUTE_UNUSED,
+        -:  867:                      int type ATTRIBUTE_UNUSED, int def ATTRIBUTE_UNUSED,
+        -:  868:                      const xmlChar * defaultValue ATTRIBUTE_UNUSED,
+        -:  869:                      xmlEnumerationPtr tree ATTRIBUTE_UNUSED)
+        -:  870:{
+    #####:  871:    callbacks++;
+    #####:  872:    return;
+        -:  873:}
+        -:  874:
+        -:  875:/**
+        -:  876: * elementDeclCallback:
+        -:  877: * @ctxt:  An XML parser context
+        -:  878: * @name:  the element name
+        -:  879: * @type:  the element type
+        -:  880: * @content: the element value (without processing).
+        -:  881: *
+        -:  882: * An element definition has been parsed
+        -:  883: */
+        -:  884:static void
+    #####:  885:elementDeclCallback(void *ctx ATTRIBUTE_UNUSED,
+        -:  886:                    const xmlChar * name ATTRIBUTE_UNUSED,
+        -:  887:                    int type ATTRIBUTE_UNUSED,
+        -:  888:                    xmlElementContentPtr content ATTRIBUTE_UNUSED)
+        -:  889:{
+    #####:  890:    callbacks++;
+    #####:  891:    return;
+        -:  892:}
+        -:  893:
+        -:  894:/**
+        -:  895: * notationDeclCallback:
+        -:  896: * @ctxt:  An XML parser context
+        -:  897: * @name: The name of the notation
+        -:  898: * @publicId: The public ID of the entity
+        -:  899: * @systemId: The system ID of the entity
+        -:  900: *
+        -:  901: * What to do when a notation declaration has been parsed.
+        -:  902: */
+        -:  903:static void
+    #####:  904:notationDeclCallback(void *ctx ATTRIBUTE_UNUSED,
+        -:  905:                     const xmlChar * name ATTRIBUTE_UNUSED,
+        -:  906:                     const xmlChar * publicId ATTRIBUTE_UNUSED,
+        -:  907:                     const xmlChar * systemId ATTRIBUTE_UNUSED)
+        -:  908:{
+    #####:  909:    callbacks++;
+    #####:  910:    return;
+        -:  911:}
+        -:  912:
+        -:  913:/**
+        -:  914: * unparsedEntityDeclCallback:
+        -:  915: * @ctxt:  An XML parser context
+        -:  916: * @name: The name of the entity
+        -:  917: * @publicId: The public ID of the entity
+        -:  918: * @systemId: The system ID of the entity
+        -:  919: * @notationName: the name of the notation
+        -:  920: *
+        -:  921: * What to do when an unparsed entity declaration is parsed
+        -:  922: */
+        -:  923:static void
+    #####:  924:unparsedEntityDeclCallback(void *ctx ATTRIBUTE_UNUSED,
+        -:  925:                           const xmlChar * name ATTRIBUTE_UNUSED,
+        -:  926:                           const xmlChar * publicId ATTRIBUTE_UNUSED,
+        -:  927:                           const xmlChar * systemId ATTRIBUTE_UNUSED,
+        -:  928:                           const xmlChar * notationName ATTRIBUTE_UNUSED)
+        -:  929:{
+    #####:  930:    callbacks++;
+    #####:  931:    return;
+        -:  932:}
+        -:  933:
+        -:  934:/**
+        -:  935: * setDocumentLocatorCallback:
+        -:  936: * @ctxt:  An XML parser context
+        -:  937: * @loc: A SAX Locator
+        -:  938: *
+        -:  939: * Receive the document locator at startup, actually xmlDefaultSAXLocator
+        -:  940: * Everything is available on the context, so this is useless in our case.
+        -:  941: */
+        -:  942:static void
+    #####:  943:setDocumentLocatorCallback(void *ctx ATTRIBUTE_UNUSED,
+        -:  944:                           xmlSAXLocatorPtr loc ATTRIBUTE_UNUSED)
+        -:  945:{
+    #####:  946:    callbacks++;
+    #####:  947:    return;
+        -:  948:}
+        -:  949:
+        -:  950:/**
+        -:  951: * startDocumentCallback:
+        -:  952: * @ctxt:  An XML parser context
+        -:  953: *
+        -:  954: * called when the document start being processed.
+        -:  955: */
+        -:  956:static void
+    #####:  957:startDocumentCallback(void *ctx ATTRIBUTE_UNUSED)
+        -:  958:{
+    #####:  959:    callbacks++;
+    #####:  960:    return;
+        -:  961:}
+        -:  962:
+        -:  963:/**
+        -:  964: * endDocumentCallback:
+        -:  965: * @ctxt:  An XML parser context
+        -:  966: *
+        -:  967: * called when the document end has been detected.
+        -:  968: */
+        -:  969:static void
+    #####:  970:endDocumentCallback(void *ctx ATTRIBUTE_UNUSED)
+        -:  971:{
+    #####:  972:    callbacks++;
+    #####:  973:    return;
+        -:  974:}
+        -:  975:
+        -:  976:#if 0
+        -:  977:/**
+        -:  978: * startElementCallback:
+        -:  979: * @ctxt:  An XML parser context
+        -:  980: * @name:  The element name
+        -:  981: *
+        -:  982: * called when an opening tag has been processed.
+        -:  983: */
+        -:  984:static void
+        -:  985:startElementCallback(void *ctx ATTRIBUTE_UNUSED,
+        -:  986:                     const xmlChar * name ATTRIBUTE_UNUSED,
+        -:  987:                     const xmlChar ** atts ATTRIBUTE_UNUSED)
+        -:  988:{
+        -:  989:    callbacks++;
+        -:  990:    return;
+        -:  991:}
+        -:  992:
+        -:  993:/**
+        -:  994: * endElementCallback:
+        -:  995: * @ctxt:  An XML parser context
+        -:  996: * @name:  The element name
+        -:  997: *
+        -:  998: * called when the end of an element has been detected.
+        -:  999: */
+        -: 1000:static void
+        -: 1001:endElementCallback(void *ctx ATTRIBUTE_UNUSED,
+        -: 1002:                   const xmlChar * name ATTRIBUTE_UNUSED)
+        -: 1003:{
+        -: 1004:    callbacks++;
+        -: 1005:    return;
+        -: 1006:}
+        -: 1007:#endif
+        -: 1008:
+        -: 1009:/**
+        -: 1010: * charactersCallback:
+        -: 1011: * @ctxt:  An XML parser context
+        -: 1012: * @ch:  a xmlChar string
+        -: 1013: * @len: the number of xmlChar
+        -: 1014: *
+        -: 1015: * receiving some chars from the parser.
+        -: 1016: * Question: how much at a time ???
+        -: 1017: */
+        -: 1018:static void
+    #####: 1019:charactersCallback(void *ctx ATTRIBUTE_UNUSED,
+        -: 1020:                   const xmlChar * ch ATTRIBUTE_UNUSED,
+        -: 1021:                   int len ATTRIBUTE_UNUSED)
+        -: 1022:{
+    #####: 1023:    callbacks++;
+    #####: 1024:    return;
+        -: 1025:}
+        -: 1026:
+        -: 1027:/**
+        -: 1028: * referenceCallback:
+        -: 1029: * @ctxt:  An XML parser context
+        -: 1030: * @name:  The entity name
+        -: 1031: *
+        -: 1032: * called when an entity reference is detected.
+        -: 1033: */
+        -: 1034:static void
+    #####: 1035:referenceCallback(void *ctx ATTRIBUTE_UNUSED,
+        -: 1036:                  const xmlChar * name ATTRIBUTE_UNUSED)
+        -: 1037:{
+    #####: 1038:    callbacks++;
+    #####: 1039:    return;
+        -: 1040:}
+        -: 1041:
+        -: 1042:/**
+        -: 1043: * ignorableWhitespaceCallback:
+        -: 1044: * @ctxt:  An XML parser context
+        -: 1045: * @ch:  a xmlChar string
+        -: 1046: * @start: the first char in the string
+        -: 1047: * @len: the number of xmlChar
+        -: 1048: *
+        -: 1049: * receiving some ignorable whitespaces from the parser.
+        -: 1050: * Question: how much at a time ???
+        -: 1051: */
+        -: 1052:static void
+    #####: 1053:ignorableWhitespaceCallback(void *ctx ATTRIBUTE_UNUSED,
+        -: 1054:                            const xmlChar * ch ATTRIBUTE_UNUSED,
+        -: 1055:                            int len ATTRIBUTE_UNUSED)
+        -: 1056:{
+    #####: 1057:    callbacks++;
+    #####: 1058:    return;
+        -: 1059:}
+        -: 1060:
+        -: 1061:/**
+        -: 1062: * processingInstructionCallback:
+        -: 1063: * @ctxt:  An XML parser context
+        -: 1064: * @target:  the target name
+        -: 1065: * @data: the PI data's
+        -: 1066: * @len: the number of xmlChar
+        -: 1067: *
+        -: 1068: * A processing instruction has been parsed.
+        -: 1069: */
+        -: 1070:static void
+    #####: 1071:processingInstructionCallback(void *ctx ATTRIBUTE_UNUSED,
+        -: 1072:                              const xmlChar * target ATTRIBUTE_UNUSED,
+        -: 1073:                              const xmlChar * data ATTRIBUTE_UNUSED)
+        -: 1074:{
+    #####: 1075:    callbacks++;
+    #####: 1076:    return;
+        -: 1077:}
+        -: 1078:
+        -: 1079:/**
+        -: 1080: * cdataBlockCallback:
+        -: 1081: * @ctx: the user data (XML parser context)
+        -: 1082: * @value:  The pcdata content
+        -: 1083: * @len:  the block length
+        -: 1084: *
+        -: 1085: * called when a pcdata block has been parsed
+        -: 1086: */
+        -: 1087:static void
+    #####: 1088:cdataBlockCallback(void *ctx ATTRIBUTE_UNUSED,
+        -: 1089:                   const xmlChar * value ATTRIBUTE_UNUSED,
+        -: 1090:                   int len ATTRIBUTE_UNUSED)
+        -: 1091:{
+    #####: 1092:    callbacks++;
+    #####: 1093:    return;
+        -: 1094:}
+        -: 1095:
+        -: 1096:/**
+        -: 1097: * commentCallback:
+        -: 1098: * @ctxt:  An XML parser context
+        -: 1099: * @value:  the comment content
+        -: 1100: *
+        -: 1101: * A comment has been parsed.
+        -: 1102: */
+        -: 1103:static void
+    #####: 1104:commentCallback(void *ctx ATTRIBUTE_UNUSED,
+        -: 1105:                const xmlChar * value ATTRIBUTE_UNUSED)
+        -: 1106:{
+    #####: 1107:    callbacks++;
+    #####: 1108:    return;
+        -: 1109:}
+        -: 1110:
+        -: 1111:/**
+        -: 1112: * warningCallback:
+        -: 1113: * @ctxt:  An XML parser context
+        -: 1114: * @msg:  the message to display/transmit
+        -: 1115: * @...:  extra parameters for the message display
+        -: 1116: *
+        -: 1117: * Display and format a warning messages, gives file, line, position and
+        -: 1118: * extra parameters.
+        -: 1119: */
+        -: 1120:static void XMLCDECL
+    #####: 1121:warningCallback(void *ctx ATTRIBUTE_UNUSED,
+        -: 1122:                const char *msg ATTRIBUTE_UNUSED, ...)
+        -: 1123:{
+    #####: 1124:    callbacks++;
+    #####: 1125:    return;
+        -: 1126:}
+        -: 1127:
+        -: 1128:/**
+        -: 1129: * errorCallback:
+        -: 1130: * @ctxt:  An XML parser context
+        -: 1131: * @msg:  the message to display/transmit
+        -: 1132: * @...:  extra parameters for the message display
+        -: 1133: *
+        -: 1134: * Display and format a error messages, gives file, line, position and
+        -: 1135: * extra parameters.
+        -: 1136: */
+        -: 1137:static void XMLCDECL
+    #####: 1138:errorCallback(void *ctx ATTRIBUTE_UNUSED, const char *msg ATTRIBUTE_UNUSED,
+        -: 1139:              ...)
+        -: 1140:{
+    #####: 1141:    callbacks++;
+    #####: 1142:    return;
+        -: 1143:}
+        -: 1144:
+        -: 1145:/**
+        -: 1146: * fatalErrorCallback:
+        -: 1147: * @ctxt:  An XML parser context
+        -: 1148: * @msg:  the message to display/transmit
+        -: 1149: * @...:  extra parameters for the message display
+        -: 1150: *
+        -: 1151: * Display and format a fatalError messages, gives file, line, position and
+        -: 1152: * extra parameters.
+        -: 1153: */
+        -: 1154:static void XMLCDECL
+    #####: 1155:fatalErrorCallback(void *ctx ATTRIBUTE_UNUSED,
+        -: 1156:                   const char *msg ATTRIBUTE_UNUSED, ...)
+        -: 1157:{
+    #####: 1158:    return;
+        -: 1159:}
+        -: 1160:
+        -: 1161:
+        -: 1162:/*
+        -: 1163: * SAX2 specific callbacks
+        -: 1164: */
+        -: 1165:
+        -: 1166:/**
+        -: 1167: * startElementNsCallback:
+        -: 1168: * @ctxt:  An XML parser context
+        -: 1169: * @name:  The element name
+        -: 1170: *
+        -: 1171: * called when an opening tag has been processed.
+        -: 1172: */
+        -: 1173:static void
+    #####: 1174:startElementNsCallback(void *ctx ATTRIBUTE_UNUSED,
+        -: 1175:                       const xmlChar * localname ATTRIBUTE_UNUSED,
+        -: 1176:                       const xmlChar * prefix ATTRIBUTE_UNUSED,
+        -: 1177:                       const xmlChar * URI ATTRIBUTE_UNUSED,
+        -: 1178:                       int nb_namespaces ATTRIBUTE_UNUSED,
+        -: 1179:                       const xmlChar ** namespaces ATTRIBUTE_UNUSED,
+        -: 1180:                       int nb_attributes ATTRIBUTE_UNUSED,
+        -: 1181:                       int nb_defaulted ATTRIBUTE_UNUSED,
+        -: 1182:                       const xmlChar ** attributes ATTRIBUTE_UNUSED)
+        -: 1183:{
+    #####: 1184:    callbacks++;
+    #####: 1185:    return;
+        -: 1186:}
+        -: 1187:
+        -: 1188:/**
+        -: 1189: * endElementCallback:
+        -: 1190: * @ctxt:  An XML parser context
+        -: 1191: * @name:  The element name
+        -: 1192: *
+        -: 1193: * called when the end of an element has been detected.
+        -: 1194: */
+        -: 1195:static void
+    #####: 1196:endElementNsCallback(void *ctx ATTRIBUTE_UNUSED,
+        -: 1197:                     const xmlChar * localname ATTRIBUTE_UNUSED,
+        -: 1198:                     const xmlChar * prefix ATTRIBUTE_UNUSED,
+        -: 1199:                     const xmlChar * URI ATTRIBUTE_UNUSED)
+        -: 1200:{
+    #####: 1201:    callbacks++;
+    #####: 1202:    return;
+        -: 1203:}
+        -: 1204:
+        -: 1205:static xmlSAXHandler callbackSAX2HandlerStruct = {
+        -: 1206:    internalSubsetCallback,
+        -: 1207:    isStandaloneCallback,
+        -: 1208:    hasInternalSubsetCallback,
+        -: 1209:    hasExternalSubsetCallback,
+        -: 1210:    resolveEntityCallback,
+        -: 1211:    getEntityCallback,
+        -: 1212:    entityDeclCallback,
+        -: 1213:    notationDeclCallback,
+        -: 1214:    attributeDeclCallback,
+        -: 1215:    elementDeclCallback,
+        -: 1216:    unparsedEntityDeclCallback,
+        -: 1217:    setDocumentLocatorCallback,
+        -: 1218:    startDocumentCallback,
+        -: 1219:    endDocumentCallback,
+        -: 1220:    NULL,
+        -: 1221:    NULL,
+        -: 1222:    referenceCallback,
+        -: 1223:    charactersCallback,
+        -: 1224:    ignorableWhitespaceCallback,
+        -: 1225:    processingInstructionCallback,
+        -: 1226:    commentCallback,
+        -: 1227:    warningCallback,
+        -: 1228:    errorCallback,
+        -: 1229:    fatalErrorCallback,
+        -: 1230:    getParameterEntityCallback,
+        -: 1231:    cdataBlockCallback,
+        -: 1232:    externalSubsetCallback,
+        -: 1233:    XML_SAX2_MAGIC,
+        -: 1234:    NULL,
+        -: 1235:    startElementNsCallback,
+        -: 1236:    endElementNsCallback,
+        -: 1237:    NULL
+        -: 1238:};
+        -: 1239:
+        -: 1240:static xmlSAXHandlerPtr callbackSAX2Handler = &callbackSAX2HandlerStruct;
+        -: 1241:
+        -: 1242:/************************************************************************
+        -: 1243: *									*
+        -: 1244: *		The tests front-ends                                     *
+        -: 1245: *									*
+        -: 1246: ************************************************************************/
+        -: 1247:
+        -: 1248:/**
+        -: 1249: * readerTest:
+        -: 1250: * @filename: the file to parse
+        -: 1251: * @max_size: size of the limit to test
+        -: 1252: * @options: parsing options
+        -: 1253: * @fail: should a failure be reported
+        -: 1254: *
+        -: 1255: * Parse a memory generated file using SAX
+        -: 1256: *
+        -: 1257: * Returns 0 in case of success, an error code otherwise
+        -: 1258: */
+        -: 1259:static int
+    #####: 1260:saxTest(const char *filename, size_t limit, int options, int fail) {
+    #####: 1261:    int res = 0;
+        -: 1262:    xmlParserCtxtPtr ctxt;
+        -: 1263:    xmlDocPtr doc;
+        -: 1264:    xmlSAXHandlerPtr old_sax;
+        -: 1265:
+    #####: 1266:    nb_tests++;
+        -: 1267:
+    #####: 1268:    maxlen = limit;
+    #####: 1269:    ctxt = xmlNewParserCtxt();
+    #####: 1270:    if (ctxt == NULL) {
+    #####: 1271:        fprintf(stderr, "Failed to create parser context\n");
+    #####: 1272:	return(1);
+        -: 1273:    }
+    #####: 1274:    old_sax = ctxt->sax;
+    #####: 1275:    ctxt->sax = callbackSAX2Handler;
+    #####: 1276:    ctxt->userData = NULL;
+    #####: 1277:    doc = xmlCtxtReadFile(ctxt, filename, NULL, options);
+        -: 1278:
+    #####: 1279:    if (doc != NULL) {
+    #####: 1280:        fprintf(stderr, "SAX parsing generated a document !\n");
+    #####: 1281:        xmlFreeDoc(doc);
+    #####: 1282:        res = 0;
+    #####: 1283:    } else if (ctxt->wellFormed == 0) {
+    #####: 1284:        if (fail)
+    #####: 1285:            res = 0;
+        -: 1286:        else {
+    #####: 1287:            fprintf(stderr, "Failed to parse '%s' %lu\n", filename, limit);
+    #####: 1288:            res = 1;
+        -: 1289:        }
+        -: 1290:    } else {
+    #####: 1291:        if (fail) {
+    #####: 1292:            fprintf(stderr, "Failed to get failure for '%s' %lu\n",
+        -: 1293:                    filename, limit);
+    #####: 1294:            res = 1;
+        -: 1295:        } else
+    #####: 1296:            res = 0;
+        -: 1297:    }
+    #####: 1298:    ctxt->sax = old_sax;
+    #####: 1299:    xmlFreeParserCtxt(ctxt);
+        -: 1300:
+    #####: 1301:    return(res);
+        -: 1302:}
+        -: 1303:#ifdef LIBXML_READER_ENABLED
+        -: 1304:/**
+        -: 1305: * readerTest:
+        -: 1306: * @filename: the file to parse
+        -: 1307: * @max_size: size of the limit to test
+        -: 1308: * @options: parsing options
+        -: 1309: * @fail: should a failure be reported
+        -: 1310: *
+        -: 1311: * Parse a memory generated file using the xmlReader
+        -: 1312: *
+        -: 1313: * Returns 0 in case of success, an error code otherwise
+        -: 1314: */
+        -: 1315:static int
+    #####: 1316:readerTest(const char *filename, size_t limit, int options, int fail) {
+        -: 1317:    xmlTextReaderPtr reader;
+    #####: 1318:    int res = 0;
+        -: 1319:    int ret;
+        -: 1320:
+    #####: 1321:    nb_tests++;
+        -: 1322:
+    #####: 1323:    maxlen = limit;
+    #####: 1324:    reader = xmlReaderForFile(filename , NULL, options);
+    #####: 1325:    if (reader == NULL) {
+    #####: 1326:        fprintf(stderr, "Failed to open '%s' test\n", filename);
+    #####: 1327:	return(1);
+        -: 1328:    }
+    #####: 1329:    ret = xmlTextReaderRead(reader);
+    #####: 1330:    while (ret == 1) {
+    #####: 1331:        ret = xmlTextReaderRead(reader);
+        -: 1332:    }
+    #####: 1333:    if (ret != 0) {
+    #####: 1334:        if (fail)
+    #####: 1335:            res = 0;
+        -: 1336:        else {
+    #####: 1337:            if (strncmp(filename, "crazy:", 6) == 0)
+    #####: 1338:                fprintf(stderr, "Failed to parse '%s' %u\n",
+        -: 1339:                        filename, crazy_indx);
+        -: 1340:            else
+    #####: 1341:                fprintf(stderr, "Failed to parse '%s' %lu\n",
+        -: 1342:                        filename, limit);
+    #####: 1343:            res = 1;
+        -: 1344:        }
+        -: 1345:    } else {
+    #####: 1346:        if (fail) {
+    #####: 1347:            if (strncmp(filename, "crazy:", 6) == 0)
+    #####: 1348:                fprintf(stderr, "Failed to get failure for '%s' %u\n",
+        -: 1349:                        filename, crazy_indx);
+        -: 1350:            else
+    #####: 1351:                fprintf(stderr, "Failed to get failure for '%s' %lu\n",
+        -: 1352:                        filename, limit);
+    #####: 1353:            res = 1;
+        -: 1354:        } else
+    #####: 1355:            res = 0;
+        -: 1356:    }
+    #####: 1357:    if (timeout)
+    #####: 1358:        res = 1;
+    #####: 1359:    xmlFreeTextReader(reader);
+        -: 1360:
+    #####: 1361:    return(res);
+        -: 1362:}
+        -: 1363:#endif
+        -: 1364:
+        -: 1365:/************************************************************************
+        -: 1366: *									*
+        -: 1367: *			Tests descriptions				*
+        -: 1368: *									*
+        -: 1369: ************************************************************************/
+        -: 1370:
+        -: 1371:typedef int (*functest) (const char *filename, size_t limit, int options,
+        -: 1372:                         int fail);
+        -: 1373:
+        -: 1374:typedef struct limitDesc limitDesc;
+        -: 1375:typedef limitDesc *limitDescPtr;
+        -: 1376:struct limitDesc {
+        -: 1377:    const char *name; /* the huge generator name */
+        -: 1378:    size_t limit;     /* the limit to test */
+        -: 1379:    int options;      /* extra parser options */
+        -: 1380:    int fail;         /* whether the test should fail */
+        -: 1381:};
+        -: 1382:
+        -: 1383:static limitDesc limitDescriptions[] = {
+        -: 1384:    /* max length of a text node in content */
+        -: 1385:    {"huge:textNode", XML_MAX_TEXT_LENGTH - CHUNK, 0, 0},
+        -: 1386:    {"huge:textNode", XML_MAX_TEXT_LENGTH + CHUNK, 0, 1},
+        -: 1387:    {"huge:textNode", XML_MAX_TEXT_LENGTH + CHUNK, XML_PARSE_HUGE, 0},
+        -: 1388:    /* max length of a text node in content */
+        -: 1389:    {"huge:attrNode", XML_MAX_TEXT_LENGTH - CHUNK, 0, 0},
+        -: 1390:    {"huge:attrNode", XML_MAX_TEXT_LENGTH + CHUNK, 0, 1},
+        -: 1391:    {"huge:attrNode", XML_MAX_TEXT_LENGTH + CHUNK, XML_PARSE_HUGE, 0},
+        -: 1392:    /* max length of a comment node */
+        -: 1393:    {"huge:commentNode", XML_MAX_TEXT_LENGTH - CHUNK, 0, 0},
+        -: 1394:    {"huge:commentNode", XML_MAX_TEXT_LENGTH + CHUNK, 0, 1},
+        -: 1395:    {"huge:commentNode", XML_MAX_TEXT_LENGTH + CHUNK, XML_PARSE_HUGE, 0},
+        -: 1396:    /* max length of a PI node */
+        -: 1397:    {"huge:piNode", XML_MAX_TEXT_LENGTH - CHUNK, 0, 0},
+        -: 1398:    {"huge:piNode", XML_MAX_TEXT_LENGTH + CHUNK, 0, 1},
+        -: 1399:    {"huge:piNode", XML_MAX_TEXT_LENGTH + CHUNK, XML_PARSE_HUGE, 0},
+        -: 1400:};
+        -: 1401:
+        -: 1402:typedef struct testDesc testDesc;
+        -: 1403:typedef testDesc *testDescPtr;
+        -: 1404:struct testDesc {
+        -: 1405:    const char *desc; /* descripton of the test */
+        -: 1406:    functest    func; /* function implementing the test */
+        -: 1407:};
+        -: 1408:
+        -: 1409:static
+        -: 1410:testDesc testDescriptions[] = {
+        -: 1411:    { "Parsing of huge files with the sax parser", saxTest},
+        -: 1412:/*    { "Parsing of huge files with the tree parser", treeTest}, */
+        -: 1413:#ifdef LIBXML_READER_ENABLED
+        -: 1414:    { "Parsing of huge files with the reader", readerTest},
+        -: 1415:#endif
+        -: 1416:    {NULL, NULL}
+        -: 1417:};
+        -: 1418:
+        -: 1419:typedef struct testException testException;
+        -: 1420:typedef testException *testExceptionPtr;
+        -: 1421:struct testException {
+        -: 1422:    unsigned int test;  /* the parser test number */
+        -: 1423:    unsigned int limit; /* the limit test number */
+        -: 1424:    int fail;           /* new fail value or -1*/
+        -: 1425:    size_t size;        /* new limit value or 0 */
+        -: 1426:};
+        -: 1427:
+        -: 1428:static
+        -: 1429:testException testExceptions[] = {
+        -: 1430:    /* the SAX parser doesn't hit a limit of XML_MAX_TEXT_LENGTH text nodes */
+        -: 1431:    { 0, 1, 0, 0},
+        -: 1432:};
+        -: 1433:
+        -: 1434:static int
+    #####: 1435:launchTests(testDescPtr tst, unsigned int test) {
+    #####: 1436:    int res = 0, err = 0;
+        -: 1437:    unsigned int i, j;
+        -: 1438:    size_t limit;
+        -: 1439:    int fail;
+        -: 1440:
+    #####: 1441:    if (tst == NULL) return(-1);
+        -: 1442:
+    #####: 1443:    for (i = 0;i < sizeof(limitDescriptions)/sizeof(limitDescriptions[0]);i++) {
+    #####: 1444:        limit = limitDescriptions[i].limit;
+    #####: 1445:        fail = limitDescriptions[i].fail;
+        -: 1446:        /*
+        -: 1447:         * Handle exceptions if any
+        -: 1448:         */
+    #####: 1449:        for (j = 0;j < sizeof(testExceptions)/sizeof(testExceptions[0]);j++) {
+    #####: 1450:            if ((testExceptions[j].test == test) &&
+    #####: 1451:                (testExceptions[j].limit == i)) {
+    #####: 1452:                if (testExceptions[j].fail != -1)
+    #####: 1453:                    fail = testExceptions[j].fail;
+    #####: 1454:                if (testExceptions[j].size != 0)
+    #####: 1455:                    limit = testExceptions[j].size;
+    #####: 1456:                break;
+        -: 1457:            }
+        -: 1458:        }
+    #####: 1459:        res = tst->func(limitDescriptions[i].name, limit,
+        -: 1460:                        limitDescriptions[i].options, fail);
+    #####: 1461:        if (res != 0) {
+    #####: 1462:            nb_errors++;
+    #####: 1463:            err++;
+        -: 1464:        }
+        -: 1465:    }
+    #####: 1466:    return(err);
+        -: 1467:}
+        -: 1468:
+        -: 1469:
+        -: 1470:static int
+    #####: 1471:runtest(unsigned int i) {
+    #####: 1472:    int ret = 0, res;
+        -: 1473:    int old_errors, old_tests, old_leaks;
+        -: 1474:
+    #####: 1475:    old_errors = nb_errors;
+    #####: 1476:    old_tests = nb_tests;
+    #####: 1477:    old_leaks = nb_leaks;
+    #####: 1478:    if ((tests_quiet == 0) && (testDescriptions[i].desc != NULL))
+    #####: 1479:	printf("## %s\n", testDescriptions[i].desc);
+    #####: 1480:    res = launchTests(&testDescriptions[i], i);
+    #####: 1481:    if (res != 0)
+    #####: 1482:	ret++;
+    #####: 1483:    if (verbose) {
+    #####: 1484:	if ((nb_errors == old_errors) && (nb_leaks == old_leaks))
+    #####: 1485:	    printf("Ran %d tests, no errors\n", nb_tests - old_tests);
+        -: 1486:	else
+    #####: 1487:	    printf("Ran %d tests, %d errors, %d leaks\n",
+        -: 1488:		   nb_tests - old_tests,
+        -: 1489:		   nb_errors - old_errors,
+        -: 1490:		   nb_leaks - old_leaks);
+        -: 1491:    }
+    #####: 1492:    return(ret);
+        -: 1493:}
+        -: 1494:
+        -: 1495:static int
+    #####: 1496:launchCrazySAX(unsigned int test, int fail) {
+    #####: 1497:    int res = 0, err = 0;
+        -: 1498:
+    #####: 1499:    crazy_indx = test;
+        -: 1500:
+    #####: 1501:    res = saxTest("crazy::test", XML_MAX_LOOKUP_LIMIT - CHUNK, 0, fail);
+    #####: 1502:    if (res != 0) {
+    #####: 1503:        nb_errors++;
+    #####: 1504:        err++;
+        -: 1505:    }
+    #####: 1506:    if (tests_quiet == 0)
+    #####: 1507:        fprintf(stderr, "%c", crazy[test]);
+        -: 1508:
+    #####: 1509:    return(err);
+        -: 1510:}
+        -: 1511:
+        -: 1512:#ifdef LIBXML_READER_ENABLED
+        -: 1513:static int
+    #####: 1514:launchCrazy(unsigned int test, int fail) {
+    #####: 1515:    int res = 0, err = 0;
+        -: 1516:
+    #####: 1517:    crazy_indx = test;
+        -: 1518:
+    #####: 1519:    res = readerTest("crazy::test", XML_MAX_LOOKUP_LIMIT - CHUNK, 0, fail);
+    #####: 1520:    if (res != 0) {
+    #####: 1521:        nb_errors++;
+    #####: 1522:        err++;
+        -: 1523:    }
+    #####: 1524:    if (tests_quiet == 0)
+    #####: 1525:        fprintf(stderr, "%c", crazy[test]);
+        -: 1526:
+    #####: 1527:    return(err);
+        -: 1528:}
+        -: 1529:#endif
+        -: 1530:
+    #####: 1531:static int get_crazy_fail(int test) {
+        -: 1532:    /*
+        -: 1533:     * adding 1000000 of character 'a' leads to parser failure mostly
+        -: 1534:     * everywhere except in those special spots. Need to be updated
+        -: 1535:     * each time crazy is updated
+        -: 1536:     */
+    #####: 1537:    int fail = 1;
+    #####: 1538:    if ((test == 44) || /* PI in Misc */
+    #####: 1539:        ((test >= 50) && (test <= 55)) || /* Comment in Misc */
+    #####: 1540:        (test == 79) || /* PI in DTD */
+    #####: 1541:        ((test >= 85) && (test <= 90)) || /* Comment in DTD */
+    #####: 1542:        (test == 154) || /* PI in Misc */
+    #####: 1543:        ((test >= 160) && (test <= 165)) || /* Comment in Misc */
+    #####: 1544:        ((test >= 178) && (test <= 181)) || /* attribute value */
+    #####: 1545:        (test == 183) || /* Text */
+    #####: 1546:        (test == 189) || /* PI in Content */
+    #####: 1547:        (test == 191) || /* Text */
+    #####: 1548:        ((test >= 195) && (test <= 200)) || /* Comment in Content */
+    #####: 1549:        ((test >= 203) && (test <= 206)) || /* Text */
+    #####: 1550:        (test == 215) || (test == 216) || /* in CDATA */
+    #####: 1551:        (test == 219) || /* Text */
+    #####: 1552:        (test == 231) || /* PI in Misc */
+    #####: 1553:        ((test >= 237) && (test <= 242))) /* Comment in Misc */
+    #####: 1554:        fail = 0;
+    #####: 1555:    return(fail);
+        -: 1556:}
+        -: 1557:
+        -: 1558:static int
+    #####: 1559:runcrazy(void) {
+    #####: 1560:    int ret = 0, res = 0;
+        -: 1561:    int old_errors, old_tests, old_leaks;
+        -: 1562:    unsigned int i;
+        -: 1563:
+    #####: 1564:    old_errors = nb_errors;
+    #####: 1565:    old_tests = nb_tests;
+    #####: 1566:    old_leaks = nb_leaks;
+        -: 1567:
+        -: 1568:#ifdef LIBXML_READER_ENABLED
+    #####: 1569:    if (tests_quiet == 0) {
+    #####: 1570:	printf("## Crazy tests on reader\n");
+        -: 1571:    }
+    #####: 1572:    for (i = 0;i < strlen(crazy);i++) {
+    #####: 1573:        res += launchCrazy(i, get_crazy_fail(i));
+    #####: 1574:        if (res != 0)
+    #####: 1575:            ret++;
+        -: 1576:    }
+        -: 1577:#endif
+        -: 1578:
+    #####: 1579:    if (tests_quiet == 0) {
+    #####: 1580:	printf("\n## Crazy tests on SAX\n");
+        -: 1581:    }
+    #####: 1582:    for (i = 0;i < strlen(crazy);i++) {
+    #####: 1583:        res += launchCrazySAX(i, get_crazy_fail(i));
+    #####: 1584:        if (res != 0)
+    #####: 1585:            ret++;
+        -: 1586:    }
+    #####: 1587:    if (tests_quiet == 0)
+    #####: 1588:        fprintf(stderr, "\n");
+    #####: 1589:    if (verbose) {
+    #####: 1590:	if ((nb_errors == old_errors) && (nb_leaks == old_leaks))
+    #####: 1591:	    printf("Ran %d tests, no errors\n", nb_tests - old_tests);
+        -: 1592:	else
+    #####: 1593:	    printf("Ran %d tests, %d errors, %d leaks\n",
+        -: 1594:		   nb_tests - old_tests,
+        -: 1595:		   nb_errors - old_errors,
+        -: 1596:		   nb_leaks - old_leaks);
+        -: 1597:    }
+    #####: 1598:    return(ret);
+        -: 1599:}
+        -: 1600:
+        -: 1601:
+        -: 1602:int
+    #####: 1603:main(int argc ATTRIBUTE_UNUSED, char **argv ATTRIBUTE_UNUSED) {
+    #####: 1604:    int i, a, ret = 0;
+    #####: 1605:    int subset = 0;
+        -: 1606:
+    #####: 1607:    fillFilling();
+    #####: 1608:    initializeLibxml2();
+        -: 1609:
+    #####: 1610:    for (a = 1; a < argc;a++) {
+    #####: 1611:        if (!strcmp(argv[a], "-v"))
+    #####: 1612:	    verbose = 1;
+    #####: 1613:        else if (!strcmp(argv[a], "-quiet"))
+    #####: 1614:	    tests_quiet = 1;
+    #####: 1615:        else if (!strcmp(argv[a], "-crazy"))
+    #####: 1616:	    subset = 1;
+        -: 1617:    }
+    #####: 1618:    if (subset == 0) {
+    #####: 1619:	for (i = 0; testDescriptions[i].func != NULL; i++) {
+    #####: 1620:	    ret += runtest(i);
+        -: 1621:	}
+        -: 1622:    }
+    #####: 1623:    ret += runcrazy();
+    #####: 1624:    if ((nb_errors == 0) && (nb_leaks == 0)) {
+    #####: 1625:        ret = 0;
+    #####: 1626:	printf("Total %d tests, no errors\n",
+        -: 1627:	       nb_tests);
+        -: 1628:    } else {
+    #####: 1629:        ret = 1;
+    #####: 1630:	printf("Total %d tests, %d errors, %d leaks\n",
+        -: 1631:	       nb_tests, nb_errors, nb_leaks);
+        -: 1632:    }
+    #####: 1633:    xmlCleanupParser();
+    #####: 1634:    xmlMemoryDump();
+        -: 1635:
+    #####: 1636:    return(ret);
+        -: 1637:}

@@ -1,0 +1,998 @@
+        -:    0:Source:error.c
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * error.c: module displaying/handling XML parser errors
+        -:    3: *
+        -:    4: * See Copyright for the status of this software.
+        -:    5: *
+        -:    6: * Daniel Veillard <daniel@veillard.com>
+        -:    7: */
+        -:    8:
+        -:    9:#define IN_LIBXML
+        -:   10:#include "libxml.h"
+        -:   11:
+        -:   12:#include <string.h>
+        -:   13:#include <stdarg.h>
+        -:   14:#include <libxml/parser.h>
+        -:   15:#include <libxml/xmlerror.h>
+        -:   16:#include <libxml/xmlmemory.h>
+        -:   17:#include <libxml/globals.h>
+        -:   18:
+        -:   19:void XMLCDECL xmlGenericErrorDefaultFunc	(void *ctx ATTRIBUTE_UNUSED,
+        -:   20:				 const char *msg,
+        -:   21:				 ...);
+        -:   22:
+        -:   23:#define XML_GET_VAR_STR(msg, str) {				\
+        -:   24:    int       size, prev_size = -1;				\
+        -:   25:    int       chars;						\
+        -:   26:    char      *larger;						\
+        -:   27:    va_list   ap;						\
+        -:   28:								\
+        -:   29:    str = (char *) xmlMalloc(150);				\
+        -:   30:    if (str != NULL) {						\
+        -:   31:								\
+        -:   32:    size = 150;							\
+        -:   33:								\
+        -:   34:    while (size < 64000) {					\
+        -:   35:	va_start(ap, msg);					\
+        -:   36:	chars = vsnprintf(str, size, msg, ap);			\
+        -:   37:	va_end(ap);						\
+        -:   38:	if ((chars > -1) && (chars < size)) {			\
+        -:   39:	    if (prev_size == chars) {				\
+        -:   40:		break;						\
+        -:   41:	    } else {						\
+        -:   42:		prev_size = chars;				\
+        -:   43:	    }							\
+        -:   44:	}							\
+        -:   45:	if (chars > -1)						\
+        -:   46:	    size += chars + 1;					\
+        -:   47:	else							\
+        -:   48:	    size += 100;					\
+        -:   49:	if ((larger = (char *) xmlRealloc(str, size)) == NULL) {\
+        -:   50:	    break;						\
+        -:   51:	}							\
+        -:   52:	str = larger;						\
+        -:   53:    }}								\
+        -:   54:}
+        -:   55:
+        -:   56:/************************************************************************
+        -:   57: *									*
+        -:   58: *			Handling of out of context errors		*
+        -:   59: *									*
+        -:   60: ************************************************************************/
+        -:   61:
+        -:   62:/**
+        -:   63: * xmlGenericErrorDefaultFunc:
+        -:   64: * @ctx:  an error context
+        -:   65: * @msg:  the message to display/transmit
+        -:   66: * @...:  extra parameters for the message display
+        -:   67: *
+        -:   68: * Default handler for out of context error messages.
+        -:   69: */
+        -:   70:void XMLCDECL
+    #####:   71:xmlGenericErrorDefaultFunc(void *ctx ATTRIBUTE_UNUSED, const char *msg, ...) {
+        -:   72:    va_list args;
+        -:   73:
+    #####:   74:    if (xmlGenericErrorContext == NULL)
+    #####:   75:	xmlGenericErrorContext = (void *) stderr;
+        -:   76:
+    #####:   77:    va_start(args, msg);
+    #####:   78:    vfprintf((FILE *)xmlGenericErrorContext, msg, args);
+    #####:   79:    va_end(args);
+    #####:   80:}
+        -:   81:
+        -:   82:/**
+        -:   83: * initGenericErrorDefaultFunc:
+        -:   84: * @handler:  the handler
+        -:   85: *
+        -:   86: * Set or reset (if NULL) the default handler for generic errors
+        -:   87: * to the builtin error function.
+        -:   88: */
+        -:   89:void
+        2:   90:initGenericErrorDefaultFunc(xmlGenericErrorFunc * handler)
+        -:   91:{
+        2:   92:    if (handler == NULL)
+        2:   93:        xmlGenericError = xmlGenericErrorDefaultFunc;
+        -:   94:    else
+    #####:   95:        xmlGenericError = (*handler);
+        2:   96:}
+        -:   97:
+        -:   98:/**
+        -:   99: * xmlSetGenericErrorFunc:
+        -:  100: * @ctx:  the new error handling context
+        -:  101: * @handler:  the new handler function
+        -:  102: *
+        -:  103: * Function to reset the handler and the error context for out of
+        -:  104: * context error messages.
+        -:  105: * This simply means that @handler will be called for subsequent
+        -:  106: * error messages while not parsing nor validating. And @ctx will
+        -:  107: * be passed as first argument to @handler
+        -:  108: * One can simply force messages to be emitted to another FILE * than
+        -:  109: * stderr by setting @ctx to this file handle and @handler to NULL.
+        -:  110: * For multi-threaded applications, this must be set separately for each thread.
+        -:  111: */
+        -:  112:void
+    #####:  113:xmlSetGenericErrorFunc(void *ctx, xmlGenericErrorFunc handler) {
+    #####:  114:    xmlGenericErrorContext = ctx;
+    #####:  115:    if (handler != NULL)
+    #####:  116:	xmlGenericError = handler;
+        -:  117:    else
+    #####:  118:	xmlGenericError = xmlGenericErrorDefaultFunc;
+    #####:  119:}
+        -:  120:
+        -:  121:/**
+        -:  122: * xmlSetStructuredErrorFunc:
+        -:  123: * @ctx:  the new error handling context
+        -:  124: * @handler:  the new handler function
+        -:  125: *
+        -:  126: * Function to reset the handler and the error context for out of
+        -:  127: * context structured error messages.
+        -:  128: * This simply means that @handler will be called for subsequent
+        -:  129: * error messages while not parsing nor validating. And @ctx will
+        -:  130: * be passed as first argument to @handler
+        -:  131: * For multi-threaded applications, this must be set separately for each thread.
+        -:  132: */
+        -:  133:void
+    #####:  134:xmlSetStructuredErrorFunc(void *ctx, xmlStructuredErrorFunc handler) {
+    #####:  135:    xmlStructuredErrorContext = ctx;
+    #####:  136:    xmlStructuredError = handler;
+    #####:  137:}
+        -:  138:
+        -:  139:/************************************************************************
+        -:  140: *									*
+        -:  141: *			Handling of parsing errors			*
+        -:  142: *									*
+        -:  143: ************************************************************************/
+        -:  144:
+        -:  145:/**
+        -:  146: * xmlParserPrintFileInfo:
+        -:  147: * @input:  an xmlParserInputPtr input
+        -:  148: *
+        -:  149: * Displays the associated file and line informations for the current input
+        -:  150: */
+        -:  151:
+        -:  152:void
+    #####:  153:xmlParserPrintFileInfo(xmlParserInputPtr input) {
+    #####:  154:    if (input != NULL) {
+    #####:  155:	if (input->filename)
+    #####:  156:	    xmlGenericError(xmlGenericErrorContext,
+        -:  157:		    "%s:%d: ", input->filename,
+        -:  158:		    input->line);
+        -:  159:	else
+    #####:  160:	    xmlGenericError(xmlGenericErrorContext,
+        -:  161:		    "Entity: line %d: ", input->line);
+        -:  162:    }
+    #####:  163:}
+        -:  164:
+        -:  165:/**
+        -:  166: * xmlParserPrintFileContext:
+        -:  167: * @input:  an xmlParserInputPtr input
+        -:  168: *
+        -:  169: * Displays current context within the input content for error tracking
+        -:  170: */
+        -:  171:
+        -:  172:static void
+    #####:  173:xmlParserPrintFileContextInternal(xmlParserInputPtr input ,
+        -:  174:		xmlGenericErrorFunc channel, void *data ) {
+        -:  175:    const xmlChar *cur, *base;
+        -:  176:    unsigned int n, col;	/* GCC warns if signed, because compared with sizeof() */
+        -:  177:    xmlChar  content[81]; /* space for 80 chars + line terminator */
+        -:  178:    xmlChar *ctnt;
+        -:  179:
+    #####:  180:    if (input == NULL) return;
+    #####:  181:    cur = input->cur;
+    #####:  182:    base = input->base;
+        -:  183:    /* skip backwards over any end-of-lines */
+    #####:  184:    while ((cur > base) && ((*(cur) == '\n') || (*(cur) == '\r'))) {
+    #####:  185:	cur--;
+        -:  186:    }
+    #####:  187:    n = 0;
+        -:  188:    /* search backwards for beginning-of-line (to max buff size) */
+    #####:  189:    while ((n++ < (sizeof(content)-1)) && (cur > base) &&
+    #####:  190:	   (*(cur) != '\n') && (*(cur) != '\r'))
+    #####:  191:        cur--;
+    #####:  192:    if ((*(cur) == '\n') || (*(cur) == '\r')) cur++;
+        -:  193:    /* calculate the error position in terms of the current position */
+    #####:  194:    col = input->cur - cur;
+        -:  195:    /* search forward for end-of-line (to max buff size) */
+    #####:  196:    n = 0;
+    #####:  197:    ctnt = content;
+        -:  198:    /* copy selected text to our buffer */
+    #####:  199:    while ((*cur != 0) && (*(cur) != '\n') &&
+    #####:  200:	   (*(cur) != '\r') && (n < sizeof(content)-1)) {
+    #####:  201:		*ctnt++ = *cur++;
+    #####:  202:	n++;
+        -:  203:    }
+    #####:  204:    *ctnt = 0;
+        -:  205:    /* print out the selected text */
+    #####:  206:    channel(data ,"%s\n", content);
+        -:  207:    /* create blank line with problem pointer */
+    #####:  208:    n = 0;
+    #####:  209:    ctnt = content;
+        -:  210:    /* (leave buffer space for pointer + line terminator) */
+    #####:  211:    while ((n<col) && (n++ < sizeof(content)-2) && (*ctnt != 0)) {
+    #####:  212:	if (*(ctnt) != '\t')
+    #####:  213:	    *(ctnt) = ' ';
+    #####:  214:	ctnt++;
+        -:  215:    }
+    #####:  216:    *ctnt++ = '^';
+    #####:  217:    *ctnt = 0;
+    #####:  218:    channel(data ,"%s\n", content);
+        -:  219:}
+        -:  220:
+        -:  221:/**
+        -:  222: * xmlParserPrintFileContext:
+        -:  223: * @input:  an xmlParserInputPtr input
+        -:  224: *
+        -:  225: * Displays current context within the input content for error tracking
+        -:  226: */
+        -:  227:void
+    #####:  228:xmlParserPrintFileContext(xmlParserInputPtr input) {
+    #####:  229:   xmlParserPrintFileContextInternal(input, xmlGenericError,
+    #####:  230:                                     xmlGenericErrorContext);
+    #####:  231:}
+        -:  232:
+        -:  233:/**
+        -:  234: * xmlReportError:
+        -:  235: * @err: the error
+        -:  236: * @ctx: the parser context or NULL
+        -:  237: * @str: the formatted error message
+        -:  238: *
+        -:  239: * Report an erro with its context, replace the 4 old error/warning
+        -:  240: * routines.
+        -:  241: */
+        -:  242:static void
+    #####:  243:xmlReportError(xmlErrorPtr err, xmlParserCtxtPtr ctxt, const char *str,
+        -:  244:               xmlGenericErrorFunc channel, void *data)
+        -:  245:{
+    #####:  246:    char *file = NULL;
+    #####:  247:    int line = 0;
+    #####:  248:    int code = -1;
+        -:  249:    int domain;
+    #####:  250:    const xmlChar *name = NULL;
+        -:  251:    xmlNodePtr node;
+        -:  252:    xmlErrorLevel level;
+    #####:  253:    xmlParserInputPtr input = NULL;
+    #####:  254:    xmlParserInputPtr cur = NULL;
+        -:  255:
+    #####:  256:    if (err == NULL)
+    #####:  257:        return;
+        -:  258:
+    #####:  259:    if (channel == NULL) {
+    #####:  260:	channel = xmlGenericError;
+    #####:  261:	data = xmlGenericErrorContext;
+        -:  262:    }
+    #####:  263:    file = err->file;
+    #####:  264:    line = err->line;
+    #####:  265:    code = err->code;
+    #####:  266:    domain = err->domain;
+    #####:  267:    level = err->level;
+    #####:  268:    node = err->node;
+        -:  269:
+    #####:  270:    if (code == XML_ERR_OK)
+    #####:  271:        return;
+        -:  272:
+    #####:  273:    if ((node != NULL) && (node->type == XML_ELEMENT_NODE))
+    #####:  274:        name = node->name;
+        -:  275:
+        -:  276:    /*
+        -:  277:     * Maintain the compatibility with the legacy error handling
+        -:  278:     */
+    #####:  279:    if (ctxt != NULL) {
+    #####:  280:        input = ctxt->input;
+    #####:  281:        if ((input != NULL) && (input->filename == NULL) &&
+    #####:  282:            (ctxt->inputNr > 1)) {
+    #####:  283:            cur = input;
+    #####:  284:            input = ctxt->inputTab[ctxt->inputNr - 2];
+        -:  285:        }
+    #####:  286:        if (input != NULL) {
+    #####:  287:            if (input->filename)
+    #####:  288:                channel(data, "%s:%d: ", input->filename, input->line);
+    #####:  289:            else if ((line != 0) && (domain == XML_FROM_PARSER))
+    #####:  290:                channel(data, "Entity: line %d: ", input->line);
+        -:  291:        }
+        -:  292:    } else {
+    #####:  293:        if (file != NULL)
+    #####:  294:            channel(data, "%s:%d: ", file, line);
+    #####:  295:        else if ((line != 0) &&
+    #####:  296:	         ((domain == XML_FROM_PARSER) || (domain == XML_FROM_SCHEMASV)||
+    #####:  297:		  (domain == XML_FROM_SCHEMASP)||(domain == XML_FROM_DTD) ||
+    #####:  298:		  (domain == XML_FROM_RELAXNGP)||(domain == XML_FROM_RELAXNGV)))
+    #####:  299:            channel(data, "Entity: line %d: ", line);
+        -:  300:    }
+    #####:  301:    if (name != NULL) {
+    #####:  302:        channel(data, "element %s: ", name);
+        -:  303:    }
+    #####:  304:    switch (domain) {
+    #####:  305:        case XML_FROM_PARSER:
+    #####:  306:            channel(data, "parser ");
+    #####:  307:            break;
+    #####:  308:        case XML_FROM_NAMESPACE:
+    #####:  309:            channel(data, "namespace ");
+    #####:  310:            break;
+    #####:  311:        case XML_FROM_DTD:
+        -:  312:        case XML_FROM_VALID:
+    #####:  313:            channel(data, "validity ");
+    #####:  314:            break;
+    #####:  315:        case XML_FROM_HTML:
+    #####:  316:            channel(data, "HTML parser ");
+    #####:  317:            break;
+    #####:  318:        case XML_FROM_MEMORY:
+    #####:  319:            channel(data, "memory ");
+    #####:  320:            break;
+    #####:  321:        case XML_FROM_OUTPUT:
+    #####:  322:            channel(data, "output ");
+    #####:  323:            break;
+    #####:  324:        case XML_FROM_IO:
+    #####:  325:            channel(data, "I/O ");
+    #####:  326:            break;
+    #####:  327:        case XML_FROM_XINCLUDE:
+    #####:  328:            channel(data, "XInclude ");
+    #####:  329:            break;
+    #####:  330:        case XML_FROM_XPATH:
+    #####:  331:            channel(data, "XPath ");
+    #####:  332:            break;
+    #####:  333:        case XML_FROM_XPOINTER:
+    #####:  334:            channel(data, "parser ");
+    #####:  335:            break;
+    #####:  336:        case XML_FROM_REGEXP:
+    #####:  337:            channel(data, "regexp ");
+    #####:  338:            break;
+    #####:  339:        case XML_FROM_MODULE:
+    #####:  340:            channel(data, "module ");
+    #####:  341:            break;
+    #####:  342:        case XML_FROM_SCHEMASV:
+    #####:  343:            channel(data, "Schemas validity ");
+    #####:  344:            break;
+    #####:  345:        case XML_FROM_SCHEMASP:
+    #####:  346:            channel(data, "Schemas parser ");
+    #####:  347:            break;
+    #####:  348:        case XML_FROM_RELAXNGP:
+    #####:  349:            channel(data, "Relax-NG parser ");
+    #####:  350:            break;
+    #####:  351:        case XML_FROM_RELAXNGV:
+    #####:  352:            channel(data, "Relax-NG validity ");
+    #####:  353:            break;
+    #####:  354:        case XML_FROM_CATALOG:
+    #####:  355:            channel(data, "Catalog ");
+    #####:  356:            break;
+    #####:  357:        case XML_FROM_C14N:
+    #####:  358:            channel(data, "C14N ");
+    #####:  359:            break;
+    #####:  360:        case XML_FROM_XSLT:
+    #####:  361:            channel(data, "XSLT ");
+    #####:  362:            break;
+    #####:  363:        case XML_FROM_I18N:
+    #####:  364:            channel(data, "encoding ");
+    #####:  365:            break;
+    #####:  366:        case XML_FROM_SCHEMATRONV:
+    #####:  367:            channel(data, "schematron ");
+    #####:  368:            break;
+    #####:  369:        case XML_FROM_BUFFER:
+    #####:  370:            channel(data, "internal buffer ");
+    #####:  371:            break;
+    #####:  372:        case XML_FROM_URI:
+    #####:  373:            channel(data, "URI ");
+    #####:  374:            break;
+    #####:  375:        default:
+    #####:  376:            break;
+        -:  377:    }
+    #####:  378:    switch (level) {
+    #####:  379:        case XML_ERR_NONE:
+    #####:  380:            channel(data, ": ");
+    #####:  381:            break;
+    #####:  382:        case XML_ERR_WARNING:
+    #####:  383:            channel(data, "warning : ");
+    #####:  384:            break;
+    #####:  385:        case XML_ERR_ERROR:
+    #####:  386:            channel(data, "error : ");
+    #####:  387:            break;
+    #####:  388:        case XML_ERR_FATAL:
+    #####:  389:            channel(data, "error : ");
+    #####:  390:            break;
+        -:  391:    }
+    #####:  392:    if (str != NULL) {
+        -:  393:        int len;
+    #####:  394:	len = xmlStrlen((const xmlChar *)str);
+    #####:  395:	if ((len > 0) && (str[len - 1] != '\n'))
+    #####:  396:	    channel(data, "%s\n", str);
+        -:  397:	else
+    #####:  398:	    channel(data, "%s", str);
+        -:  399:    } else {
+    #####:  400:        channel(data, "%s\n", "out of memory error");
+        -:  401:    }
+        -:  402:
+    #####:  403:    if (ctxt != NULL) {
+    #####:  404:        xmlParserPrintFileContextInternal(input, channel, data);
+    #####:  405:        if (cur != NULL) {
+    #####:  406:            if (cur->filename)
+    #####:  407:                channel(data, "%s:%d: \n", cur->filename, cur->line);
+    #####:  408:            else if ((line != 0) && (domain == XML_FROM_PARSER))
+    #####:  409:                channel(data, "Entity: line %d: \n", cur->line);
+    #####:  410:            xmlParserPrintFileContextInternal(cur, channel, data);
+        -:  411:        }
+        -:  412:    }
+    #####:  413:    if ((domain == XML_FROM_XPATH) && (err->str1 != NULL) &&
+    #####:  414:        (err->int1 < 100) &&
+    #####:  415:	(err->int1 < xmlStrlen((const xmlChar *)err->str1))) {
+        -:  416:	xmlChar buf[150];
+        -:  417:	int i;
+        -:  418:
+    #####:  419:	channel(data, "%s\n", err->str1);
+    #####:  420:	for (i=0;i < err->int1;i++)
+    #####:  421:	     buf[i] = ' ';
+    #####:  422:	buf[i++] = '^';
+    #####:  423:	buf[i] = 0;
+    #####:  424:	channel(data, "%s\n", buf);
+        -:  425:    }
+        -:  426:}
+        -:  427:
+        -:  428:/**
+        -:  429: * __xmlRaiseError:
+        -:  430: * @schannel: the structured callback channel
+        -:  431: * @channel: the old callback channel
+        -:  432: * @data: the callback data
+        -:  433: * @ctx: the parser context or NULL
+        -:  434: * @ctx: the parser context or NULL
+        -:  435: * @domain: the domain for the error
+        -:  436: * @code: the code for the error
+        -:  437: * @level: the xmlErrorLevel for the error
+        -:  438: * @file: the file source of the error (or NULL)
+        -:  439: * @line: the line of the error or 0 if N/A
+        -:  440: * @str1: extra string info
+        -:  441: * @str2: extra string info
+        -:  442: * @str3: extra string info
+        -:  443: * @int1: extra int info
+        -:  444: * @col: column number of the error or 0 if N/A
+        -:  445: * @msg:  the message to display/transmit
+        -:  446: * @...:  extra parameters for the message display
+        -:  447: *
+        -:  448: * Update the appropriate global or contextual error structure,
+        -:  449: * then forward the error message down the parser or generic
+        -:  450: * error callback handler
+        -:  451: */
+        -:  452:void XMLCDECL
+    #####:  453:__xmlRaiseError(xmlStructuredErrorFunc schannel,
+        -:  454:              xmlGenericErrorFunc channel, void *data, void *ctx,
+        -:  455:              void *nod, int domain, int code, xmlErrorLevel level,
+        -:  456:              const char *file, int line, const char *str1,
+        -:  457:              const char *str2, const char *str3, int int1, int col,
+        -:  458:	      const char *msg, ...)
+        -:  459:{
+    #####:  460:    xmlParserCtxtPtr ctxt = NULL;
+    #####:  461:    xmlNodePtr node = (xmlNodePtr) nod;
+    #####:  462:    char *str = NULL;
+    #####:  463:    xmlParserInputPtr input = NULL;
+    #####:  464:    xmlErrorPtr to = &xmlLastError;
+    #####:  465:    xmlNodePtr baseptr = NULL;
+        -:  466:
+    #####:  467:    if (code == XML_ERR_OK)
+    #####:  468:        return;
+    #####:  469:    if ((xmlGetWarningsDefaultValue == 0) && (level == XML_ERR_WARNING))
+    #####:  470:        return;
+    #####:  471:    if ((domain == XML_FROM_PARSER) || (domain == XML_FROM_HTML) ||
+    #####:  472:        (domain == XML_FROM_DTD) || (domain == XML_FROM_NAMESPACE) ||
+    #####:  473:	(domain == XML_FROM_IO) || (domain == XML_FROM_VALID)) {
+    #####:  474:	ctxt = (xmlParserCtxtPtr) ctx;
+    #####:  475:	if ((schannel == NULL) && (ctxt != NULL) && (ctxt->sax != NULL) &&
+    #####:  476:	    (ctxt->sax->initialized == XML_SAX2_MAGIC) &&
+    #####:  477:	    (ctxt->sax->serror != NULL)) {
+    #####:  478:	    schannel = ctxt->sax->serror;
+    #####:  479:	    data = ctxt->userData;
+        -:  480:	}
+        -:  481:    }
+        -:  482:    /*
+        -:  483:     * Check if structured error handler set
+        -:  484:     */
+    #####:  485:    if (schannel == NULL) {
+    #####:  486:	schannel = xmlStructuredError;
+        -:  487:	/*
+        -:  488:	 * if user has defined handler, change data ptr to user's choice
+        -:  489:	 */
+    #####:  490:	if (schannel != NULL)
+    #####:  491:	    data = xmlStructuredErrorContext;
+        -:  492:    }
+        -:  493:    /*
+        -:  494:     * Formatting the message
+        -:  495:     */
+    #####:  496:    if (msg == NULL) {
+    #####:  497:        str = (char *) xmlStrdup(BAD_CAST "No error message provided");
+        -:  498:    } else {
+    #####:  499:        XML_GET_VAR_STR(msg, str);
+        -:  500:    }
+        -:  501:
+        -:  502:    /*
+        -:  503:     * specific processing if a parser context is provided
+        -:  504:     */
+    #####:  505:    if (ctxt != NULL) {
+    #####:  506:        if (file == NULL) {
+    #####:  507:            input = ctxt->input;
+    #####:  508:            if ((input != NULL) && (input->filename == NULL) &&
+    #####:  509:                (ctxt->inputNr > 1)) {
+    #####:  510:                input = ctxt->inputTab[ctxt->inputNr - 2];
+        -:  511:            }
+    #####:  512:            if (input != NULL) {
+    #####:  513:                file = input->filename;
+    #####:  514:                line = input->line;
+    #####:  515:                col = input->col;
+        -:  516:            }
+        -:  517:        }
+    #####:  518:        to = &ctxt->lastError;
+    #####:  519:    } else if ((node != NULL) && (file == NULL)) {
+        -:  520:	int i;
+        -:  521:
+    #####:  522:	if ((node->doc != NULL) && (node->doc->URL != NULL)) {
+    #####:  523:	    baseptr = node;
+        -:  524:/*	    file = (const char *) node->doc->URL; */
+        -:  525:	}
+    #####:  526:	for (i = 0;
+    #####:  527:	     ((i < 10) && (node != NULL) && (node->type != XML_ELEMENT_NODE));
+    #####:  528:	     i++)
+    #####:  529:	     node = node->parent;
+    #####:  530:        if ((baseptr == NULL) && (node != NULL) &&
+    #####:  531:	    (node->doc != NULL) && (node->doc->URL != NULL))
+    #####:  532:	    baseptr = node;
+        -:  533:
+    #####:  534:	if ((node != NULL) && (node->type == XML_ELEMENT_NODE))
+    #####:  535:	    line = node->line;
+    #####:  536:	if ((line == 0) || (line == 65535))
+    #####:  537:	    line = xmlGetLineNo(node);
+        -:  538:    }
+        -:  539:
+        -:  540:    /*
+        -:  541:     * Save the information about the error
+        -:  542:     */
+    #####:  543:    xmlResetError(to);
+    #####:  544:    to->domain = domain;
+    #####:  545:    to->code = code;
+    #####:  546:    to->message = str;
+    #####:  547:    to->level = level;
+    #####:  548:    if (file != NULL)
+    #####:  549:        to->file = (char *) xmlStrdup((const xmlChar *) file);
+    #####:  550:    else if (baseptr != NULL) {
+        -:  551:#ifdef LIBXML_XINCLUDE_ENABLED
+        -:  552:	/*
+        -:  553:	 * We check if the error is within an XInclude section and,
+        -:  554:	 * if so, attempt to print out the href of the XInclude instead
+        -:  555:	 * of the usual "base" (doc->URL) for the node (bug 152623).
+        -:  556:	 */
+    #####:  557:        xmlNodePtr prev = baseptr;
+    #####:  558:	int inclcount = 0;
+    #####:  559:	while (prev != NULL) {
+    #####:  560:	    if (prev->prev == NULL)
+    #####:  561:	        prev = prev->parent;
+        -:  562:	    else {
+    #####:  563:	        prev = prev->prev;
+    #####:  564:		if (prev->type == XML_XINCLUDE_START) {
+    #####:  565:		    if (--inclcount < 0)
+    #####:  566:		        break;
+    #####:  567:		} else if (prev->type == XML_XINCLUDE_END)
+    #####:  568:		    inclcount++;
+        -:  569:	    }
+        -:  570:	}
+    #####:  571:	if (prev != NULL) {
+    #####:  572:	    if (prev->type == XML_XINCLUDE_START) {
+    #####:  573:		prev->type = XML_ELEMENT_NODE;
+    #####:  574:		to->file = (char *) xmlGetProp(prev, BAD_CAST "href");
+    #####:  575:		prev->type = XML_XINCLUDE_START;
+        -:  576:	    } else {
+    #####:  577:		to->file = (char *) xmlGetProp(prev, BAD_CAST "href");
+        -:  578:	    }
+        -:  579:	} else
+        -:  580:#endif
+    #####:  581:	    to->file = (char *) xmlStrdup(baseptr->doc->URL);
+    #####:  582:	if ((to->file == NULL) && (node != NULL) && (node->doc != NULL)) {
+    #####:  583:	    to->file = (char *) xmlStrdup(node->doc->URL);
+        -:  584:	}
+        -:  585:    }
+    #####:  586:    to->line = line;
+    #####:  587:    if (str1 != NULL)
+    #####:  588:        to->str1 = (char *) xmlStrdup((const xmlChar *) str1);
+    #####:  589:    if (str2 != NULL)
+    #####:  590:        to->str2 = (char *) xmlStrdup((const xmlChar *) str2);
+    #####:  591:    if (str3 != NULL)
+    #####:  592:        to->str3 = (char *) xmlStrdup((const xmlChar *) str3);
+    #####:  593:    to->int1 = int1;
+    #####:  594:    to->int2 = col;
+    #####:  595:    to->node = node;
+    #####:  596:    to->ctxt = ctx;
+        -:  597:
+    #####:  598:    if (to != &xmlLastError)
+    #####:  599:        xmlCopyError(to,&xmlLastError);
+        -:  600:
+    #####:  601:    if (schannel != NULL) {
+    #####:  602:	schannel(data, to);
+    #####:  603:	return;
+        -:  604:    }
+        -:  605:
+        -:  606:    /*
+        -:  607:     * Find the callback channel if channel param is NULL
+        -:  608:     */
+    #####:  609:    if ((ctxt != NULL) && (channel == NULL) &&
+    #####:  610:        (xmlStructuredError == NULL) && (ctxt->sax != NULL)) {
+    #####:  611:        if (level == XML_ERR_WARNING)
+    #####:  612:	    channel = ctxt->sax->warning;
+        -:  613:        else
+    #####:  614:	    channel = ctxt->sax->error;
+    #####:  615:	data = ctxt->userData;
+    #####:  616:    } else if (channel == NULL) {
+    #####:  617:	channel = xmlGenericError;
+    #####:  618:	if (ctxt != NULL) {
+    #####:  619:	    data = ctxt;
+        -:  620:	} else {
+    #####:  621:	    data = xmlGenericErrorContext;
+        -:  622:	}
+        -:  623:    }
+    #####:  624:    if (channel == NULL)
+    #####:  625:        return;
+        -:  626:
+    #####:  627:    if ((channel == xmlParserError) ||
+    #####:  628:        (channel == xmlParserWarning) ||
+    #####:  629:	(channel == xmlParserValidityError) ||
+        -:  630:	(channel == xmlParserValidityWarning))
+    #####:  631:	xmlReportError(to, ctxt, str, NULL, NULL);
+    #####:  632:    else if ((channel == (xmlGenericErrorFunc) fprintf) ||
+        -:  633:             (channel == xmlGenericErrorDefaultFunc))
+    #####:  634:	xmlReportError(to, ctxt, str, channel, data);
+        -:  635:    else
+    #####:  636:	channel(data, "%s", str);
+        -:  637:}
+        -:  638:
+        -:  639:/**
+        -:  640: * __xmlSimpleError:
+        -:  641: * @domain: where the error comes from
+        -:  642: * @code: the error code
+        -:  643: * @node: the context node
+        -:  644: * @extra:  extra informations
+        -:  645: *
+        -:  646: * Handle an out of memory condition
+        -:  647: */
+        -:  648:void
+    #####:  649:__xmlSimpleError(int domain, int code, xmlNodePtr node,
+        -:  650:                 const char *msg, const char *extra)
+        -:  651:{
+        -:  652:
+    #####:  653:    if (code == XML_ERR_NO_MEMORY) {
+    #####:  654:	if (extra)
+    #####:  655:	    __xmlRaiseError(NULL, NULL, NULL, NULL, node, domain,
+        -:  656:			    XML_ERR_NO_MEMORY, XML_ERR_FATAL, NULL, 0, extra,
+        -:  657:			    NULL, NULL, 0, 0,
+        -:  658:			    "Memory allocation failed : %s\n", extra);
+        -:  659:	else
+    #####:  660:	    __xmlRaiseError(NULL, NULL, NULL, NULL, node, domain,
+        -:  661:			    XML_ERR_NO_MEMORY, XML_ERR_FATAL, NULL, 0, NULL,
+        -:  662:			    NULL, NULL, 0, 0, "Memory allocation failed\n");
+        -:  663:    } else {
+    #####:  664:	__xmlRaiseError(NULL, NULL, NULL, NULL, node, domain,
+        -:  665:			code, XML_ERR_ERROR, NULL, 0, extra,
+        -:  666:			NULL, NULL, 0, 0, msg, extra);
+        -:  667:    }
+    #####:  668:}
+        -:  669:/**
+        -:  670: * xmlParserError:
+        -:  671: * @ctx:  an XML parser context
+        -:  672: * @msg:  the message to display/transmit
+        -:  673: * @...:  extra parameters for the message display
+        -:  674: *
+        -:  675: * Display and format an error messages, gives file, line, position and
+        -:  676: * extra parameters.
+        -:  677: */
+        -:  678:void XMLCDECL
+    #####:  679:xmlParserError(void *ctx, const char *msg, ...)
+        -:  680:{
+    #####:  681:    xmlParserCtxtPtr ctxt = (xmlParserCtxtPtr) ctx;
+    #####:  682:    xmlParserInputPtr input = NULL;
+    #####:  683:    xmlParserInputPtr cur = NULL;
+        -:  684:    char * str;
+        -:  685:
+    #####:  686:    if (ctxt != NULL) {
+    #####:  687:	input = ctxt->input;
+    #####:  688:	if ((input != NULL) && (input->filename == NULL) &&
+    #####:  689:	    (ctxt->inputNr > 1)) {
+    #####:  690:	    cur = input;
+    #####:  691:	    input = ctxt->inputTab[ctxt->inputNr - 2];
+        -:  692:	}
+    #####:  693:	xmlParserPrintFileInfo(input);
+        -:  694:    }
+        -:  695:
+    #####:  696:    xmlGenericError(xmlGenericErrorContext, "error: ");
+    #####:  697:    XML_GET_VAR_STR(msg, str);
+    #####:  698:    xmlGenericError(xmlGenericErrorContext, "%s", str);
+    #####:  699:    if (str != NULL)
+    #####:  700:	xmlFree(str);
+        -:  701:
+    #####:  702:    if (ctxt != NULL) {
+    #####:  703:	xmlParserPrintFileContext(input);
+    #####:  704:	if (cur != NULL) {
+    #####:  705:	    xmlParserPrintFileInfo(cur);
+    #####:  706:	    xmlGenericError(xmlGenericErrorContext, "\n");
+    #####:  707:	    xmlParserPrintFileContext(cur);
+        -:  708:	}
+        -:  709:    }
+    #####:  710:}
+        -:  711:
+        -:  712:/**
+        -:  713: * xmlParserWarning:
+        -:  714: * @ctx:  an XML parser context
+        -:  715: * @msg:  the message to display/transmit
+        -:  716: * @...:  extra parameters for the message display
+        -:  717: *
+        -:  718: * Display and format a warning messages, gives file, line, position and
+        -:  719: * extra parameters.
+        -:  720: */
+        -:  721:void XMLCDECL
+    #####:  722:xmlParserWarning(void *ctx, const char *msg, ...)
+        -:  723:{
+    #####:  724:    xmlParserCtxtPtr ctxt = (xmlParserCtxtPtr) ctx;
+    #####:  725:    xmlParserInputPtr input = NULL;
+    #####:  726:    xmlParserInputPtr cur = NULL;
+        -:  727:    char * str;
+        -:  728:
+    #####:  729:    if (ctxt != NULL) {
+    #####:  730:	input = ctxt->input;
+    #####:  731:	if ((input != NULL) && (input->filename == NULL) &&
+    #####:  732:	    (ctxt->inputNr > 1)) {
+    #####:  733:	    cur = input;
+    #####:  734:	    input = ctxt->inputTab[ctxt->inputNr - 2];
+        -:  735:	}
+    #####:  736:	xmlParserPrintFileInfo(input);
+        -:  737:    }
+        -:  738:
+    #####:  739:    xmlGenericError(xmlGenericErrorContext, "warning: ");
+    #####:  740:    XML_GET_VAR_STR(msg, str);
+    #####:  741:    xmlGenericError(xmlGenericErrorContext, "%s", str);
+    #####:  742:    if (str != NULL)
+    #####:  743:	xmlFree(str);
+        -:  744:
+    #####:  745:    if (ctxt != NULL) {
+    #####:  746:	xmlParserPrintFileContext(input);
+    #####:  747:	if (cur != NULL) {
+    #####:  748:	    xmlParserPrintFileInfo(cur);
+    #####:  749:	    xmlGenericError(xmlGenericErrorContext, "\n");
+    #####:  750:	    xmlParserPrintFileContext(cur);
+        -:  751:	}
+        -:  752:    }
+    #####:  753:}
+        -:  754:
+        -:  755:/************************************************************************
+        -:  756: *									*
+        -:  757: *			Handling of validation errors			*
+        -:  758: *									*
+        -:  759: ************************************************************************/
+        -:  760:
+        -:  761:/**
+        -:  762: * xmlParserValidityError:
+        -:  763: * @ctx:  an XML parser context
+        -:  764: * @msg:  the message to display/transmit
+        -:  765: * @...:  extra parameters for the message display
+        -:  766: *
+        -:  767: * Display and format an validity error messages, gives file,
+        -:  768: * line, position and extra parameters.
+        -:  769: */
+        -:  770:void XMLCDECL
+    #####:  771:xmlParserValidityError(void *ctx, const char *msg, ...)
+        -:  772:{
+    #####:  773:    xmlParserCtxtPtr ctxt = (xmlParserCtxtPtr) ctx;
+    #####:  774:    xmlParserInputPtr input = NULL;
+        -:  775:    char * str;
+    #####:  776:    int len = xmlStrlen((const xmlChar *) msg);
+        -:  777:    static int had_info = 0;
+        -:  778:
+    #####:  779:    if ((len > 1) && (msg[len - 2] != ':')) {
+    #####:  780:	if (ctxt != NULL) {
+    #####:  781:	    input = ctxt->input;
+    #####:  782:	    if ((input->filename == NULL) && (ctxt->inputNr > 1))
+    #####:  783:		input = ctxt->inputTab[ctxt->inputNr - 2];
+        -:  784:
+    #####:  785:	    if (had_info == 0) {
+    #####:  786:		xmlParserPrintFileInfo(input);
+        -:  787:	    }
+        -:  788:	}
+    #####:  789:	xmlGenericError(xmlGenericErrorContext, "validity error: ");
+    #####:  790:	had_info = 0;
+        -:  791:    } else {
+    #####:  792:	had_info = 1;
+        -:  793:    }
+        -:  794:
+    #####:  795:    XML_GET_VAR_STR(msg, str);
+    #####:  796:    xmlGenericError(xmlGenericErrorContext, "%s", str);
+    #####:  797:    if (str != NULL)
+    #####:  798:	xmlFree(str);
+        -:  799:
+    #####:  800:    if ((ctxt != NULL) && (input != NULL)) {
+    #####:  801:	xmlParserPrintFileContext(input);
+        -:  802:    }
+    #####:  803:}
+        -:  804:
+        -:  805:/**
+        -:  806: * xmlParserValidityWarning:
+        -:  807: * @ctx:  an XML parser context
+        -:  808: * @msg:  the message to display/transmit
+        -:  809: * @...:  extra parameters for the message display
+        -:  810: *
+        -:  811: * Display and format a validity warning messages, gives file, line,
+        -:  812: * position and extra parameters.
+        -:  813: */
+        -:  814:void XMLCDECL
+    #####:  815:xmlParserValidityWarning(void *ctx, const char *msg, ...)
+        -:  816:{
+    #####:  817:    xmlParserCtxtPtr ctxt = (xmlParserCtxtPtr) ctx;
+    #####:  818:    xmlParserInputPtr input = NULL;
+        -:  819:    char * str;
+    #####:  820:    int len = xmlStrlen((const xmlChar *) msg);
+        -:  821:
+    #####:  822:    if ((ctxt != NULL) && (len != 0) && (msg[len - 1] != ':')) {
+    #####:  823:	input = ctxt->input;
+    #####:  824:	if ((input->filename == NULL) && (ctxt->inputNr > 1))
+    #####:  825:	    input = ctxt->inputTab[ctxt->inputNr - 2];
+        -:  826:
+    #####:  827:	xmlParserPrintFileInfo(input);
+        -:  828:    }
+        -:  829:
+    #####:  830:    xmlGenericError(xmlGenericErrorContext, "validity warning: ");
+    #####:  831:    XML_GET_VAR_STR(msg, str);
+    #####:  832:    xmlGenericError(xmlGenericErrorContext, "%s", str);
+    #####:  833:    if (str != NULL)
+    #####:  834:	xmlFree(str);
+        -:  835:
+    #####:  836:    if (ctxt != NULL) {
+    #####:  837:	xmlParserPrintFileContext(input);
+        -:  838:    }
+    #####:  839:}
+        -:  840:
+        -:  841:
+        -:  842:/************************************************************************
+        -:  843: *									*
+        -:  844: *			Extended Error Handling				*
+        -:  845: *									*
+        -:  846: ************************************************************************/
+        -:  847:
+        -:  848:/**
+        -:  849: * xmlGetLastError:
+        -:  850: *
+        -:  851: * Get the last global error registered. This is per thread if compiled
+        -:  852: * with thread support.
+        -:  853: *
+        -:  854: * Returns NULL if no error occured or a pointer to the error
+        -:  855: */
+        -:  856:xmlErrorPtr
+    #####:  857:xmlGetLastError(void)
+        -:  858:{
+    #####:  859:    if (xmlLastError.code == XML_ERR_OK)
+    #####:  860:        return (NULL);
+    #####:  861:    return (&xmlLastError);
+        -:  862:}
+        -:  863:
+        -:  864:/**
+        -:  865: * xmlResetError:
+        -:  866: * @err: pointer to the error.
+        -:  867: *
+        -:  868: * Cleanup the error.
+        -:  869: */
+        -:  870:void
+    #####:  871:xmlResetError(xmlErrorPtr err)
+        -:  872:{
+    #####:  873:    if (err == NULL)
+    #####:  874:        return;
+    #####:  875:    if (err->code == XML_ERR_OK)
+    #####:  876:        return;
+    #####:  877:    if (err->message != NULL)
+    #####:  878:        xmlFree(err->message);
+    #####:  879:    if (err->file != NULL)
+    #####:  880:        xmlFree(err->file);
+    #####:  881:    if (err->str1 != NULL)
+    #####:  882:        xmlFree(err->str1);
+    #####:  883:    if (err->str2 != NULL)
+    #####:  884:        xmlFree(err->str2);
+    #####:  885:    if (err->str3 != NULL)
+    #####:  886:        xmlFree(err->str3);
+    #####:  887:    memset(err, 0, sizeof(xmlError));
+    #####:  888:    err->code = XML_ERR_OK;
+        -:  889:}
+        -:  890:
+        -:  891:/**
+        -:  892: * xmlResetLastError:
+        -:  893: *
+        -:  894: * Cleanup the last global error registered. For parsing error
+        -:  895: * this does not change the well-formedness result.
+        -:  896: */
+        -:  897:void
+        2:  898:xmlResetLastError(void)
+        -:  899:{
+        2:  900:    if (xmlLastError.code == XML_ERR_OK)
+        2:  901:        return;
+    #####:  902:    xmlResetError(&xmlLastError);
+        -:  903:}
+        -:  904:
+        -:  905:/**
+        -:  906: * xmlCtxtGetLastError:
+        -:  907: * @ctx:  an XML parser context
+        -:  908: *
+        -:  909: * Get the last parsing error registered.
+        -:  910: *
+        -:  911: * Returns NULL if no error occured or a pointer to the error
+        -:  912: */
+        -:  913:xmlErrorPtr
+    #####:  914:xmlCtxtGetLastError(void *ctx)
+        -:  915:{
+    #####:  916:    xmlParserCtxtPtr ctxt = (xmlParserCtxtPtr) ctx;
+        -:  917:
+    #####:  918:    if (ctxt == NULL)
+    #####:  919:        return (NULL);
+    #####:  920:    if (ctxt->lastError.code == XML_ERR_OK)
+    #####:  921:        return (NULL);
+    #####:  922:    return (&ctxt->lastError);
+        -:  923:}
+        -:  924:
+        -:  925:/**
+        -:  926: * xmlCtxtResetLastError:
+        -:  927: * @ctx:  an XML parser context
+        -:  928: *
+        -:  929: * Cleanup the last global error registered. For parsing error
+        -:  930: * this does not change the well-formedness result.
+        -:  931: */
+        -:  932:void
+    #####:  933:xmlCtxtResetLastError(void *ctx)
+        -:  934:{
+    #####:  935:    xmlParserCtxtPtr ctxt = (xmlParserCtxtPtr) ctx;
+        -:  936:
+    #####:  937:    if (ctxt == NULL)
+    #####:  938:        return;
+    #####:  939:    ctxt->errNo = XML_ERR_OK;
+    #####:  940:    if (ctxt->lastError.code == XML_ERR_OK)
+    #####:  941:        return;
+    #####:  942:    xmlResetError(&ctxt->lastError);
+        -:  943:}
+        -:  944:
+        -:  945:/**
+        -:  946: * xmlCopyError:
+        -:  947: * @from:  a source error
+        -:  948: * @to:  a target error
+        -:  949: *
+        -:  950: * Save the original error to the new place.
+        -:  951: *
+        -:  952: * Returns 0 in case of success and -1 in case of error.
+        -:  953: */
+        -:  954:int
+    #####:  955:xmlCopyError(xmlErrorPtr from, xmlErrorPtr to) {
+        -:  956:    char *message, *file, *str1, *str2, *str3;
+        -:  957:
+    #####:  958:    if ((from == NULL) || (to == NULL))
+    #####:  959:        return(-1);
+        -:  960:
+    #####:  961:    message = (char *) xmlStrdup((xmlChar *) from->message);
+    #####:  962:    file = (char *) xmlStrdup ((xmlChar *) from->file);
+    #####:  963:    str1 = (char *) xmlStrdup ((xmlChar *) from->str1);
+    #####:  964:    str2 = (char *) xmlStrdup ((xmlChar *) from->str2);
+    #####:  965:    str3 = (char *) xmlStrdup ((xmlChar *) from->str3);
+        -:  966:
+    #####:  967:    if (to->message != NULL)
+    #####:  968:        xmlFree(to->message);
+    #####:  969:    if (to->file != NULL)
+    #####:  970:        xmlFree(to->file);
+    #####:  971:    if (to->str1 != NULL)
+    #####:  972:        xmlFree(to->str1);
+    #####:  973:    if (to->str2 != NULL)
+    #####:  974:        xmlFree(to->str2);
+    #####:  975:    if (to->str3 != NULL)
+    #####:  976:        xmlFree(to->str3);
+    #####:  977:    to->domain = from->domain;
+    #####:  978:    to->code = from->code;
+    #####:  979:    to->level = from->level;
+    #####:  980:    to->line = from->line;
+    #####:  981:    to->node = from->node;
+    #####:  982:    to->int1 = from->int1;
+    #####:  983:    to->int2 = from->int2;
+    #####:  984:    to->node = from->node;
+    #####:  985:    to->ctxt = from->ctxt;
+    #####:  986:    to->message = message;
+    #####:  987:    to->file = file;
+    #####:  988:    to->str1 = str1;
+    #####:  989:    to->str2 = str2;
+    #####:  990:    to->str3 = str3;
+        -:  991:
+    #####:  992:    return 0;
+        -:  993:}
+        -:  994:
+        -:  995:#define bottom_error
+        -:  996:#include "elfgcchack.h"

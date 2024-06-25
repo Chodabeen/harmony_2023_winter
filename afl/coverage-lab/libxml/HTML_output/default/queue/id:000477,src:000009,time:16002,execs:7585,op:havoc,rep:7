@@ -1,0 +1,8 @@
+<p tst=t2"aamp;b" tst2="a&b" tst3=pþþþþl>
+<body>
+<pre><‘‘‘‘‘‘‘‘‘‘‘"a & b">
+&amp;b
+a&amamp;b
+a&b
+a & b
+</p>

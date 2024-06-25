@@ -1,0 +1,4 @@
+<p tst="a&amp;b" tst1="&b" tst3t="a&amp;b" tst2="a&b" t=2<a & b">
+a&amp;b
+a&b
+a+<p tst="a&amp;b"!tst2(

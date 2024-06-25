@@ -1,0 +1,617 @@
+        -:    0:Source:xmlcatalog.c
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * xmlcatalog.c : a small utility program to handle XML catalogs
+        -:    3: *
+        -:    4: * See Copyright for the status of this software.
+        -:    5: *
+        -:    6: * daniel@veillard.com
+        -:    7: */
+        -:    8:
+        -:    9:#include "libxml.h"
+        -:   10:
+        -:   11:#include <string.h>
+        -:   12:#include <stdio.h>
+        -:   13:#include <stdarg.h>
+        -:   14:
+        -:   15:#ifdef HAVE_STDLIB_H
+        -:   16:#include <stdlib.h>
+        -:   17:#endif
+        -:   18:
+        -:   19:#ifdef HAVE_LIBREADLINE
+        -:   20:#include <readline/readline.h>
+        -:   21:#ifdef HAVE_LIBHISTORY
+        -:   22:#include <readline/history.h>
+        -:   23:#endif
+        -:   24:#endif
+        -:   25:
+        -:   26:#include <libxml/xmlmemory.h>
+        -:   27:#include <libxml/uri.h>
+        -:   28:#include <libxml/catalog.h>
+        -:   29:#include <libxml/parser.h>
+        -:   30:#include <libxml/globals.h>
+        -:   31:
+        -:   32:#if defined(LIBXML_CATALOG_ENABLED) && defined(LIBXML_OUTPUT_ENABLED)
+        -:   33:static int shell = 0;
+        -:   34:static int sgml = 0;
+        -:   35:static int noout = 0;
+        -:   36:static int create = 0;
+        -:   37:static int add = 0;
+        -:   38:static int del = 0;
+        -:   39:static int convert = 0;
+        -:   40:static int no_super_update = 0;
+        -:   41:static int verbose = 0;
+        -:   42:static char *filename = NULL;
+        -:   43:
+        -:   44:
+        -:   45:#ifndef XML_SGML_DEFAULT_CATALOG
+        -:   46:#define XML_SGML_DEFAULT_CATALOG "/etc/sgml/catalog"
+        -:   47:#endif
+        -:   48:
+        -:   49:/************************************************************************
+        -:   50: *									*
+        -:   51: *			Shell Interface					*
+        -:   52: *									*
+        -:   53: ************************************************************************/
+        -:   54:/**
+        -:   55: * xmlShellReadline:
+        -:   56: * @prompt:  the prompt value
+        -:   57: *
+        -:   58: * Read a string
+        -:   59: *
+        -:   60: * Returns a pointer to it or NULL on EOF the caller is expected to
+        -:   61: *     free the returned string.
+        -:   62: */
+        -:   63:static char *
+    #####:   64:xmlShellReadline(const char *prompt) {
+        -:   65:#ifdef HAVE_LIBREADLINE
+        -:   66:    char *line_read;
+        -:   67:
+        -:   68:    /* Get a line from the user. */
+        -:   69:    line_read = readline (prompt);
+        -:   70:
+        -:   71:    /* If the line has any text in it, save it on the history. */
+        -:   72:    if (line_read && *line_read)
+        -:   73:	add_history (line_read);
+        -:   74:
+        -:   75:    return (line_read);
+        -:   76:#else
+        -:   77:    char line_read[501];
+        -:   78:    char *ret;
+        -:   79:    int len;
+        -:   80:
+    #####:   81:    if (prompt != NULL)
+    #####:   82:	fprintf(stdout, "%s", prompt);
+    #####:   83:    if (!fgets(line_read, 500, stdin))
+    #####:   84:        return(NULL);
+    #####:   85:    line_read[500] = 0;
+    #####:   86:    len = strlen(line_read);
+    #####:   87:    ret = (char *) malloc(len + 1);
+    #####:   88:    if (ret != NULL) {
+    #####:   89:	memcpy (ret, line_read, len + 1);
+        -:   90:    }
+    #####:   91:    return(ret);
+        -:   92:#endif
+        -:   93:}
+        -:   94:
+    #####:   95:static void usershell(void) {
+    #####:   96:    char *cmdline = NULL, *cur;
+        -:   97:    int nbargs;
+        -:   98:    char command[100];
+        -:   99:    char arg[400];
+        -:  100:    char *argv[20];
+        -:  101:    int i, ret;
+        -:  102:    xmlChar *ans;
+        -:  103:
+        -:  104:    while (1) {
+    #####:  105:	cmdline = xmlShellReadline("> ");
+    #####:  106:	if (cmdline == NULL)
+    #####:  107:	    return;
+        -:  108:
+        -:  109:	/*
+        -:  110:	 * Parse the command itself
+        -:  111:	 */
+    #####:  112:	cur = cmdline;
+    #####:  113:	nbargs = 0;
+    #####:  114:	while ((*cur == ' ') || (*cur == '\t')) cur++;
+    #####:  115:	i = 0;
+    #####:  116:	while ((*cur != ' ') && (*cur != '\t') &&
+    #####:  117:	       (*cur != '\n') && (*cur != '\r')) {
+    #####:  118:	    if (*cur == 0)
+    #####:  119:		break;
+    #####:  120:	    command[i++] = *cur++;
+        -:  121:	}
+    #####:  122:	command[i] = 0;
+    #####:  123:	if (i == 0) {
+    #####:  124:	    free(cmdline);
+    #####:  125:	    continue;
+        -:  126:	}
+        -:  127:
+        -:  128:	/*
+        -:  129:	 * Parse the argument string
+        -:  130:	 */
+    #####:  131:	memset(arg, 0, sizeof(arg));
+    #####:  132:	while ((*cur == ' ') || (*cur == '\t')) cur++;
+    #####:  133:	i = 0;
+    #####:  134:	while ((*cur != '\n') && (*cur != '\r') && (*cur != 0)) {
+    #####:  135:	    if (*cur == 0)
+    #####:  136:		break;
+    #####:  137:	    arg[i++] = *cur++;
+        -:  138:	}
+    #####:  139:	arg[i] = 0;
+        -:  140:
+        -:  141:	/*
+        -:  142:	 * Parse the arguments
+        -:  143:	 */
+    #####:  144:	i = 0;
+    #####:  145:	nbargs = 0;
+    #####:  146:	cur = arg;
+    #####:  147:	memset(argv, 0, sizeof(argv));
+    #####:  148:	while (*cur != 0) {
+    #####:  149:	    while ((*cur == ' ') || (*cur == '\t')) cur++;
+    #####:  150:	    if (*cur == '\'') {
+    #####:  151:		cur++;
+    #####:  152:		argv[i] = cur;
+    #####:  153:		while ((*cur != 0) && (*cur != '\'')) cur++;
+    #####:  154:		if (*cur == '\'') {
+    #####:  155:		    *cur = 0;
+    #####:  156:		    nbargs++;
+    #####:  157:		    i++;
+    #####:  158:		    cur++;
+        -:  159:		}
+    #####:  160:	    } else if (*cur == '"') {
+    #####:  161:		cur++;
+    #####:  162:		argv[i] = cur;
+    #####:  163:		while ((*cur != 0) && (*cur != '"')) cur++;
+    #####:  164:		if (*cur == '"') {
+    #####:  165:		    *cur = 0;
+    #####:  166:		    nbargs++;
+    #####:  167:		    i++;
+    #####:  168:		    cur++;
+        -:  169:		}
+        -:  170:	    } else {
+    #####:  171:		argv[i] = cur;
+    #####:  172:		while ((*cur != 0) && (*cur != ' ') && (*cur != '\t'))
+    #####:  173:		    cur++;
+    #####:  174:		*cur = 0;
+    #####:  175:		nbargs++;
+    #####:  176:		i++;
+    #####:  177:		cur++;
+        -:  178:	    }
+        -:  179:	}
+        -:  180:
+        -:  181:	/*
+        -:  182:	 * start interpreting the command
+        -:  183:	 */
+    #####:  184:	if (!strcmp(command, "exit") ||
+    #####:  185:	    !strcmp(command, "quit") ||
+    #####:  186:	    !strcmp(command, "bye")) {
+    #####:  187:	    free(cmdline);
+    #####:  188:	    break;
+        -:  189:	}
+        -:  190:
+    #####:  191:	if (!strcmp(command, "public")) {
+    #####:  192:	    if (nbargs != 1) {
+    #####:  193:		printf("public requires 1 arguments\n");
+        -:  194:	    } else {
+    #####:  195:		ans = xmlCatalogResolvePublic((const xmlChar *) argv[0]);
+    #####:  196:		if (ans == NULL) {
+    #####:  197:		    printf("No entry for PUBLIC %s\n", argv[0]);
+        -:  198:		} else {
+    #####:  199:		    printf("%s\n", (char *) ans);
+    #####:  200:		    xmlFree(ans);
+        -:  201:		}
+        -:  202:	    }
+    #####:  203:	} else if (!strcmp(command, "system")) {
+    #####:  204:	    if (nbargs != 1) {
+    #####:  205:		printf("system requires 1 arguments\n");
+        -:  206:	    } else {
+    #####:  207:		ans = xmlCatalogResolveSystem((const xmlChar *) argv[0]);
+    #####:  208:		if (ans == NULL) {
+    #####:  209:		    printf("No entry for SYSTEM %s\n", argv[0]);
+        -:  210:		} else {
+    #####:  211:		    printf("%s\n", (char *) ans);
+    #####:  212:		    xmlFree(ans);
+        -:  213:		}
+        -:  214:	    }
+    #####:  215:	} else if (!strcmp(command, "add")) {
+    #####:  216:	    if (sgml) {
+    #####:  217:		if ((nbargs != 3) && (nbargs != 2)) {
+    #####:  218:		    printf("add requires 2 or 3 arguments\n");
+        -:  219:		} else {
+    #####:  220:		    if (argv[2] == NULL)
+    #####:  221:			ret = xmlCatalogAdd(BAD_CAST argv[0], NULL,
+    #####:  222:					    BAD_CAST argv[1]);
+        -:  223:		    else
+    #####:  224:			ret = xmlCatalogAdd(BAD_CAST argv[0], BAD_CAST argv[1],
+    #####:  225:					    BAD_CAST argv[2]);
+    #####:  226:		    if (ret != 0)
+    #####:  227:			printf("add command failed\n");
+        -:  228:		}
+        -:  229:	    } else {
+    #####:  230:		if ((nbargs != 3) && (nbargs != 2)) {
+    #####:  231:		    printf("add requires 2 or 3 arguments\n");
+        -:  232:		} else {
+    #####:  233:		    if (argv[2] == NULL)
+    #####:  234:			ret = xmlCatalogAdd(BAD_CAST argv[0], NULL,
+    #####:  235:					    BAD_CAST argv[1]);
+        -:  236:		    else
+    #####:  237:			ret = xmlCatalogAdd(BAD_CAST argv[0], BAD_CAST argv[1],
+    #####:  238:					    BAD_CAST argv[2]);
+    #####:  239:		    if (ret != 0)
+    #####:  240:			printf("add command failed\n");
+        -:  241:		}
+        -:  242:	    }
+    #####:  243:	} else if (!strcmp(command, "del")) {
+    #####:  244:	    if (nbargs != 1) {
+    #####:  245:		printf("del requires 1\n");
+        -:  246:	    } else {
+    #####:  247:		ret = xmlCatalogRemove(BAD_CAST argv[0]);
+    #####:  248:		if (ret <= 0)
+    #####:  249:		    printf("del command failed\n");
+        -:  250:
+        -:  251:	    }
+    #####:  252:	} else if (!strcmp(command, "resolve")) {
+    #####:  253:	    if (nbargs != 2) {
+    #####:  254:		printf("resolve requires 2 arguments\n");
+        -:  255:	    } else {
+    #####:  256:		ans = xmlCatalogResolve(BAD_CAST argv[0],
+    #####:  257:			                BAD_CAST argv[1]);
+    #####:  258:		if (ans == NULL) {
+    #####:  259:		    printf("Resolver failed to find an answer\n");
+        -:  260:		} else {
+    #####:  261:		    printf("%s\n", (char *) ans);
+    #####:  262:		    xmlFree(ans);
+        -:  263:		}
+        -:  264:	    }
+    #####:  265:	} else if (!strcmp(command, "dump")) {
+    #####:  266:	    if (nbargs != 0) {
+    #####:  267:		printf("dump has no arguments\n");
+        -:  268:	    } else {
+    #####:  269:		xmlCatalogDump(stdout);
+        -:  270:	    }
+    #####:  271:	} else if (!strcmp(command, "debug")) {
+    #####:  272:	    if (nbargs != 0) {
+    #####:  273:		printf("debug has no arguments\n");
+        -:  274:	    } else {
+    #####:  275:		verbose++;
+    #####:  276:		xmlCatalogSetDebug(verbose);
+        -:  277:	    }
+    #####:  278:	} else if (!strcmp(command, "quiet")) {
+    #####:  279:	    if (nbargs != 0) {
+    #####:  280:		printf("quiet has no arguments\n");
+        -:  281:	    } else {
+    #####:  282:		if (verbose > 0)
+    #####:  283:		    verbose--;
+    #####:  284:		xmlCatalogSetDebug(verbose);
+        -:  285:	    }
+        -:  286:	} else {
+    #####:  287:	    if (strcmp(command, "help")) {
+    #####:  288:		printf("Unrecognized command %s\n", command);
+        -:  289:	    }
+    #####:  290:	    printf("Commands available:\n");
+    #####:  291:	    printf("\tpublic PublicID: make a PUBLIC identifier lookup\n");
+    #####:  292:	    printf("\tsystem SystemID: make a SYSTEM identifier lookup\n");
+    #####:  293:	    printf("\tresolve PublicID SystemID: do a full resolver lookup\n");
+    #####:  294:	    printf("\tadd 'type' 'orig' 'replace' : add an entry\n");
+    #####:  295:	    printf("\tdel 'values' : remove values\n");
+    #####:  296:	    printf("\tdump: print the current catalog state\n");
+    #####:  297:	    printf("\tdebug: increase the verbosity level\n");
+    #####:  298:	    printf("\tquiet: decrease the verbosity level\n");
+    #####:  299:	    printf("\texit:  quit the shell\n");
+        -:  300:	}
+    #####:  301:	free(cmdline); /* not xmlFree here ! */
+        -:  302:    }
+        -:  303:}
+        -:  304:
+        -:  305:/************************************************************************
+        -:  306: *									*
+        -:  307: *			Main						*
+        -:  308: *									*
+        -:  309: ************************************************************************/
+    #####:  310:static void usage(const char *name) {
+        -:  311:    /* split into 2 printf's to avoid overly long string (gcc warning) */
+    #####:  312:    printf("\
+        -:  313:Usage : %s [options] catalogfile entities...\n\
+        -:  314:\tParse the catalog file and query it for the entities\n\
+        -:  315:\t--sgml : handle SGML Super catalogs for --add and --del\n\
+        -:  316:\t--shell : run a shell allowing interactive queries\n\
+        -:  317:\t--create : create a new catalog\n\
+        -:  318:\t--add 'type' 'orig' 'replace' : add an XML entry\n\
+        -:  319:\t--add 'entry' : add an SGML entry\n", name);
+    #####:  320:    printf("\
+        -:  321:\t--del 'values' : remove values\n\
+        -:  322:\t--noout: avoid dumping the result on stdout\n\
+        -:  323:\t         used with --add or --del, it saves the catalog changes\n\
+        -:  324:\t         and with --sgml it automatically updates the super catalog\n\
+        -:  325:\t--no-super-update: do not update the SGML super catalog\n\
+        -:  326:\t-v --verbose : provide debug informations\n");
+    #####:  327:}
+    #####:  328:int main(int argc, char **argv) {
+        -:  329:    int i;
+        -:  330:    int ret;
+    #####:  331:    int exit_value = 0;
+        -:  332:
+        -:  333:
+    #####:  334:    if (argc <= 1) {
+    #####:  335:	usage(argv[0]);
+    #####:  336:	return(1);
+        -:  337:    }
+        -:  338:
+    #####:  339:    LIBXML_TEST_VERSION
+    #####:  340:    for (i = 1; i < argc ; i++) {
+    #####:  341:	if (!strcmp(argv[i], "-"))
+    #####:  342:	    break;
+        -:  343:
+    #####:  344:	if (argv[i][0] != '-')
+    #####:  345:	    break;
+    #####:  346:	if ((!strcmp(argv[i], "-verbose")) ||
+    #####:  347:	    (!strcmp(argv[i], "-v")) ||
+    #####:  348:	    (!strcmp(argv[i], "--verbose"))) {
+    #####:  349:	    verbose++;
+    #####:  350:	    xmlCatalogSetDebug(verbose);
+    #####:  351:	} else if ((!strcmp(argv[i], "-noout")) ||
+    #####:  352:	    (!strcmp(argv[i], "--noout"))) {
+    #####:  353:            noout = 1;
+    #####:  354:	} else if ((!strcmp(argv[i], "-shell")) ||
+    #####:  355:	    (!strcmp(argv[i], "--shell"))) {
+    #####:  356:	    shell++;
+    #####:  357:            noout = 1;
+    #####:  358:	} else if ((!strcmp(argv[i], "-sgml")) ||
+    #####:  359:	    (!strcmp(argv[i], "--sgml"))) {
+    #####:  360:	    sgml++;
+    #####:  361:	} else if ((!strcmp(argv[i], "-create")) ||
+    #####:  362:	    (!strcmp(argv[i], "--create"))) {
+    #####:  363:	    create++;
+    #####:  364:	} else if ((!strcmp(argv[i], "-convert")) ||
+    #####:  365:	    (!strcmp(argv[i], "--convert"))) {
+    #####:  366:	    convert++;
+    #####:  367:	} else if ((!strcmp(argv[i], "-no-super-update")) ||
+    #####:  368:	    (!strcmp(argv[i], "--no-super-update"))) {
+    #####:  369:	    no_super_update++;
+    #####:  370:	} else if ((!strcmp(argv[i], "-add")) ||
+    #####:  371:	    (!strcmp(argv[i], "--add"))) {
+    #####:  372:	    if (sgml)
+    #####:  373:		i += 2;
+        -:  374:	    else
+    #####:  375:		i += 3;
+    #####:  376:	    add++;
+    #####:  377:	} else if ((!strcmp(argv[i], "-del")) ||
+    #####:  378:	    (!strcmp(argv[i], "--del"))) {
+    #####:  379:	    i += 1;
+    #####:  380:	    del++;
+        -:  381:	} else {
+    #####:  382:	    fprintf(stderr, "Unknown option %s\n", argv[i]);
+    #####:  383:	    usage(argv[0]);
+    #####:  384:	    return(1);
+        -:  385:	}
+        -:  386:    }
+        -:  387:
+    #####:  388:    for (i = 1; i < argc; i++) {
+    #####:  389:	if ((!strcmp(argv[i], "-add")) ||
+    #####:  390:	    (!strcmp(argv[i], "--add"))) {
+    #####:  391:	    if (sgml)
+    #####:  392:		i += 2;
+        -:  393:	    else
+    #####:  394:		i += 3;
+    #####:  395:	    continue;
+    #####:  396:	} else if ((!strcmp(argv[i], "-del")) ||
+    #####:  397:	    (!strcmp(argv[i], "--del"))) {
+    #####:  398:	    i += 1;
+        -:  399:
+        -:  400:	    /* No catalog entry specified */
+    #####:  401:	    if (i == argc || (sgml && i + 1 == argc)) {
+    #####:  402:		fprintf(stderr, "No catalog entry specified to remove from\n");
+    #####:  403:		usage (argv[0]);
+    #####:  404:		return(1);
+        -:  405:	    }
+        -:  406:
+    #####:  407:	    continue;
+    #####:  408:	} else if (argv[i][0] == '-')
+    #####:  409:	    continue;
+    #####:  410:	filename = argv[i];
+    #####:  411:	    ret = xmlLoadCatalog(argv[i]);
+    #####:  412:	    if ((ret < 0) && (create)) {
+    #####:  413:		xmlCatalogAdd(BAD_CAST "catalog", BAD_CAST argv[i], NULL);
+        -:  414:	    }
+    #####:  415:	break;
+        -:  416:    }
+        -:  417:
+    #####:  418:    if (convert)
+    #####:  419:        ret = xmlCatalogConvert();
+        -:  420:
+    #####:  421:    if ((add) || (del)) {
+    #####:  422:	for (i = 1; i < argc ; i++) {
+    #####:  423:	    if (!strcmp(argv[i], "-"))
+    #####:  424:		break;
+        -:  425:
+    #####:  426:	    if (argv[i][0] != '-')
+    #####:  427:		continue;
+    #####:  428:	    if (strcmp(argv[i], "-add") && strcmp(argv[i], "--add") &&
+    #####:  429:		strcmp(argv[i], "-del") && strcmp(argv[i], "--del"))
+    #####:  430:		continue;
+        -:  431:
+    #####:  432:	    if (sgml) {
+        -:  433:		/*
+        -:  434:		 * Maintenance of SGML catalogs.
+        -:  435:		 */
+    #####:  436:		xmlCatalogPtr catal = NULL;
+    #####:  437:		xmlCatalogPtr super = NULL;
+        -:  438:
+    #####:  439:		catal = xmlLoadSGMLSuperCatalog(argv[i + 1]);
+        -:  440:
+    #####:  441:		if ((!strcmp(argv[i], "-add")) ||
+    #####:  442:		    (!strcmp(argv[i], "--add"))) {
+    #####:  443:		    if (catal == NULL)
+    #####:  444:			catal = xmlNewCatalog(1);
+    #####:  445:		    xmlACatalogAdd(catal, BAD_CAST "CATALOG",
+    #####:  446:					 BAD_CAST argv[i + 2], NULL);
+        -:  447:
+    #####:  448:		    if (!no_super_update) {
+    #####:  449:			super = xmlLoadSGMLSuperCatalog(XML_SGML_DEFAULT_CATALOG);
+    #####:  450:			if (super == NULL)
+    #####:  451:			    super = xmlNewCatalog(1);
+        -:  452:
+    #####:  453:			xmlACatalogAdd(super, BAD_CAST "CATALOG",
+    #####:  454:					     BAD_CAST argv[i + 1], NULL);
+        -:  455:		    }
+        -:  456:		} else {
+    #####:  457:		    if (catal != NULL)
+    #####:  458:			ret = xmlACatalogRemove(catal, BAD_CAST argv[i + 2]);
+        -:  459:		    else
+    #####:  460:			ret = -1;
+    #####:  461:		    if (ret < 0) {
+    #####:  462:			fprintf(stderr, "Failed to remove entry from %s\n",
+    #####:  463:				argv[i + 1]);
+    #####:  464:			exit_value = 1;
+        -:  465:		    }
+    #####:  466:		    if ((!no_super_update) && (noout) && (catal != NULL) &&
+    #####:  467:			(xmlCatalogIsEmpty(catal))) {
+    #####:  468:			super = xmlLoadSGMLSuperCatalog(
+        -:  469:				   XML_SGML_DEFAULT_CATALOG);
+    #####:  470:			if (super != NULL) {
+    #####:  471:			    ret = xmlACatalogRemove(super,
+    #####:  472:				    BAD_CAST argv[i + 1]);
+    #####:  473:			    if (ret < 0) {
+    #####:  474:				fprintf(stderr,
+        -:  475:					"Failed to remove entry from %s\n",
+        -:  476:					XML_SGML_DEFAULT_CATALOG);
+    #####:  477:				exit_value = 1;
+        -:  478:			    }
+        -:  479:			}
+        -:  480:		    }
+        -:  481:		}
+    #####:  482:		if (noout) {
+        -:  483:		    FILE *out;
+        -:  484:
+    #####:  485:		    if (xmlCatalogIsEmpty(catal)) {
+    #####:  486:			remove(argv[i + 1]);
+        -:  487:		    } else {
+    #####:  488:			out = fopen(argv[i + 1], "w");
+    #####:  489:			if (out == NULL) {
+    #####:  490:			    fprintf(stderr, "could not open %s for saving\n",
+    #####:  491:				    argv[i + 1]);
+    #####:  492:			    exit_value = 2;
+    #####:  493:			    noout = 0;
+        -:  494:			} else {
+    #####:  495:			    xmlACatalogDump(catal, out);
+    #####:  496:			    fclose(out);
+        -:  497:			}
+        -:  498:		    }
+    #####:  499:		    if (!no_super_update && super != NULL) {
+    #####:  500:			if (xmlCatalogIsEmpty(super)) {
+    #####:  501:			    remove(XML_SGML_DEFAULT_CATALOG);
+        -:  502:			} else {
+    #####:  503:			    out = fopen(XML_SGML_DEFAULT_CATALOG, "w");
+    #####:  504:			    if (out == NULL) {
+    #####:  505:				fprintf(stderr,
+        -:  506:					"could not open %s for saving\n",
+        -:  507:					XML_SGML_DEFAULT_CATALOG);
+    #####:  508:				exit_value = 2;
+    #####:  509:				noout = 0;
+        -:  510:			    } else {
+        -:  511:
+    #####:  512:				xmlACatalogDump(super, out);
+    #####:  513:				fclose(out);
+        -:  514:			    }
+        -:  515:			}
+        -:  516:		    }
+        -:  517:		} else {
+    #####:  518:		    xmlACatalogDump(catal, stdout);
+        -:  519:		}
+    #####:  520:		i += 2;
+        -:  521:	    } else {
+    #####:  522:		if ((!strcmp(argv[i], "-add")) ||
+    #####:  523:		    (!strcmp(argv[i], "--add"))) {
+    #####:  524:			if ((argv[i + 3] == NULL) || (argv[i + 3][0] == 0))
+    #####:  525:			    ret = xmlCatalogAdd(BAD_CAST argv[i + 1], NULL,
+    #####:  526:						BAD_CAST argv[i + 2]);
+        -:  527:			else
+    #####:  528:			    ret = xmlCatalogAdd(BAD_CAST argv[i + 1],
+    #####:  529:						BAD_CAST argv[i + 2],
+    #####:  530:						BAD_CAST argv[i + 3]);
+    #####:  531:			if (ret != 0) {
+    #####:  532:			    printf("add command failed\n");
+    #####:  533:			    exit_value = 3;
+        -:  534:			}
+    #####:  535:			i += 3;
+    #####:  536:		} else if ((!strcmp(argv[i], "-del")) ||
+    #####:  537:		    (!strcmp(argv[i], "--del"))) {
+    #####:  538:		    ret = xmlCatalogRemove(BAD_CAST argv[i + 1]);
+    #####:  539:		    if (ret < 0) {
+    #####:  540:			fprintf(stderr, "Failed to remove entry %s\n",
+    #####:  541:				argv[i + 1]);
+    #####:  542:			exit_value = 1;
+        -:  543:		    }
+    #####:  544:		    i += 1;
+        -:  545:		}
+        -:  546:	    }
+        -:  547:	}
+        -:  548:
+    #####:  549:    } else if (shell) {
+    #####:  550:	usershell();
+        -:  551:    } else {
+    #####:  552:	for (i++; i < argc; i++) {
+        -:  553:	    xmlURIPtr uri;
+        -:  554:	    xmlChar *ans;
+        -:  555:
+    #####:  556:	    uri = xmlParseURI(argv[i]);
+    #####:  557:	    if (uri == NULL) {
+    #####:  558:		ans = xmlCatalogResolvePublic((const xmlChar *) argv[i]);
+    #####:  559:		if (ans == NULL) {
+    #####:  560:		    printf("No entry for PUBLIC %s\n", argv[i]);
+    #####:  561:		    exit_value = 4;
+        -:  562:		} else {
+    #####:  563:		    printf("%s\n", (char *) ans);
+    #####:  564:		    xmlFree(ans);
+        -:  565:		}
+        -:  566:	    } else {
+    #####:  567:                xmlFreeURI(uri);
+    #####:  568:		ans = xmlCatalogResolveSystem((const xmlChar *) argv[i]);
+    #####:  569:		if (ans == NULL) {
+    #####:  570:		    printf("No entry for SYSTEM %s\n", argv[i]);
+    #####:  571:		    ans = xmlCatalogResolveURI ((const xmlChar *) argv[i]);
+    #####:  572:		    if (ans == NULL) {
+    #####:  573:			printf ("No entry for URI %s\n", argv[i]);
+    #####:  574:		        exit_value = 4;
+        -:  575:		    } else {
+    #####:  576:		        printf("%s\n", (char *) ans);
+    #####:  577:			xmlFree (ans);
+        -:  578:		    }
+        -:  579:		} else {
+    #####:  580:		    printf("%s\n", (char *) ans);
+    #####:  581:		    xmlFree(ans);
+        -:  582:		}
+        -:  583:	    }
+        -:  584:	}
+        -:  585:    }
+    #####:  586:    if ((!sgml) && ((add) || (del) || (create) || (convert))) {
+    #####:  587:	if (noout && filename && *filename) {
+        -:  588:	    FILE *out;
+        -:  589:
+    #####:  590:	    out = fopen(filename, "w");
+    #####:  591:	    if (out == NULL) {
+    #####:  592:		fprintf(stderr, "could not open %s for saving\n", filename);
+    #####:  593:		exit_value = 2;
+    #####:  594:		noout = 0;
+        -:  595:	    } else {
+    #####:  596:		xmlCatalogDump(out);
+        -:  597:	    }
+        -:  598:	} else {
+    #####:  599:	    xmlCatalogDump(stdout);
+        -:  600:	}
+        -:  601:    }
+        -:  602:
+        -:  603:    /*
+        -:  604:     * Cleanup and check for memory leaks
+        -:  605:     */
+    #####:  606:    xmlCleanupParser();
+    #####:  607:    xmlMemoryDump();
+    #####:  608:    return(exit_value);
+        -:  609:}
+        -:  610:#else
+        -:  611:int main(int argc ATTRIBUTE_UNUSED, char **argv ATTRIBUTE_UNUSED) {
+        -:  612:    fprintf(stderr, "libxml was not compiled with catalog and output support\n");
+        -:  613:    return(1);
+        -:  614:}
+        -:  615:#endif

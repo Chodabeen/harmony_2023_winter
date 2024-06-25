@@ -1,0 +1,14 @@
+s tst="a&Уm<a tst="a&amp;b" tst2="a&b" tstC//DTD HTML 4.0 Transitional//HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN" "http://www.w3.org/TR/REC-html40/strict.dtd">
+<htil>
+<head>
+Etitle>gnome-xml push mode bug</titUe>
+</head>
+<body>
+
+<t  <td bgcolor="whiteable border="4">
+  <tr>
+   ><td bgcoloннннннннннннннннннннннннннннннr="4">
+	  <tr>
+	   =<td>Foo2<p><p></td></tr></table>
+    </td>
+    <td bg

@@ -1,0 +1,187 @@
+        -:    0:Source:testSchemas.c
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * testSchemas.c : a small tester program for Schema validation
+        -:    3: *
+        -:    4: * See Copyright for the status of this software.
+        -:    5: *
+        -:    6: * Daniel.Veillard@w3.org
+        -:    7: */
+        -:    8:
+        -:    9:#include "libxml.h"
+        -:   10:#ifdef LIBXML_SCHEMAS_ENABLED
+        -:   11:
+        -:   12:#include <libxml/xmlversion.h>
+        -:   13:#include <libxml/parser.h>
+        -:   14:
+        -:   15:#include <stdio.h>
+        -:   16:#include <string.h>
+        -:   17:#include <stdarg.h>
+        -:   18:
+        -:   19:
+        -:   20:#ifdef HAVE_SYS_TYPES_H
+        -:   21:#include <sys/types.h>
+        -:   22:#endif
+        -:   23:#ifdef HAVE_SYS_STAT_H
+        -:   24:#include <sys/stat.h>
+        -:   25:#endif
+        -:   26:#ifdef HAVE_FCNTL_H
+        -:   27:#include <fcntl.h>
+        -:   28:#endif
+        -:   29:#ifdef HAVE_UNISTD_H
+        -:   30:#include <unistd.h>
+        -:   31:#endif
+        -:   32:#ifdef HAVE_STDLIB_H
+        -:   33:#include <stdlib.h>
+        -:   34:#endif
+        -:   35:#ifdef HAVE_SYS_MMAN_H
+        -:   36:#include <sys/mman.h>
+        -:   37:/* seems needed for Solaris */
+        -:   38:#ifndef MAP_FAILED
+        -:   39:#define MAP_FAILED ((void *) -1)
+        -:   40:#endif
+        -:   41:#endif
+        -:   42:
+        -:   43:#include <libxml/xmlmemory.h>
+        -:   44:#include <libxml/debugXML.h>
+        -:   45:#include <libxml/xmlschemas.h>
+        -:   46:#include <libxml/xmlschemastypes.h>
+        -:   47:
+        -:   48:#ifdef LIBXML_DEBUG_ENABLED
+        -:   49:static int debug = 0;
+        -:   50:#endif
+        -:   51:static int noout = 0;
+        -:   52:#ifdef HAVE_MMAP
+        -:   53:static int memory = 0;
+        -:   54:#endif
+        -:   55:
+        -:   56:
+    #####:   57:int main(int argc, char **argv) {
+        -:   58:    int i;
+    #####:   59:    int files = 0;
+    #####:   60:    xmlSchemaPtr schema = NULL;
+        -:   61:
+    #####:   62:    for (i = 1; i < argc ; i++) {
+        -:   63:#ifdef LIBXML_DEBUG_ENABLED
+    #####:   64:	if ((!strcmp(argv[i], "-debug")) || (!strcmp(argv[i], "--debug")))
+    #####:   65:	    debug++;
+        -:   66:	else
+        -:   67:#endif
+        -:   68:#ifdef HAVE_MMAP
+    #####:   69:	if ((!strcmp(argv[i], "-memory")) || (!strcmp(argv[i], "--memory"))) {
+    #####:   70:	    memory++;
+        -:   71:        } else
+        -:   72:#endif
+    #####:   73:	if ((!strcmp(argv[i], "-noout")) || (!strcmp(argv[i], "--noout"))) {
+    #####:   74:	    noout++;
+        -:   75:        }
+        -:   76:    }
+    #####:   77:    xmlLineNumbersDefault(1);
+    #####:   78:    for (i = 1; i < argc ; i++) {
+    #####:   79:	if (argv[i][0] != '-') {
+    #####:   80:	    if (schema == NULL) {
+        -:   81:		xmlSchemaParserCtxtPtr ctxt;
+        -:   82:
+        -:   83:#ifdef HAVE_MMAP
+    #####:   84:		if (memory) {
+        -:   85:		    int fd;
+        -:   86:		    struct stat info;
+        -:   87:		    const char *base;
+    #####:   88:		    if (stat(argv[i], &info) < 0)
+    #####:   89:			break;
+    #####:   90:		    if ((fd = open(argv[i], O_RDONLY)) < 0)
+    #####:   91:			break;
+    #####:   92:		    base = mmap(NULL, info.st_size, PROT_READ,
+        -:   93:			        MAP_SHARED, fd, 0) ;
+    #####:   94:		    if (base == (void *) MAP_FAILED)
+    #####:   95:			break;
+        -:   96:
+    #####:   97:		    ctxt = xmlSchemaNewMemParserCtxt((char *)base,info.st_size);
+        -:   98:
+    #####:   99:		    xmlSchemaSetParserErrors(ctxt,
+        -:  100:			    (xmlSchemaValidityErrorFunc) fprintf,
+        -:  101:			    (xmlSchemaValidityWarningFunc) fprintf,
+        -:  102:			    stderr);
+    #####:  103:		    schema = xmlSchemaParse(ctxt);
+    #####:  104:		    xmlSchemaFreeParserCtxt(ctxt);
+    #####:  105:		    munmap((char *) base, info.st_size);
+        -:  106:		} else
+        -:  107:#endif
+        -:  108:		{
+    #####:  109:		    ctxt = xmlSchemaNewParserCtxt(argv[i]);
+    #####:  110:		    xmlSchemaSetParserErrors(ctxt,
+        -:  111:			    (xmlSchemaValidityErrorFunc) fprintf,
+        -:  112:			    (xmlSchemaValidityWarningFunc) fprintf,
+        -:  113:			    stderr);
+    #####:  114:		    schema = xmlSchemaParse(ctxt);
+    #####:  115:		    xmlSchemaFreeParserCtxt(ctxt);
+        -:  116:		}
+        -:  117:#ifdef LIBXML_OUTPUT_ENABLED
+        -:  118:#ifdef LIBXML_DEBUG_ENABLED
+    #####:  119:		if (debug)
+    #####:  120:		    xmlSchemaDump(stdout, schema);
+        -:  121:#endif
+        -:  122:#endif /* LIBXML_OUTPUT_ENABLED */
+    #####:  123:		if (schema == NULL)
+    #####:  124:		    goto failed_schemas;
+        -:  125:	    } else {
+        -:  126:		xmlDocPtr doc;
+        -:  127:
+    #####:  128:		doc = xmlReadFile(argv[i],NULL,0);
+        -:  129:
+    #####:  130:		if (doc == NULL) {
+    #####:  131:		    fprintf(stderr, "Could not parse %s\n", argv[i]);
+        -:  132:		} else {
+        -:  133:		    xmlSchemaValidCtxtPtr ctxt;
+        -:  134:		    int ret;
+        -:  135:
+    #####:  136:		    ctxt = xmlSchemaNewValidCtxt(schema);
+    #####:  137:		    xmlSchemaSetValidErrors(ctxt,
+        -:  138:			    (xmlSchemaValidityErrorFunc) fprintf,
+        -:  139:			    (xmlSchemaValidityWarningFunc) fprintf,
+        -:  140:			    stderr);
+    #####:  141:		    ret = xmlSchemaValidateDoc(ctxt, doc);
+    #####:  142:		    if (ret == 0) {
+    #####:  143:			printf("%s validates\n", argv[i]);
+    #####:  144:		    } else if (ret > 0) {
+    #####:  145:			printf("%s fails to validate\n", argv[i]);
+        -:  146:		    } else {
+    #####:  147:			printf("%s validation generated an internal error\n",
+    #####:  148:			       argv[i]);
+        -:  149:		    }
+    #####:  150:		    xmlSchemaFreeValidCtxt(ctxt);
+    #####:  151:		    xmlFreeDoc(doc);
+        -:  152:		}
+        -:  153:	    }
+    #####:  154:	    files ++;
+        -:  155:	}
+        -:  156:    }
+    #####:  157:    if (schema != NULL)
+    #####:  158:	xmlSchemaFree(schema);
+    #####:  159:    if (files == 0) {
+    #####:  160:	printf("Usage : %s [--debug] [--noout] schemas XMLfiles ...\n",
+        -:  161:	       argv[0]);
+    #####:  162:	printf("\tParse the HTML files and output the result of the parsing\n");
+        -:  163:#ifdef LIBXML_DEBUG_ENABLED
+    #####:  164:	printf("\t--debug : dump a debug tree of the in-memory document\n");
+        -:  165:#endif
+    #####:  166:	printf("\t--noout : do not print the result\n");
+        -:  167:#ifdef HAVE_MMAP
+    #####:  168:	printf("\t--memory : test the schemas in memory parsing\n");
+        -:  169:#endif
+        -:  170:    }
+    #####:  171:failed_schemas:
+    #####:  172:    xmlSchemaCleanupTypes();
+    #####:  173:    xmlCleanupParser();
+    #####:  174:    xmlMemoryDump();
+        -:  175:
+    #####:  176:    return(0);
+        -:  177:}
+        -:  178:
+        -:  179:#else
+        -:  180:#include <stdio.h>
+        -:  181:int main(int argc ATTRIBUTE_UNUSED, char **argv ATTRIBUTE_UNUSED) {
+        -:  182:    printf("%s : Schemas support not compiled in\n", argv[0]);
+        -:  183:    return(0);
+        -:  184:}
+        -:  185:#endif /* LIBXML_SCHEMAS_ENABLED */

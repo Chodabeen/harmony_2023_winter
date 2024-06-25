@@ -1,0 +1,9 @@
+&p tst="a&ampHb" tst2="a&b" tgt3="a & b">
+'a & b">
+a&amp;b
+a&b
+a'amp;r
+a&b
+a <p& b">
+a&a=a & tst3="a &ÿÿ2& b">
+a&a=b" tst2="a&b" tst3(

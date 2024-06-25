@@ -1,0 +1,7 @@
+<p tst="a&amp;ÿÿ;b" t">
+a&amp;b
+a&b
+a & b
+<b" tst2="a&b" tst3="a& b">
+a&aíƒ;b b
+</p>

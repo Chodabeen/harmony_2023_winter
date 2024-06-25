@@ -1,0 +1,196 @@
+        -:    0:Source:testRelax.c
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * testRelax.c : a small tester program for RelaxNG validation
+        -:    3: *
+        -:    4: * See Copyright for the status of this software.
+        -:    5: *
+        -:    6: * Daniel.Veillard@w3.org
+        -:    7: */
+        -:    8:
+        -:    9:#include "libxml.h"
+        -:   10:#ifdef LIBXML_SCHEMAS_ENABLED
+        -:   11:
+        -:   12:#include <libxml/xmlversion.h>
+        -:   13:#include <libxml/parser.h>
+        -:   14:
+        -:   15:#include <stdio.h>
+        -:   16:#include <string.h>
+        -:   17:#include <stdarg.h>
+        -:   18:
+        -:   19:
+        -:   20:#ifdef HAVE_SYS_TYPES_H
+        -:   21:#include <sys/types.h>
+        -:   22:#endif
+        -:   23:#ifdef HAVE_SYS_STAT_H
+        -:   24:#include <sys/stat.h>
+        -:   25:#endif
+        -:   26:#ifdef HAVE_FCNTL_H
+        -:   27:#include <fcntl.h>
+        -:   28:#endif
+        -:   29:#ifdef HAVE_UNISTD_H
+        -:   30:#include <unistd.h>
+        -:   31:#endif
+        -:   32:#ifdef HAVE_STDLIB_H
+        -:   33:#include <stdlib.h>
+        -:   34:#endif
+        -:   35:#ifdef HAVE_SYS_MMAN_H
+        -:   36:#include <sys/mman.h>
+        -:   37:/* seems needed for Solaris */
+        -:   38:#ifndef MAP_FAILED
+        -:   39:#define MAP_FAILED ((void *) -1)
+        -:   40:#endif
+        -:   41:#endif
+        -:   42:
+        -:   43:#include <libxml/xmlmemory.h>
+        -:   44:#include <libxml/debugXML.h>
+        -:   45:#include <libxml/relaxng.h>
+        -:   46:
+        -:   47:#ifdef LIBXML_DEBUG_ENABLED
+        -:   48:static int debug = 0;
+        -:   49:#endif
+        -:   50:static int noout = 0;
+        -:   51:static int tree = 0;
+        -:   52:#ifdef HAVE_MMAP
+        -:   53:static int memory = 0;
+        -:   54:#endif
+        -:   55:
+        -:   56:
+    #####:   57:int main(int argc, char **argv) {
+        -:   58:    int i;
+    #####:   59:    int files = 0;
+    #####:   60:    xmlRelaxNGPtr schema = NULL;
+        -:   61:
+    #####:   62:    for (i = 1; i < argc ; i++) {
+        -:   63:#ifdef LIBXML_DEBUG_ENABLED
+    #####:   64:	if ((!strcmp(argv[i], "-debug")) || (!strcmp(argv[i], "--debug")))
+    #####:   65:	    debug++;
+        -:   66:	else
+        -:   67:#endif
+        -:   68:#ifdef HAVE_MMAP
+    #####:   69:	if ((!strcmp(argv[i], "-memory")) || (!strcmp(argv[i], "--memory"))) {
+    #####:   70:	    memory++;
+        -:   71:        } else
+        -:   72:#endif
+    #####:   73:	if ((!strcmp(argv[i], "-noout")) || (!strcmp(argv[i], "--noout"))) {
+    #####:   74:	    noout++;
+        -:   75:        } else
+    #####:   76:	if ((!strcmp(argv[i], "-tree")) || (!strcmp(argv[i], "--tree"))) {
+    #####:   77:	    tree++;
+        -:   78:        }
+        -:   79:    }
+    #####:   80:    xmlLineNumbersDefault(1);
+    #####:   81:    xmlSubstituteEntitiesDefault(1);
+    #####:   82:    for (i = 1; i < argc ; i++) {
+    #####:   83:	if (argv[i][0] != '-') {
+    #####:   84:	    if (schema == NULL) {
+        -:   85:		xmlRelaxNGParserCtxtPtr ctxt;
+        -:   86:
+        -:   87:#ifdef HAVE_MMAP
+    #####:   88:		if (memory) {
+        -:   89:		    int fd;
+        -:   90:		    struct stat info;
+        -:   91:		    const char *base;
+    #####:   92:		    if (stat(argv[i], &info) < 0)
+    #####:   93:			break;
+    #####:   94:		    if ((fd = open(argv[i], O_RDONLY)) < 0)
+    #####:   95:			break;
+    #####:   96:		    base = mmap(NULL, info.st_size, PROT_READ,
+        -:   97:			        MAP_SHARED, fd, 0) ;
+    #####:   98:		    if (base == (void *) MAP_FAILED)
+    #####:   99:			break;
+        -:  100:
+    #####:  101:		    ctxt = xmlRelaxNGNewMemParserCtxt((char *)base,info.st_size);
+        -:  102:
+    #####:  103:		    xmlRelaxNGSetParserErrors(ctxt,
+        -:  104:			    (xmlRelaxNGValidityErrorFunc) fprintf,
+        -:  105:			    (xmlRelaxNGValidityWarningFunc) fprintf,
+        -:  106:			    stderr);
+    #####:  107:		    schema = xmlRelaxNGParse(ctxt);
+    #####:  108:		    xmlRelaxNGFreeParserCtxt(ctxt);
+    #####:  109:		    munmap((char *) base, info.st_size);
+        -:  110:		} else
+        -:  111:#endif
+        -:  112:		{
+    #####:  113:		    ctxt = xmlRelaxNGNewParserCtxt(argv[i]);
+    #####:  114:		    xmlRelaxNGSetParserErrors(ctxt,
+        -:  115:			    (xmlRelaxNGValidityErrorFunc) fprintf,
+        -:  116:			    (xmlRelaxNGValidityWarningFunc) fprintf,
+        -:  117:			    stderr);
+    #####:  118:		    schema = xmlRelaxNGParse(ctxt);
+    #####:  119:		    xmlRelaxNGFreeParserCtxt(ctxt);
+        -:  120:		}
+    #####:  121:		if (schema == NULL) {
+    #####:  122:		    printf("Relax-NG schema %s failed to compile\n", argv[i]);
+    #####:  123:		    files = -1;
+    #####:  124:		    break;
+        -:  125:		}
+        -:  126:#ifdef LIBXML_OUTPUT_ENABLED
+        -:  127:#ifdef LIBXML_DEBUG_ENABLED
+    #####:  128:		if (debug)
+    #####:  129:		    xmlRelaxNGDump(stdout, schema);
+        -:  130:#endif
+    #####:  131:		if (tree)
+    #####:  132:		    xmlRelaxNGDumpTree(stdout, schema);
+        -:  133:#endif /* LIBXML_OUTPUT_ENABLED */
+        -:  134:	    } else {
+        -:  135:		xmlDocPtr doc;
+        -:  136:
+    #####:  137:		doc = xmlReadFile(argv[i],NULL,0);
+        -:  138:
+    #####:  139:		if (doc == NULL) {
+    #####:  140:		    fprintf(stderr, "Could not parse %s\n", argv[i]);
+        -:  141:		} else {
+        -:  142:		    xmlRelaxNGValidCtxtPtr ctxt;
+        -:  143:		    int ret;
+        -:  144:
+    #####:  145:		    ctxt = xmlRelaxNGNewValidCtxt(schema);
+    #####:  146:		    xmlRelaxNGSetValidErrors(ctxt,
+        -:  147:			    (xmlRelaxNGValidityErrorFunc) fprintf,
+        -:  148:			    (xmlRelaxNGValidityWarningFunc) fprintf,
+        -:  149:			    stderr);
+    #####:  150:		    ret = xmlRelaxNGValidateDoc(ctxt, doc);
+    #####:  151:		    if (ret == 0) {
+    #####:  152:			printf("%s validates\n", argv[i]);
+    #####:  153:		    } else if (ret > 0) {
+    #####:  154:			printf("%s fails to validate\n", argv[i]);
+        -:  155:		    } else {
+    #####:  156:			printf("%s validation generated an internal error\n",
+    #####:  157:			       argv[i]);
+        -:  158:		    }
+    #####:  159:		    xmlRelaxNGFreeValidCtxt(ctxt);
+    #####:  160:		    xmlFreeDoc(doc);
+        -:  161:		}
+        -:  162:	    }
+    #####:  163:	    files ++;
+        -:  164:	}
+        -:  165:    }
+    #####:  166:    if (schema != NULL)
+    #####:  167:	xmlRelaxNGFree(schema);
+    #####:  168:    if (files == 0) {
+    #####:  169:	printf("Usage : %s [--debug] [--noout] schemas XMLfiles ...\n",
+        -:  170:	       argv[0]);
+    #####:  171:	printf("\tParse the HTML files and output the result of the parsing\n");
+        -:  172:#ifdef LIBXML_DEBUG_ENABLED
+    #####:  173:	printf("\t--debug : dump a debug tree of the in-memory document\n");
+        -:  174:#endif
+    #####:  175:	printf("\t--noout : do not print the result\n");
+    #####:  176:	printf("\t--tree : print the intermediate Relax-NG document tree\n");
+        -:  177:#ifdef HAVE_MMAP
+    #####:  178:	printf("\t--memory : test the schemas in memory parsing\n");
+        -:  179:#endif
+        -:  180:    }
+    #####:  181:    xmlRelaxNGCleanupTypes();
+    #####:  182:    xmlCleanupParser();
+    #####:  183:    xmlMemoryDump();
+        -:  184:
+    #####:  185:    return(0);
+        -:  186:}
+        -:  187:
+        -:  188:#else
+        -:  189:#include <stdio.h>
+        -:  190:int main(int argc ATTRIBUTE_UNUSED, char **argv ATTRIBUTE_UNUSED) {
+        -:  191:    printf("%s : RelaxNG support not compiled in\n", argv[0]);
+        -:  192:    return(0);
+        -:  193:}
+        -:  194:#endif /* LIBXML_SCHEMAS_ENABLED */

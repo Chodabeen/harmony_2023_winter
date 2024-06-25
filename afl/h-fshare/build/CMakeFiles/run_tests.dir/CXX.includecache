@@ -1,0 +1,32 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/s22000711/2023_winter/afl/h-fshare/fshare.h
+
+/home/s22000711/2023_winter/afl/h-fshare/test.cc
+stdio.h
+-
+stdlib.h
+-
+string.h
+-
+unistd.h
+-
+sys/socket.h
+-
+fcntl.h
+-
+errno.h
+-
+gtest/gtest.h
+/home/s22000711/2023_winter/afl/h-fshare/gtest/gtest.h
+gmock/gmock.h
+/home/s22000711/2023_winter/afl/h-fshare/gmock/gmock.h
+fshare.h
+/home/s22000711/2023_winter/afl/h-fshare/fshare.h
+

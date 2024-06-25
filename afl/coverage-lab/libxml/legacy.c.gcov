@@ -1,0 +1,1345 @@
+        -:    0:Source:legacy.c
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * legacy.c: set of deprecated routines, not to be used anymore but
+        -:    3: *           kept purely for ABI compatibility
+        -:    4: *
+        -:    5: * See Copyright for the status of this software.
+        -:    6: *
+        -:    7: * daniel@veillard.com
+        -:    8: */
+        -:    9:
+        -:   10:#define IN_LIBXML
+        -:   11:#include "libxml.h"
+        -:   12:
+        -:   13:#ifdef LIBXML_LEGACY_ENABLED
+        -:   14:#include <string.h>
+        -:   15:
+        -:   16:#include <libxml/tree.h>
+        -:   17:#include <libxml/entities.h>
+        -:   18:#include <libxml/SAX.h>
+        -:   19:#include <libxml/parserInternals.h>
+        -:   20:#include <libxml/HTMLparser.h>
+        -:   21:
+        -:   22:void xmlUpgradeOldNs(xmlDocPtr doc);
+        -:   23:
+        -:   24:/************************************************************************
+        -:   25: *									*
+        -:   26: *		Deprecated functions kept for compatibility		*
+        -:   27: *									*
+        -:   28: ************************************************************************/
+        -:   29:
+        -:   30:#ifdef LIBXML_HTML_ENABLED
+        -:   31:xmlChar *htmlDecodeEntities(htmlParserCtxtPtr ctxt, int len, xmlChar end,
+        -:   32:                            xmlChar end2, xmlChar end3);
+        -:   33:
+        -:   34:/**
+        -:   35: * htmlDecodeEntities:
+        -:   36: * @ctxt:  the parser context
+        -:   37: * @len:  the len to decode (in bytes !), -1 for no size limit
+        -:   38: * @end:  an end marker xmlChar, 0 if none
+        -:   39: * @end2:  an end marker xmlChar, 0 if none
+        -:   40: * @end3:  an end marker xmlChar, 0 if none
+        -:   41: *
+        -:   42: * Substitute the HTML entities by their value
+        -:   43: *
+        -:   44: * DEPRECATED !!!!
+        -:   45: *
+        -:   46: * Returns A newly allocated string with the substitution done. The caller
+        -:   47: *      must deallocate it !
+        -:   48: */
+        -:   49:xmlChar *
+    #####:   50:htmlDecodeEntities(htmlParserCtxtPtr ctxt ATTRIBUTE_UNUSED,
+        -:   51:                   int len ATTRIBUTE_UNUSED, xmlChar end ATTRIBUTE_UNUSED,
+        -:   52:                   xmlChar end2 ATTRIBUTE_UNUSED,
+        -:   53:                   xmlChar end3 ATTRIBUTE_UNUSED)
+        -:   54:{
+        -:   55:    static int deprecated = 0;
+        -:   56:
+    #####:   57:    if (!deprecated) {
+    #####:   58:        xmlGenericError(xmlGenericErrorContext,
+        -:   59:                        "htmlDecodeEntities() deprecated function reached\n");
+    #####:   60:        deprecated = 1;
+        -:   61:    }
+    #####:   62:    return (NULL);
+        -:   63:}
+        -:   64:#endif
+        -:   65:
+        -:   66:/**
+        -:   67: * xmlInitializePredefinedEntities:
+        -:   68: *
+        -:   69: * Set up the predefined entities.
+        -:   70: * Deprecated call
+        -:   71: */
+        -:   72:void
+    #####:   73:xmlInitializePredefinedEntities(void)
+        -:   74:{
+    #####:   75:}
+        -:   76:
+        -:   77:/**
+        -:   78: * xmlCleanupPredefinedEntities:
+        -:   79: *
+        -:   80: * Cleanup up the predefined entities table.
+        -:   81: * Deprecated call
+        -:   82: */
+        -:   83:void
+    #####:   84:xmlCleanupPredefinedEntities(void)
+        -:   85:{
+    #####:   86:}
+        -:   87:
+        -:   88:static const char *xmlFeaturesList[] = {
+        -:   89:    "validate",
+        -:   90:    "load subset",
+        -:   91:    "keep blanks",
+        -:   92:    "disable SAX",
+        -:   93:    "fetch external entities",
+        -:   94:    "substitute entities",
+        -:   95:    "gather line info",
+        -:   96:    "user data",
+        -:   97:    "is html",
+        -:   98:    "is standalone",
+        -:   99:    "stop parser",
+        -:  100:    "document",
+        -:  101:    "is well formed",
+        -:  102:    "is valid",
+        -:  103:    "SAX block",
+        -:  104:    "SAX function internalSubset",
+        -:  105:    "SAX function isStandalone",
+        -:  106:    "SAX function hasInternalSubset",
+        -:  107:    "SAX function hasExternalSubset",
+        -:  108:    "SAX function resolveEntity",
+        -:  109:    "SAX function getEntity",
+        -:  110:    "SAX function entityDecl",
+        -:  111:    "SAX function notationDecl",
+        -:  112:    "SAX function attributeDecl",
+        -:  113:    "SAX function elementDecl",
+        -:  114:    "SAX function unparsedEntityDecl",
+        -:  115:    "SAX function setDocumentLocator",
+        -:  116:    "SAX function startDocument",
+        -:  117:    "SAX function endDocument",
+        -:  118:    "SAX function startElement",
+        -:  119:    "SAX function endElement",
+        -:  120:    "SAX function reference",
+        -:  121:    "SAX function characters",
+        -:  122:    "SAX function ignorableWhitespace",
+        -:  123:    "SAX function processingInstruction",
+        -:  124:    "SAX function comment",
+        -:  125:    "SAX function warning",
+        -:  126:    "SAX function error",
+        -:  127:    "SAX function fatalError",
+        -:  128:    "SAX function getParameterEntity",
+        -:  129:    "SAX function cdataBlock",
+        -:  130:    "SAX function externalSubset",
+        -:  131:};
+        -:  132:
+        -:  133:/**
+        -:  134: * xmlGetFeaturesList:
+        -:  135: * @len:  the length of the features name array (input/output)
+        -:  136: * @result:  an array of string to be filled with the features name.
+        -:  137: *
+        -:  138: * Copy at most *@len feature names into the @result array
+        -:  139: *
+        -:  140: * Returns -1 in case or error, or the total number of features,
+        -:  141: *            len is updated with the number of strings copied,
+        -:  142: *            strings must not be deallocated
+        -:  143: */
+        -:  144:int
+    #####:  145:xmlGetFeaturesList(int *len, const char **result)
+        -:  146:{
+        -:  147:    int ret, i;
+        -:  148:
+    #####:  149:    ret = sizeof(xmlFeaturesList) / sizeof(xmlFeaturesList[0]);
+    #####:  150:    if ((len == NULL) || (result == NULL))
+    #####:  151:        return (ret);
+    #####:  152:    if ((*len < 0) || (*len >= 1000))
+    #####:  153:        return (-1);
+    #####:  154:    if (*len > ret)
+    #####:  155:        *len = ret;
+    #####:  156:    for (i = 0; i < *len; i++)
+    #####:  157:        result[i] = xmlFeaturesList[i];
+    #####:  158:    return (ret);
+        -:  159:}
+        -:  160:
+        -:  161:/**
+        -:  162: * xmlGetFeature:
+        -:  163: * @ctxt:  an XML/HTML parser context
+        -:  164: * @name:  the feature name
+        -:  165: * @result:  location to store the result
+        -:  166: *
+        -:  167: * Read the current value of one feature of this parser instance
+        -:  168: *
+        -:  169: * Returns -1 in case or error, 0 otherwise
+        -:  170: */
+        -:  171:int
+    #####:  172:xmlGetFeature(xmlParserCtxtPtr ctxt, const char *name, void *result)
+        -:  173:{
+    #####:  174:    if ((ctxt == NULL) || (name == NULL) || (result == NULL))
+    #####:  175:        return (-1);
+        -:  176:
+    #####:  177:    if (!strcmp(name, "validate")) {
+    #####:  178:        *((int *) result) = ctxt->validate;
+    #####:  179:    } else if (!strcmp(name, "keep blanks")) {
+    #####:  180:        *((int *) result) = ctxt->keepBlanks;
+    #####:  181:    } else if (!strcmp(name, "disable SAX")) {
+    #####:  182:        *((int *) result) = ctxt->disableSAX;
+    #####:  183:    } else if (!strcmp(name, "fetch external entities")) {
+    #####:  184:        *((int *) result) = ctxt->loadsubset;
+    #####:  185:    } else if (!strcmp(name, "substitute entities")) {
+    #####:  186:        *((int *) result) = ctxt->replaceEntities;
+    #####:  187:    } else if (!strcmp(name, "gather line info")) {
+    #####:  188:        *((int *) result) = ctxt->record_info;
+    #####:  189:    } else if (!strcmp(name, "user data")) {
+    #####:  190:        *((void **) result) = ctxt->userData;
+    #####:  191:    } else if (!strcmp(name, "is html")) {
+    #####:  192:        *((int *) result) = ctxt->html;
+    #####:  193:    } else if (!strcmp(name, "is standalone")) {
+    #####:  194:        *((int *) result) = ctxt->standalone;
+    #####:  195:    } else if (!strcmp(name, "document")) {
+    #####:  196:        *((xmlDocPtr *) result) = ctxt->myDoc;
+    #####:  197:    } else if (!strcmp(name, "is well formed")) {
+    #####:  198:        *((int *) result) = ctxt->wellFormed;
+    #####:  199:    } else if (!strcmp(name, "is valid")) {
+    #####:  200:        *((int *) result) = ctxt->valid;
+    #####:  201:    } else if (!strcmp(name, "SAX block")) {
+    #####:  202:        *((xmlSAXHandlerPtr *) result) = ctxt->sax;
+    #####:  203:    } else if (!strcmp(name, "SAX function internalSubset")) {
+    #####:  204:        *((internalSubsetSAXFunc *) result) = ctxt->sax->internalSubset;
+    #####:  205:    } else if (!strcmp(name, "SAX function isStandalone")) {
+    #####:  206:        *((isStandaloneSAXFunc *) result) = ctxt->sax->isStandalone;
+    #####:  207:    } else if (!strcmp(name, "SAX function hasInternalSubset")) {
+    #####:  208:        *((hasInternalSubsetSAXFunc *) result) =
+    #####:  209:            ctxt->sax->hasInternalSubset;
+    #####:  210:    } else if (!strcmp(name, "SAX function hasExternalSubset")) {
+    #####:  211:        *((hasExternalSubsetSAXFunc *) result) =
+    #####:  212:            ctxt->sax->hasExternalSubset;
+    #####:  213:    } else if (!strcmp(name, "SAX function resolveEntity")) {
+    #####:  214:        *((resolveEntitySAXFunc *) result) = ctxt->sax->resolveEntity;
+    #####:  215:    } else if (!strcmp(name, "SAX function getEntity")) {
+    #####:  216:        *((getEntitySAXFunc *) result) = ctxt->sax->getEntity;
+    #####:  217:    } else if (!strcmp(name, "SAX function entityDecl")) {
+    #####:  218:        *((entityDeclSAXFunc *) result) = ctxt->sax->entityDecl;
+    #####:  219:    } else if (!strcmp(name, "SAX function notationDecl")) {
+    #####:  220:        *((notationDeclSAXFunc *) result) = ctxt->sax->notationDecl;
+    #####:  221:    } else if (!strcmp(name, "SAX function attributeDecl")) {
+    #####:  222:        *((attributeDeclSAXFunc *) result) = ctxt->sax->attributeDecl;
+    #####:  223:    } else if (!strcmp(name, "SAX function elementDecl")) {
+    #####:  224:        *((elementDeclSAXFunc *) result) = ctxt->sax->elementDecl;
+    #####:  225:    } else if (!strcmp(name, "SAX function unparsedEntityDecl")) {
+    #####:  226:        *((unparsedEntityDeclSAXFunc *) result) =
+    #####:  227:            ctxt->sax->unparsedEntityDecl;
+    #####:  228:    } else if (!strcmp(name, "SAX function setDocumentLocator")) {
+    #####:  229:        *((setDocumentLocatorSAXFunc *) result) =
+    #####:  230:            ctxt->sax->setDocumentLocator;
+    #####:  231:    } else if (!strcmp(name, "SAX function startDocument")) {
+    #####:  232:        *((startDocumentSAXFunc *) result) = ctxt->sax->startDocument;
+    #####:  233:    } else if (!strcmp(name, "SAX function endDocument")) {
+    #####:  234:        *((endDocumentSAXFunc *) result) = ctxt->sax->endDocument;
+    #####:  235:    } else if (!strcmp(name, "SAX function startElement")) {
+    #####:  236:        *((startElementSAXFunc *) result) = ctxt->sax->startElement;
+    #####:  237:    } else if (!strcmp(name, "SAX function endElement")) {
+    #####:  238:        *((endElementSAXFunc *) result) = ctxt->sax->endElement;
+    #####:  239:    } else if (!strcmp(name, "SAX function reference")) {
+    #####:  240:        *((referenceSAXFunc *) result) = ctxt->sax->reference;
+    #####:  241:    } else if (!strcmp(name, "SAX function characters")) {
+    #####:  242:        *((charactersSAXFunc *) result) = ctxt->sax->characters;
+    #####:  243:    } else if (!strcmp(name, "SAX function ignorableWhitespace")) {
+    #####:  244:        *((ignorableWhitespaceSAXFunc *) result) =
+    #####:  245:            ctxt->sax->ignorableWhitespace;
+    #####:  246:    } else if (!strcmp(name, "SAX function processingInstruction")) {
+    #####:  247:        *((processingInstructionSAXFunc *) result) =
+    #####:  248:            ctxt->sax->processingInstruction;
+    #####:  249:    } else if (!strcmp(name, "SAX function comment")) {
+    #####:  250:        *((commentSAXFunc *) result) = ctxt->sax->comment;
+    #####:  251:    } else if (!strcmp(name, "SAX function warning")) {
+    #####:  252:        *((warningSAXFunc *) result) = ctxt->sax->warning;
+    #####:  253:    } else if (!strcmp(name, "SAX function error")) {
+    #####:  254:        *((errorSAXFunc *) result) = ctxt->sax->error;
+    #####:  255:    } else if (!strcmp(name, "SAX function fatalError")) {
+    #####:  256:        *((fatalErrorSAXFunc *) result) = ctxt->sax->fatalError;
+    #####:  257:    } else if (!strcmp(name, "SAX function getParameterEntity")) {
+    #####:  258:        *((getParameterEntitySAXFunc *) result) =
+    #####:  259:            ctxt->sax->getParameterEntity;
+    #####:  260:    } else if (!strcmp(name, "SAX function cdataBlock")) {
+    #####:  261:        *((cdataBlockSAXFunc *) result) = ctxt->sax->cdataBlock;
+    #####:  262:    } else if (!strcmp(name, "SAX function externalSubset")) {
+    #####:  263:        *((externalSubsetSAXFunc *) result) = ctxt->sax->externalSubset;
+        -:  264:    } else {
+    #####:  265:        return (-1);
+        -:  266:    }
+    #####:  267:    return (0);
+        -:  268:}
+        -:  269:
+        -:  270:/**
+        -:  271: * xmlSetFeature:
+        -:  272: * @ctxt:  an XML/HTML parser context
+        -:  273: * @name:  the feature name
+        -:  274: * @value:  pointer to the location of the new value
+        -:  275: *
+        -:  276: * Change the current value of one feature of this parser instance
+        -:  277: *
+        -:  278: * Returns -1 in case or error, 0 otherwise
+        -:  279: */
+        -:  280:int
+    #####:  281:xmlSetFeature(xmlParserCtxtPtr ctxt, const char *name, void *value)
+        -:  282:{
+    #####:  283:    if ((ctxt == NULL) || (name == NULL) || (value == NULL))
+    #####:  284:        return (-1);
+        -:  285:
+    #####:  286:    if (!strcmp(name, "validate")) {
+    #####:  287:        int newvalidate = *((int *) value);
+        -:  288:
+    #####:  289:        if ((!ctxt->validate) && (newvalidate != 0)) {
+    #####:  290:            if (ctxt->vctxt.warning == NULL)
+    #####:  291:                ctxt->vctxt.warning = xmlParserValidityWarning;
+    #####:  292:            if (ctxt->vctxt.error == NULL)
+    #####:  293:                ctxt->vctxt.error = xmlParserValidityError;
+    #####:  294:            ctxt->vctxt.nodeMax = 0;
+        -:  295:        }
+    #####:  296:        ctxt->validate = newvalidate;
+    #####:  297:    } else if (!strcmp(name, "keep blanks")) {
+    #####:  298:        ctxt->keepBlanks = *((int *) value);
+    #####:  299:    } else if (!strcmp(name, "disable SAX")) {
+    #####:  300:        ctxt->disableSAX = *((int *) value);
+    #####:  301:    } else if (!strcmp(name, "fetch external entities")) {
+    #####:  302:        ctxt->loadsubset = *((int *) value);
+    #####:  303:    } else if (!strcmp(name, "substitute entities")) {
+    #####:  304:        ctxt->replaceEntities = *((int *) value);
+    #####:  305:    } else if (!strcmp(name, "gather line info")) {
+    #####:  306:        ctxt->record_info = *((int *) value);
+    #####:  307:    } else if (!strcmp(name, "user data")) {
+    #####:  308:        ctxt->userData = *((void **) value);
+    #####:  309:    } else if (!strcmp(name, "is html")) {
+    #####:  310:        ctxt->html = *((int *) value);
+    #####:  311:    } else if (!strcmp(name, "is standalone")) {
+    #####:  312:        ctxt->standalone = *((int *) value);
+    #####:  313:    } else if (!strcmp(name, "document")) {
+    #####:  314:        ctxt->myDoc = *((xmlDocPtr *) value);
+    #####:  315:    } else if (!strcmp(name, "is well formed")) {
+    #####:  316:        ctxt->wellFormed = *((int *) value);
+    #####:  317:    } else if (!strcmp(name, "is valid")) {
+    #####:  318:        ctxt->valid = *((int *) value);
+    #####:  319:    } else if (!strcmp(name, "SAX block")) {
+    #####:  320:        ctxt->sax = *((xmlSAXHandlerPtr *) value);
+    #####:  321:    } else if (!strcmp(name, "SAX function internalSubset")) {
+    #####:  322:        ctxt->sax->internalSubset = *((internalSubsetSAXFunc *) value);
+    #####:  323:    } else if (!strcmp(name, "SAX function isStandalone")) {
+    #####:  324:        ctxt->sax->isStandalone = *((isStandaloneSAXFunc *) value);
+    #####:  325:    } else if (!strcmp(name, "SAX function hasInternalSubset")) {
+    #####:  326:        ctxt->sax->hasInternalSubset =
+    #####:  327:            *((hasInternalSubsetSAXFunc *) value);
+    #####:  328:    } else if (!strcmp(name, "SAX function hasExternalSubset")) {
+    #####:  329:        ctxt->sax->hasExternalSubset =
+    #####:  330:            *((hasExternalSubsetSAXFunc *) value);
+    #####:  331:    } else if (!strcmp(name, "SAX function resolveEntity")) {
+    #####:  332:        ctxt->sax->resolveEntity = *((resolveEntitySAXFunc *) value);
+    #####:  333:    } else if (!strcmp(name, "SAX function getEntity")) {
+    #####:  334:        ctxt->sax->getEntity = *((getEntitySAXFunc *) value);
+    #####:  335:    } else if (!strcmp(name, "SAX function entityDecl")) {
+    #####:  336:        ctxt->sax->entityDecl = *((entityDeclSAXFunc *) value);
+    #####:  337:    } else if (!strcmp(name, "SAX function notationDecl")) {
+    #####:  338:        ctxt->sax->notationDecl = *((notationDeclSAXFunc *) value);
+    #####:  339:    } else if (!strcmp(name, "SAX function attributeDecl")) {
+    #####:  340:        ctxt->sax->attributeDecl = *((attributeDeclSAXFunc *) value);
+    #####:  341:    } else if (!strcmp(name, "SAX function elementDecl")) {
+    #####:  342:        ctxt->sax->elementDecl = *((elementDeclSAXFunc *) value);
+    #####:  343:    } else if (!strcmp(name, "SAX function unparsedEntityDecl")) {
+    #####:  344:        ctxt->sax->unparsedEntityDecl =
+    #####:  345:            *((unparsedEntityDeclSAXFunc *) value);
+    #####:  346:    } else if (!strcmp(name, "SAX function setDocumentLocator")) {
+    #####:  347:        ctxt->sax->setDocumentLocator =
+    #####:  348:            *((setDocumentLocatorSAXFunc *) value);
+    #####:  349:    } else if (!strcmp(name, "SAX function startDocument")) {
+    #####:  350:        ctxt->sax->startDocument = *((startDocumentSAXFunc *) value);
+    #####:  351:    } else if (!strcmp(name, "SAX function endDocument")) {
+    #####:  352:        ctxt->sax->endDocument = *((endDocumentSAXFunc *) value);
+    #####:  353:    } else if (!strcmp(name, "SAX function startElement")) {
+    #####:  354:        ctxt->sax->startElement = *((startElementSAXFunc *) value);
+    #####:  355:    } else if (!strcmp(name, "SAX function endElement")) {
+    #####:  356:        ctxt->sax->endElement = *((endElementSAXFunc *) value);
+    #####:  357:    } else if (!strcmp(name, "SAX function reference")) {
+    #####:  358:        ctxt->sax->reference = *((referenceSAXFunc *) value);
+    #####:  359:    } else if (!strcmp(name, "SAX function characters")) {
+    #####:  360:        ctxt->sax->characters = *((charactersSAXFunc *) value);
+    #####:  361:    } else if (!strcmp(name, "SAX function ignorableWhitespace")) {
+    #####:  362:        ctxt->sax->ignorableWhitespace =
+    #####:  363:            *((ignorableWhitespaceSAXFunc *) value);
+    #####:  364:    } else if (!strcmp(name, "SAX function processingInstruction")) {
+    #####:  365:        ctxt->sax->processingInstruction =
+    #####:  366:            *((processingInstructionSAXFunc *) value);
+    #####:  367:    } else if (!strcmp(name, "SAX function comment")) {
+    #####:  368:        ctxt->sax->comment = *((commentSAXFunc *) value);
+    #####:  369:    } else if (!strcmp(name, "SAX function warning")) {
+    #####:  370:        ctxt->sax->warning = *((warningSAXFunc *) value);
+    #####:  371:    } else if (!strcmp(name, "SAX function error")) {
+    #####:  372:        ctxt->sax->error = *((errorSAXFunc *) value);
+    #####:  373:    } else if (!strcmp(name, "SAX function fatalError")) {
+    #####:  374:        ctxt->sax->fatalError = *((fatalErrorSAXFunc *) value);
+    #####:  375:    } else if (!strcmp(name, "SAX function getParameterEntity")) {
+    #####:  376:        ctxt->sax->getParameterEntity =
+    #####:  377:            *((getParameterEntitySAXFunc *) value);
+    #####:  378:    } else if (!strcmp(name, "SAX function cdataBlock")) {
+    #####:  379:        ctxt->sax->cdataBlock = *((cdataBlockSAXFunc *) value);
+    #####:  380:    } else if (!strcmp(name, "SAX function externalSubset")) {
+    #####:  381:        ctxt->sax->externalSubset = *((externalSubsetSAXFunc *) value);
+        -:  382:    } else {
+    #####:  383:        return (-1);
+        -:  384:    }
+    #####:  385:    return (0);
+        -:  386:}
+        -:  387:
+        -:  388:/**
+        -:  389: * xmlDecodeEntities:
+        -:  390: * @ctxt:  the parser context
+        -:  391: * @len:  the len to decode (in bytes !), -1 for no size limit
+        -:  392: * @what:  combination of XML_SUBSTITUTE_REF and XML_SUBSTITUTE_PEREF
+        -:  393: * @end:  an end marker xmlChar, 0 if none
+        -:  394: * @end2:  an end marker xmlChar, 0 if none
+        -:  395: * @end3:  an end marker xmlChar, 0 if none
+        -:  396: *
+        -:  397: * This function is deprecated, we now always process entities content
+        -:  398: * through xmlStringDecodeEntities
+        -:  399: *
+        -:  400: * TODO: remove it in next major release.
+        -:  401: *
+        -:  402: * [67] Reference ::= EntityRef | CharRef
+        -:  403: *
+        -:  404: * [69] PEReference ::= '%' Name ';'
+        -:  405: *
+        -:  406: * Returns A newly allocated string with the substitution done. The caller
+        -:  407: *      must deallocate it !
+        -:  408: */
+        -:  409:xmlChar *
+    #####:  410:xmlDecodeEntities(xmlParserCtxtPtr ctxt ATTRIBUTE_UNUSED,
+        -:  411:                  int len ATTRIBUTE_UNUSED, int what ATTRIBUTE_UNUSED,
+        -:  412:                  xmlChar end ATTRIBUTE_UNUSED,
+        -:  413:                  xmlChar end2 ATTRIBUTE_UNUSED,
+        -:  414:                  xmlChar end3 ATTRIBUTE_UNUSED)
+        -:  415:{
+        -:  416:    static int deprecated = 0;
+        -:  417:
+    #####:  418:    if (!deprecated) {
+    #####:  419:        xmlGenericError(xmlGenericErrorContext,
+        -:  420:                        "xmlDecodeEntities() deprecated function reached\n");
+    #####:  421:        deprecated = 1;
+        -:  422:    }
+    #####:  423:    return (NULL);
+        -:  424:}
+        -:  425:
+        -:  426:/**
+        -:  427: * xmlNamespaceParseNCName:
+        -:  428: * @ctxt:  an XML parser context
+        -:  429: *
+        -:  430: * parse an XML namespace name.
+        -:  431: *
+        -:  432: * TODO: this seems not in use anymore, the namespace handling is done on
+        -:  433: *       top of the SAX interfaces, i.e. not on raw input.
+        -:  434: *
+        -:  435: * [NS 3] NCName ::= (Letter | '_') (NCNameChar)*
+        -:  436: *
+        -:  437: * [NS 4] NCNameChar ::= Letter | Digit | '.' | '-' | '_' |
+        -:  438: *                       CombiningChar | Extender
+        -:  439: *
+        -:  440: * Returns the namespace name or NULL
+        -:  441: */
+        -:  442:
+        -:  443:xmlChar *
+    #####:  444:xmlNamespaceParseNCName(xmlParserCtxtPtr ctxt ATTRIBUTE_UNUSED)
+        -:  445:{
+        -:  446:    static int deprecated = 0;
+        -:  447:
+    #####:  448:    if (!deprecated) {
+    #####:  449:        xmlGenericError(xmlGenericErrorContext,
+        -:  450:                        "xmlNamespaceParseNCName() deprecated function reached\n");
+    #####:  451:        deprecated = 1;
+        -:  452:    }
+    #####:  453:    return (NULL);
+        -:  454:}
+        -:  455:
+        -:  456:/**
+        -:  457: * xmlNamespaceParseQName:
+        -:  458: * @ctxt:  an XML parser context
+        -:  459: * @prefix:  a xmlChar **
+        -:  460: *
+        -:  461: * TODO: this seems not in use anymore, the namespace handling is done on
+        -:  462: *       top of the SAX interfaces, i.e. not on raw input.
+        -:  463: *
+        -:  464: * parse an XML qualified name
+        -:  465: *
+        -:  466: * [NS 5] QName ::= (Prefix ':')? LocalPart
+        -:  467: *
+        -:  468: * [NS 6] Prefix ::= NCName
+        -:  469: *
+        -:  470: * [NS 7] LocalPart ::= NCName
+        -:  471: *
+        -:  472: * Returns the local part, and prefix is updated
+        -:  473: *   to get the Prefix if any.
+        -:  474: */
+        -:  475:
+        -:  476:xmlChar *
+    #####:  477:xmlNamespaceParseQName(xmlParserCtxtPtr ctxt ATTRIBUTE_UNUSED,
+        -:  478:                       xmlChar ** prefix ATTRIBUTE_UNUSED)
+        -:  479:{
+        -:  480:
+        -:  481:    static int deprecated = 0;
+        -:  482:
+    #####:  483:    if (!deprecated) {
+    #####:  484:        xmlGenericError(xmlGenericErrorContext,
+        -:  485:                        "xmlNamespaceParseQName() deprecated function reached\n");
+    #####:  486:        deprecated = 1;
+        -:  487:    }
+    #####:  488:    return (NULL);
+        -:  489:}
+        -:  490:
+        -:  491:/**
+        -:  492: * xmlNamespaceParseNSDef:
+        -:  493: * @ctxt:  an XML parser context
+        -:  494: *
+        -:  495: * parse a namespace prefix declaration
+        -:  496: *
+        -:  497: * TODO: this seems not in use anymore, the namespace handling is done on
+        -:  498: *       top of the SAX interfaces, i.e. not on raw input.
+        -:  499: *
+        -:  500: * [NS 1] NSDef ::= PrefixDef Eq SystemLiteral
+        -:  501: *
+        -:  502: * [NS 2] PrefixDef ::= 'xmlns' (':' NCName)?
+        -:  503: *
+        -:  504: * Returns the namespace name
+        -:  505: */
+        -:  506:
+        -:  507:xmlChar *
+    #####:  508:xmlNamespaceParseNSDef(xmlParserCtxtPtr ctxt ATTRIBUTE_UNUSED)
+        -:  509:{
+        -:  510:    static int deprecated = 0;
+        -:  511:
+    #####:  512:    if (!deprecated) {
+    #####:  513:        xmlGenericError(xmlGenericErrorContext,
+        -:  514:                        "xmlNamespaceParseNSDef() deprecated function reached\n");
+    #####:  515:        deprecated = 1;
+        -:  516:    }
+    #####:  517:    return (NULL);
+        -:  518:}
+        -:  519:
+        -:  520:/**
+        -:  521: * xmlParseQuotedString:
+        -:  522: * @ctxt:  an XML parser context
+        -:  523: *
+        -:  524: * Parse and return a string between quotes or doublequotes
+        -:  525: *
+        -:  526: * TODO: Deprecated, to  be removed at next drop of binary compatibility
+        -:  527: *
+        -:  528: * Returns the string parser or NULL.
+        -:  529: */
+        -:  530:xmlChar *
+    #####:  531:xmlParseQuotedString(xmlParserCtxtPtr ctxt ATTRIBUTE_UNUSED)
+        -:  532:{
+        -:  533:    static int deprecated = 0;
+        -:  534:
+    #####:  535:    if (!deprecated) {
+    #####:  536:        xmlGenericError(xmlGenericErrorContext,
+        -:  537:                        "xmlParseQuotedString() deprecated function reached\n");
+    #####:  538:        deprecated = 1;
+        -:  539:    }
+    #####:  540:    return (NULL);
+        -:  541:}
+        -:  542:
+        -:  543:/**
+        -:  544: * xmlParseNamespace:
+        -:  545: * @ctxt:  an XML parser context
+        -:  546: *
+        -:  547: * xmlParseNamespace: parse specific PI '<?namespace ...' constructs.
+        -:  548: *
+        -:  549: * This is what the older xml-name Working Draft specified, a bunch of
+        -:  550: * other stuff may still rely on it, so support is still here as
+        -:  551: * if it was declared on the root of the Tree:-(
+        -:  552: *
+        -:  553: * TODO: remove from library
+        -:  554: *
+        -:  555: * To be removed at next drop of binary compatibility
+        -:  556: */
+        -:  557:
+        -:  558:void
+    #####:  559:xmlParseNamespace(xmlParserCtxtPtr ctxt ATTRIBUTE_UNUSED)
+        -:  560:{
+        -:  561:    static int deprecated = 0;
+        -:  562:
+    #####:  563:    if (!deprecated) {
+    #####:  564:        xmlGenericError(xmlGenericErrorContext,
+        -:  565:                        "xmlParseNamespace() deprecated function reached\n");
+    #####:  566:        deprecated = 1;
+        -:  567:    }
+    #####:  568:}
+        -:  569:
+        -:  570:/**
+        -:  571: * xmlScanName:
+        -:  572: * @ctxt:  an XML parser context
+        -:  573: *
+        -:  574: * Trickery: parse an XML name but without consuming the input flow
+        -:  575: * Needed for rollback cases. Used only when parsing entities references.
+        -:  576: *
+        -:  577: * TODO: seems deprecated now, only used in the default part of
+        -:  578: *       xmlParserHandleReference
+        -:  579: *
+        -:  580: * [4] NameChar ::= Letter | Digit | '.' | '-' | '_' | ':' |
+        -:  581: *                  CombiningChar | Extender
+        -:  582: *
+        -:  583: * [5] Name ::= (Letter | '_' | ':') (NameChar)*
+        -:  584: *
+        -:  585: * [6] Names ::= Name (S Name)*
+        -:  586: *
+        -:  587: * Returns the Name parsed or NULL
+        -:  588: */
+        -:  589:
+        -:  590:xmlChar *
+    #####:  591:xmlScanName(xmlParserCtxtPtr ctxt ATTRIBUTE_UNUSED)
+        -:  592:{
+        -:  593:    static int deprecated = 0;
+        -:  594:
+    #####:  595:    if (!deprecated) {
+    #####:  596:        xmlGenericError(xmlGenericErrorContext,
+        -:  597:                        "xmlScanName() deprecated function reached\n");
+    #####:  598:        deprecated = 1;
+        -:  599:    }
+    #####:  600:    return (NULL);
+        -:  601:}
+        -:  602:
+        -:  603:/**
+        -:  604: * xmlParserHandleReference:
+        -:  605: * @ctxt:  the parser context
+        -:  606: *
+        -:  607: * TODO: Remove, now deprecated ... the test is done directly in the
+        -:  608: *       content parsing
+        -:  609: * routines.
+        -:  610: *
+        -:  611: * [67] Reference ::= EntityRef | CharRef
+        -:  612: *
+        -:  613: * [68] EntityRef ::= '&' Name ';'
+        -:  614: *
+        -:  615: * [ WFC: Entity Declared ]
+        -:  616: * the Name given in the entity reference must match that in an entity
+        -:  617: * declaration, except that well-formed documents need not declare any
+        -:  618: * of the following entities: amp, lt, gt, apos, quot.
+        -:  619: *
+        -:  620: * [ WFC: Parsed Entity ]
+        -:  621: * An entity reference must not contain the name of an unparsed entity
+        -:  622: *
+        -:  623: * [66] CharRef ::= '&#' [0-9]+ ';' |
+        -:  624: *                  '&#x' [0-9a-fA-F]+ ';'
+        -:  625: *
+        -:  626: * A PEReference may have been detected in the current input stream
+        -:  627: * the handling is done accordingly to
+        -:  628: *      http://www.w3.org/TR/REC-xml#entproc
+        -:  629: */
+        -:  630:void
+    #####:  631:xmlParserHandleReference(xmlParserCtxtPtr ctxt ATTRIBUTE_UNUSED)
+        -:  632:{
+        -:  633:    static int deprecated = 0;
+        -:  634:
+    #####:  635:    if (!deprecated) {
+    #####:  636:        xmlGenericError(xmlGenericErrorContext,
+        -:  637:                        "xmlParserHandleReference() deprecated function reached\n");
+    #####:  638:        deprecated = 1;
+        -:  639:    }
+        -:  640:
+    #####:  641:    return;
+        -:  642:}
+        -:  643:
+        -:  644:/**
+        -:  645: * xmlHandleEntity:
+        -:  646: * @ctxt:  an XML parser context
+        -:  647: * @entity:  an XML entity pointer.
+        -:  648: *
+        -:  649: * Default handling of defined entities, when should we define a new input
+        -:  650: * stream ? When do we just handle that as a set of chars ?
+        -:  651: *
+        -:  652: * OBSOLETE: to be removed at some point.
+        -:  653: */
+        -:  654:
+        -:  655:void
+    #####:  656:xmlHandleEntity(xmlParserCtxtPtr ctxt ATTRIBUTE_UNUSED,
+        -:  657:                xmlEntityPtr entity ATTRIBUTE_UNUSED)
+        -:  658:{
+        -:  659:    static int deprecated = 0;
+        -:  660:
+    #####:  661:    if (!deprecated) {
+    #####:  662:        xmlGenericError(xmlGenericErrorContext,
+        -:  663:                        "xmlHandleEntity() deprecated function reached\n");
+    #####:  664:        deprecated = 1;
+        -:  665:    }
+    #####:  666:}
+        -:  667:
+        -:  668:/**
+        -:  669: * xmlNewGlobalNs:
+        -:  670: * @doc:  the document carrying the namespace
+        -:  671: * @href:  the URI associated
+        -:  672: * @prefix:  the prefix for the namespace
+        -:  673: *
+        -:  674: * Creation of a Namespace, the old way using PI and without scoping
+        -:  675: *   DEPRECATED !!!
+        -:  676: * Returns NULL this functionality had been removed
+        -:  677: */
+        -:  678:xmlNsPtr
+    #####:  679:xmlNewGlobalNs(xmlDocPtr doc ATTRIBUTE_UNUSED,
+        -:  680:               const xmlChar * href ATTRIBUTE_UNUSED,
+        -:  681:               const xmlChar * prefix ATTRIBUTE_UNUSED)
+        -:  682:{
+        -:  683:    static int deprecated = 0;
+        -:  684:
+    #####:  685:    if (!deprecated) {
+    #####:  686:        xmlGenericError(xmlGenericErrorContext,
+        -:  687:                        "xmlNewGlobalNs() deprecated function reached\n");
+    #####:  688:        deprecated = 1;
+        -:  689:    }
+    #####:  690:    return (NULL);
+        -:  691:}
+        -:  692:
+        -:  693:/**
+        -:  694: * xmlUpgradeOldNs:
+        -:  695: * @doc:  a document pointer
+        -:  696: *
+        -:  697: * Upgrade old style Namespaces (PI) and move them to the root of the document.
+        -:  698: * DEPRECATED
+        -:  699: */
+        -:  700:void
+    #####:  701:xmlUpgradeOldNs(xmlDocPtr doc ATTRIBUTE_UNUSED)
+        -:  702:{
+        -:  703:    static int deprecated = 0;
+        -:  704:
+    #####:  705:    if (!deprecated) {
+    #####:  706:        xmlGenericError(xmlGenericErrorContext,
+        -:  707:                        "xmlUpgradeOldNs() deprecated function reached\n");
+    #####:  708:        deprecated = 1;
+        -:  709:    }
+    #####:  710:}
+        -:  711:
+        -:  712:/**
+        -:  713: * xmlEncodeEntities:
+        -:  714: * @doc:  the document containing the string
+        -:  715: * @input:  A string to convert to XML.
+        -:  716: *
+        -:  717: * TODO: remove xmlEncodeEntities, once we are not afraid of breaking binary
+        -:  718: *       compatibility
+        -:  719: *
+        -:  720: * People must migrate their code to xmlEncodeEntitiesReentrant !
+        -:  721: * This routine will issue a warning when encountered.
+        -:  722: *
+        -:  723: * Returns NULL
+        -:  724: */
+        -:  725:const xmlChar *
+    #####:  726:xmlEncodeEntities(xmlDocPtr doc ATTRIBUTE_UNUSED,
+        -:  727:                  const xmlChar * input ATTRIBUTE_UNUSED)
+        -:  728:{
+        -:  729:    static int warning = 1;
+        -:  730:
+    #####:  731:    if (warning) {
+    #####:  732:        xmlGenericError(xmlGenericErrorContext,
+        -:  733:                        "Deprecated API xmlEncodeEntities() used\n");
+    #####:  734:        xmlGenericError(xmlGenericErrorContext,
+        -:  735:                        "   change code to use xmlEncodeEntitiesReentrant()\n");
+    #####:  736:        warning = 0;
+        -:  737:    }
+    #####:  738:    return (NULL);
+        -:  739:}
+        -:  740:
+        -:  741:/************************************************************************
+        -:  742: *									*
+        -:  743: *		Old set of SAXv1 functions				*
+        -:  744: *									*
+        -:  745: ************************************************************************/
+        -:  746:static int deprecated_v1_msg = 0;
+        -:  747:
+        -:  748:#define DEPRECATED(n)						\
+        -:  749:    if (deprecated_v1_msg == 0)					\
+        -:  750:	xmlGenericError(xmlGenericErrorContext,			\
+        -:  751:	  "Use of deprecated SAXv1 function %s\n", n);		\
+        -:  752:    deprecated_v1_msg++;
+        -:  753:
+        -:  754:/**
+        -:  755: * getPublicId:
+        -:  756: * @ctx: the user data (XML parser context)
+        -:  757: *
+        -:  758: * Provides the public ID e.g. "-//SGMLSOURCE//DTD DEMO//EN"
+        -:  759: * DEPRECATED: use xmlSAX2GetPublicId()
+        -:  760: *
+        -:  761: * Returns a xmlChar *
+        -:  762: */
+        -:  763:const xmlChar *
+    #####:  764:getPublicId(void *ctx)
+        -:  765:{
+    #####:  766:    DEPRECATED("getPublicId")
+    #####:  767:        return (xmlSAX2GetPublicId(ctx));
+        -:  768:}
+        -:  769:
+        -:  770:/**
+        -:  771: * getSystemId:
+        -:  772: * @ctx: the user data (XML parser context)
+        -:  773: *
+        -:  774: * Provides the system ID, basically URL or filename e.g.
+        -:  775: * http://www.sgmlsource.com/dtds/memo.dtd
+        -:  776: * DEPRECATED: use xmlSAX2GetSystemId()
+        -:  777: *
+        -:  778: * Returns a xmlChar *
+        -:  779: */
+        -:  780:const xmlChar *
+    #####:  781:getSystemId(void *ctx)
+        -:  782:{
+    #####:  783:    DEPRECATED("getSystemId")
+    #####:  784:        return (xmlSAX2GetSystemId(ctx));
+        -:  785:}
+        -:  786:
+        -:  787:/**
+        -:  788: * getLineNumber:
+        -:  789: * @ctx: the user data (XML parser context)
+        -:  790: *
+        -:  791: * Provide the line number of the current parsing point.
+        -:  792: * DEPRECATED: use xmlSAX2GetLineNumber()
+        -:  793: *
+        -:  794: * Returns an int
+        -:  795: */
+        -:  796:int
+    #####:  797:getLineNumber(void *ctx)
+        -:  798:{
+    #####:  799:    DEPRECATED("getLineNumber")
+    #####:  800:        return (xmlSAX2GetLineNumber(ctx));
+        -:  801:}
+        -:  802:
+        -:  803:/**
+        -:  804: * getColumnNumber:
+        -:  805: * @ctx: the user data (XML parser context)
+        -:  806: *
+        -:  807: * Provide the column number of the current parsing point.
+        -:  808: * DEPRECATED: use xmlSAX2GetColumnNumber()
+        -:  809: *
+        -:  810: * Returns an int
+        -:  811: */
+        -:  812:int
+    #####:  813:getColumnNumber(void *ctx)
+        -:  814:{
+    #####:  815:    DEPRECATED("getColumnNumber")
+    #####:  816:        return (xmlSAX2GetColumnNumber(ctx));
+        -:  817:}
+        -:  818:
+        -:  819:/**
+        -:  820: * isStandalone:
+        -:  821: * @ctx: the user data (XML parser context)
+        -:  822: *
+        -:  823: * Is this document tagged standalone ?
+        -:  824: * DEPRECATED: use xmlSAX2IsStandalone()
+        -:  825: *
+        -:  826: * Returns 1 if true
+        -:  827: */
+        -:  828:int
+    #####:  829:isStandalone(void *ctx)
+        -:  830:{
+    #####:  831:    DEPRECATED("isStandalone")
+    #####:  832:        return (xmlSAX2IsStandalone(ctx));
+        -:  833:}
+        -:  834:
+        -:  835:/**
+        -:  836: * hasInternalSubset:
+        -:  837: * @ctx: the user data (XML parser context)
+        -:  838: *
+        -:  839: * Does this document has an internal subset
+        -:  840: * DEPRECATED: use xmlSAX2HasInternalSubset()
+        -:  841: *
+        -:  842: * Returns 1 if true
+        -:  843: */
+        -:  844:int
+    #####:  845:hasInternalSubset(void *ctx)
+        -:  846:{
+    #####:  847:    DEPRECATED("hasInternalSubset")
+    #####:  848:        return (xmlSAX2HasInternalSubset(ctx));
+        -:  849:}
+        -:  850:
+        -:  851:/**
+        -:  852: * hasExternalSubset:
+        -:  853: * @ctx: the user data (XML parser context)
+        -:  854: *
+        -:  855: * Does this document has an external subset
+        -:  856: * DEPRECATED: use xmlSAX2HasExternalSubset()
+        -:  857: *
+        -:  858: * Returns 1 if true
+        -:  859: */
+        -:  860:int
+    #####:  861:hasExternalSubset(void *ctx)
+        -:  862:{
+    #####:  863:    DEPRECATED("hasExternalSubset")
+    #####:  864:        return (xmlSAX2HasExternalSubset(ctx));
+        -:  865:}
+        -:  866:
+        -:  867:/**
+        -:  868: * internalSubset:
+        -:  869: * @ctx:  the user data (XML parser context)
+        -:  870: * @name:  the root element name
+        -:  871: * @ExternalID:  the external ID
+        -:  872: * @SystemID:  the SYSTEM ID (e.g. filename or URL)
+        -:  873: *
+        -:  874: * Callback on internal subset declaration.
+        -:  875: * DEPRECATED: use xmlSAX2InternalSubset()
+        -:  876: */
+        -:  877:void
+    #####:  878:internalSubset(void *ctx, const xmlChar * name,
+        -:  879:               const xmlChar * ExternalID, const xmlChar * SystemID)
+        -:  880:{
+    #####:  881:    DEPRECATED("internalSubset")
+    #####:  882:        xmlSAX2InternalSubset(ctx, name, ExternalID, SystemID);
+    #####:  883:}
+        -:  884:
+        -:  885:/**
+        -:  886: * externalSubset:
+        -:  887: * @ctx: the user data (XML parser context)
+        -:  888: * @name:  the root element name
+        -:  889: * @ExternalID:  the external ID
+        -:  890: * @SystemID:  the SYSTEM ID (e.g. filename or URL)
+        -:  891: *
+        -:  892: * Callback on external subset declaration.
+        -:  893: * DEPRECATED: use xmlSAX2ExternalSubset()
+        -:  894: */
+        -:  895:void
+    #####:  896:externalSubset(void *ctx, const xmlChar * name,
+        -:  897:               const xmlChar * ExternalID, const xmlChar * SystemID)
+        -:  898:{
+    #####:  899:    DEPRECATED("externalSubset")
+    #####:  900:        xmlSAX2ExternalSubset(ctx, name, ExternalID, SystemID);
+    #####:  901:}
+        -:  902:
+        -:  903:/**
+        -:  904: * resolveEntity:
+        -:  905: * @ctx: the user data (XML parser context)
+        -:  906: * @publicId: The public ID of the entity
+        -:  907: * @systemId: The system ID of the entity
+        -:  908: *
+        -:  909: * The entity loader, to control the loading of external entities,
+        -:  910: * the application can either:
+        -:  911: *    - override this resolveEntity() callback in the SAX block
+        -:  912: *    - or better use the xmlSetExternalEntityLoader() function to
+        -:  913: *      set up it's own entity resolution routine
+        -:  914: * DEPRECATED: use xmlSAX2ResolveEntity()
+        -:  915: *
+        -:  916: * Returns the xmlParserInputPtr if inlined or NULL for DOM behaviour.
+        -:  917: */
+        -:  918:xmlParserInputPtr
+    #####:  919:resolveEntity(void *ctx, const xmlChar * publicId,
+        -:  920:              const xmlChar * systemId)
+        -:  921:{
+    #####:  922:    DEPRECATED("resolveEntity")
+    #####:  923:        return (xmlSAX2ResolveEntity(ctx, publicId, systemId));
+        -:  924:}
+        -:  925:
+        -:  926:/**
+        -:  927: * getEntity:
+        -:  928: * @ctx: the user data (XML parser context)
+        -:  929: * @name: The entity name
+        -:  930: *
+        -:  931: * Get an entity by name
+        -:  932: * DEPRECATED: use xmlSAX2GetEntity()
+        -:  933: *
+        -:  934: * Returns the xmlEntityPtr if found.
+        -:  935: */
+        -:  936:xmlEntityPtr
+    #####:  937:getEntity(void *ctx, const xmlChar * name)
+        -:  938:{
+    #####:  939:    DEPRECATED("getEntity")
+    #####:  940:        return (xmlSAX2GetEntity(ctx, name));
+        -:  941:}
+        -:  942:
+        -:  943:/**
+        -:  944: * getParameterEntity:
+        -:  945: * @ctx: the user data (XML parser context)
+        -:  946: * @name: The entity name
+        -:  947: *
+        -:  948: * Get a parameter entity by name
+        -:  949: * DEPRECATED: use xmlSAX2GetParameterEntity()
+        -:  950: *
+        -:  951: * Returns the xmlEntityPtr if found.
+        -:  952: */
+        -:  953:xmlEntityPtr
+    #####:  954:getParameterEntity(void *ctx, const xmlChar * name)
+        -:  955:{
+    #####:  956:    DEPRECATED("getParameterEntity")
+    #####:  957:        return (xmlSAX2GetParameterEntity(ctx, name));
+        -:  958:}
+        -:  959:
+        -:  960:
+        -:  961:/**
+        -:  962: * entityDecl:
+        -:  963: * @ctx: the user data (XML parser context)
+        -:  964: * @name:  the entity name
+        -:  965: * @type:  the entity type
+        -:  966: * @publicId: The public ID of the entity
+        -:  967: * @systemId: The system ID of the entity
+        -:  968: * @content: the entity value (without processing).
+        -:  969: *
+        -:  970: * An entity definition has been parsed
+        -:  971: * DEPRECATED: use xmlSAX2EntityDecl()
+        -:  972: */
+        -:  973:void
+    #####:  974:entityDecl(void *ctx, const xmlChar * name, int type,
+        -:  975:           const xmlChar * publicId, const xmlChar * systemId,
+        -:  976:           xmlChar * content)
+        -:  977:{
+    #####:  978:    DEPRECATED("entityDecl")
+    #####:  979:        xmlSAX2EntityDecl(ctx, name, type, publicId, systemId, content);
+    #####:  980:}
+        -:  981:
+        -:  982:/**
+        -:  983: * attributeDecl:
+        -:  984: * @ctx: the user data (XML parser context)
+        -:  985: * @elem:  the name of the element
+        -:  986: * @fullname:  the attribute name
+        -:  987: * @type:  the attribute type
+        -:  988: * @def:  the type of default value
+        -:  989: * @defaultValue: the attribute default value
+        -:  990: * @tree:  the tree of enumerated value set
+        -:  991: *
+        -:  992: * An attribute definition has been parsed
+        -:  993: * DEPRECATED: use xmlSAX2AttributeDecl()
+        -:  994: */
+        -:  995:void
+    #####:  996:attributeDecl(void *ctx, const xmlChar * elem, const xmlChar * fullname,
+        -:  997:              int type, int def, const xmlChar * defaultValue,
+        -:  998:              xmlEnumerationPtr tree)
+        -:  999:{
+    #####: 1000:    DEPRECATED("attributeDecl")
+    #####: 1001:        xmlSAX2AttributeDecl(ctx, elem, fullname, type, def, defaultValue,
+        -: 1002:                             tree);
+    #####: 1003:}
+        -: 1004:
+        -: 1005:/**
+        -: 1006: * elementDecl:
+        -: 1007: * @ctx: the user data (XML parser context)
+        -: 1008: * @name:  the element name
+        -: 1009: * @type:  the element type
+        -: 1010: * @content: the element value tree
+        -: 1011: *
+        -: 1012: * An element definition has been parsed
+        -: 1013: * DEPRECATED: use xmlSAX2ElementDecl()
+        -: 1014: */
+        -: 1015:void
+    #####: 1016:elementDecl(void *ctx, const xmlChar * name, int type,
+        -: 1017:            xmlElementContentPtr content)
+        -: 1018:{
+    #####: 1019:    DEPRECATED("elementDecl")
+    #####: 1020:        xmlSAX2ElementDecl(ctx, name, type, content);
+    #####: 1021:}
+        -: 1022:
+        -: 1023:/**
+        -: 1024: * notationDecl:
+        -: 1025: * @ctx: the user data (XML parser context)
+        -: 1026: * @name: The name of the notation
+        -: 1027: * @publicId: The public ID of the entity
+        -: 1028: * @systemId: The system ID of the entity
+        -: 1029: *
+        -: 1030: * What to do when a notation declaration has been parsed.
+        -: 1031: * DEPRECATED: use xmlSAX2NotationDecl()
+        -: 1032: */
+        -: 1033:void
+    #####: 1034:notationDecl(void *ctx, const xmlChar * name,
+        -: 1035:             const xmlChar * publicId, const xmlChar * systemId)
+        -: 1036:{
+    #####: 1037:    DEPRECATED("notationDecl")
+    #####: 1038:        xmlSAX2NotationDecl(ctx, name, publicId, systemId);
+    #####: 1039:}
+        -: 1040:
+        -: 1041:/**
+        -: 1042: * unparsedEntityDecl:
+        -: 1043: * @ctx: the user data (XML parser context)
+        -: 1044: * @name: The name of the entity
+        -: 1045: * @publicId: The public ID of the entity
+        -: 1046: * @systemId: The system ID of the entity
+        -: 1047: * @notationName: the name of the notation
+        -: 1048: *
+        -: 1049: * What to do when an unparsed entity declaration is parsed
+        -: 1050: * DEPRECATED: use xmlSAX2UnparsedEntityDecl()
+        -: 1051: */
+        -: 1052:void
+    #####: 1053:unparsedEntityDecl(void *ctx, const xmlChar * name,
+        -: 1054:                   const xmlChar * publicId, const xmlChar * systemId,
+        -: 1055:                   const xmlChar * notationName)
+        -: 1056:{
+    #####: 1057:    DEPRECATED("unparsedEntityDecl")
+    #####: 1058:        xmlSAX2UnparsedEntityDecl(ctx, name, publicId, systemId,
+        -: 1059:                                  notationName);
+    #####: 1060:}
+        -: 1061:
+        -: 1062:/**
+        -: 1063: * setDocumentLocator:
+        -: 1064: * @ctx: the user data (XML parser context)
+        -: 1065: * @loc: A SAX Locator
+        -: 1066: *
+        -: 1067: * Receive the document locator at startup, actually xmlDefaultSAXLocator
+        -: 1068: * Everything is available on the context, so this is useless in our case.
+        -: 1069: * DEPRECATED
+        -: 1070: */
+        -: 1071:void
+    #####: 1072:setDocumentLocator(void *ctx ATTRIBUTE_UNUSED,
+        -: 1073:                   xmlSAXLocatorPtr loc ATTRIBUTE_UNUSED)
+        -: 1074:{
+    #####: 1075:    DEPRECATED("setDocumentLocator")
+    #####: 1076:}
+        -: 1077:
+        -: 1078:/**
+        -: 1079: * startDocument:
+        -: 1080: * @ctx: the user data (XML parser context)
+        -: 1081: *
+        -: 1082: * called when the document start being processed.
+        -: 1083: * DEPRECATED: use xmlSAX2StartDocument()
+        -: 1084: */
+        -: 1085:void
+    #####: 1086:startDocument(void *ctx)
+        -: 1087:{
+        -: 1088:   /* don't be too painful for glade users */
+        -: 1089:   /*  DEPRECATED("startDocument") */
+    #####: 1090:        xmlSAX2StartDocument(ctx);
+    #####: 1091:}
+        -: 1092:
+        -: 1093:/**
+        -: 1094: * endDocument:
+        -: 1095: * @ctx: the user data (XML parser context)
+        -: 1096: *
+        -: 1097: * called when the document end has been detected.
+        -: 1098: * DEPRECATED: use xmlSAX2EndDocument()
+        -: 1099: */
+        -: 1100:void
+    #####: 1101:endDocument(void *ctx)
+        -: 1102:{
+    #####: 1103:    DEPRECATED("endDocument")
+    #####: 1104:        xmlSAX2EndDocument(ctx);
+    #####: 1105:}
+        -: 1106:
+        -: 1107:/**
+        -: 1108: * attribute:
+        -: 1109: * @ctx: the user data (XML parser context)
+        -: 1110: * @fullname:  The attribute name, including namespace prefix
+        -: 1111: * @value:  The attribute value
+        -: 1112: *
+        -: 1113: * Handle an attribute that has been read by the parser.
+        -: 1114: * The default handling is to convert the attribute into an
+        -: 1115: * DOM subtree and past it in a new xmlAttr element added to
+        -: 1116: * the element.
+        -: 1117: * DEPRECATED: use xmlSAX2Attribute()
+        -: 1118: */
+        -: 1119:void
+    #####: 1120:attribute(void *ctx ATTRIBUTE_UNUSED,
+        -: 1121:          const xmlChar * fullname ATTRIBUTE_UNUSED,
+        -: 1122:          const xmlChar * value ATTRIBUTE_UNUSED)
+        -: 1123:{
+    #####: 1124:    DEPRECATED("attribute")
+    #####: 1125:}
+        -: 1126:
+        -: 1127:/**
+        -: 1128: * startElement:
+        -: 1129: * @ctx: the user data (XML parser context)
+        -: 1130: * @fullname:  The element name, including namespace prefix
+        -: 1131: * @atts:  An array of name/value attributes pairs, NULL terminated
+        -: 1132: *
+        -: 1133: * called when an opening tag has been processed.
+        -: 1134: * DEPRECATED: use xmlSAX2StartElement()
+        -: 1135: */
+        -: 1136:void
+    #####: 1137:startElement(void *ctx, const xmlChar * fullname, const xmlChar ** atts)
+        -: 1138:{
+    #####: 1139:    xmlSAX2StartElement(ctx, fullname, atts);
+    #####: 1140:}
+        -: 1141:
+        -: 1142:/**
+        -: 1143: * endElement:
+        -: 1144: * @ctx: the user data (XML parser context)
+        -: 1145: * @name:  The element name
+        -: 1146: *
+        -: 1147: * called when the end of an element has been detected.
+        -: 1148: * DEPRECATED: use xmlSAX2EndElement()
+        -: 1149: */
+        -: 1150:void
+    #####: 1151:endElement(void *ctx, const xmlChar * name ATTRIBUTE_UNUSED)
+        -: 1152:{
+    #####: 1153:    DEPRECATED("endElement")
+    #####: 1154:    xmlSAX2EndElement(ctx, name);
+    #####: 1155:}
+        -: 1156:
+        -: 1157:/**
+        -: 1158: * reference:
+        -: 1159: * @ctx: the user data (XML parser context)
+        -: 1160: * @name:  The entity name
+        -: 1161: *
+        -: 1162: * called when an entity reference is detected.
+        -: 1163: * DEPRECATED: use xmlSAX2Reference()
+        -: 1164: */
+        -: 1165:void
+    #####: 1166:reference(void *ctx, const xmlChar * name)
+        -: 1167:{
+    #####: 1168:    DEPRECATED("reference")
+    #####: 1169:        xmlSAX2Reference(ctx, name);
+    #####: 1170:}
+        -: 1171:
+        -: 1172:/**
+        -: 1173: * characters:
+        -: 1174: * @ctx: the user data (XML parser context)
+        -: 1175: * @ch:  a xmlChar string
+        -: 1176: * @len: the number of xmlChar
+        -: 1177: *
+        -: 1178: * receiving some chars from the parser.
+        -: 1179: * DEPRECATED: use xmlSAX2Characters()
+        -: 1180: */
+        -: 1181:void
+    #####: 1182:characters(void *ctx, const xmlChar * ch, int len)
+        -: 1183:{
+    #####: 1184:    DEPRECATED("characters")
+    #####: 1185:        xmlSAX2Characters(ctx, ch, len);
+    #####: 1186:}
+        -: 1187:
+        -: 1188:/**
+        -: 1189: * ignorableWhitespace:
+        -: 1190: * @ctx: the user data (XML parser context)
+        -: 1191: * @ch:  a xmlChar string
+        -: 1192: * @len: the number of xmlChar
+        -: 1193: *
+        -: 1194: * receiving some ignorable whitespaces from the parser.
+        -: 1195: * UNUSED: by default the DOM building will use characters
+        -: 1196: * DEPRECATED: use xmlSAX2IgnorableWhitespace()
+        -: 1197: */
+        -: 1198:void
+    #####: 1199:ignorableWhitespace(void *ctx ATTRIBUTE_UNUSED,
+        -: 1200:                    const xmlChar * ch ATTRIBUTE_UNUSED,
+        -: 1201:                    int len ATTRIBUTE_UNUSED)
+        -: 1202:{
+    #####: 1203:    DEPRECATED("ignorableWhitespace")
+    #####: 1204:}
+        -: 1205:
+        -: 1206:/**
+        -: 1207: * processingInstruction:
+        -: 1208: * @ctx: the user data (XML parser context)
+        -: 1209: * @target:  the target name
+        -: 1210: * @data: the PI data's
+        -: 1211: *
+        -: 1212: * A processing instruction has been parsed.
+        -: 1213: * DEPRECATED: use xmlSAX2ProcessingInstruction()
+        -: 1214: */
+        -: 1215:void
+    #####: 1216:processingInstruction(void *ctx, const xmlChar * target,
+        -: 1217:                      const xmlChar * data)
+        -: 1218:{
+    #####: 1219:    DEPRECATED("processingInstruction")
+    #####: 1220:        xmlSAX2ProcessingInstruction(ctx, target, data);
+    #####: 1221:}
+        -: 1222:
+        -: 1223:/**
+        -: 1224: * globalNamespace:
+        -: 1225: * @ctx: the user data (XML parser context)
+        -: 1226: * @href:  the namespace associated URN
+        -: 1227: * @prefix: the namespace prefix
+        -: 1228: *
+        -: 1229: * An old global namespace has been parsed.
+        -: 1230: * DEPRECATED
+        -: 1231: */
+        -: 1232:void
+    #####: 1233:globalNamespace(void *ctx ATTRIBUTE_UNUSED,
+        -: 1234:                const xmlChar * href ATTRIBUTE_UNUSED,
+        -: 1235:                const xmlChar * prefix ATTRIBUTE_UNUSED)
+        -: 1236:{
+    #####: 1237:    DEPRECATED("globalNamespace")
+    #####: 1238:}
+        -: 1239:
+        -: 1240:/**
+        -: 1241: * setNamespace:
+        -: 1242: * @ctx: the user data (XML parser context)
+        -: 1243: * @name:  the namespace prefix
+        -: 1244: *
+        -: 1245: * Set the current element namespace.
+        -: 1246: * DEPRECATED
+        -: 1247: */
+        -: 1248:
+        -: 1249:void
+    #####: 1250:setNamespace(void *ctx ATTRIBUTE_UNUSED,
+        -: 1251:             const xmlChar * name ATTRIBUTE_UNUSED)
+        -: 1252:{
+    #####: 1253:    DEPRECATED("setNamespace")
+    #####: 1254:}
+        -: 1255:
+        -: 1256:/**
+        -: 1257: * getNamespace:
+        -: 1258: * @ctx: the user data (XML parser context)
+        -: 1259: *
+        -: 1260: * Get the current element namespace.
+        -: 1261: * DEPRECATED
+        -: 1262: *
+        -: 1263: * Returns the xmlNsPtr or NULL if none
+        -: 1264: */
+        -: 1265:
+        -: 1266:xmlNsPtr
+    #####: 1267:getNamespace(void *ctx ATTRIBUTE_UNUSED)
+        -: 1268:{
+    #####: 1269:    DEPRECATED("getNamespace")
+    #####: 1270:        return (NULL);
+        -: 1271:}
+        -: 1272:
+        -: 1273:/**
+        -: 1274: * checkNamespace:
+        -: 1275: * @ctx: the user data (XML parser context)
+        -: 1276: * @namespace: the namespace to check against
+        -: 1277: *
+        -: 1278: * Check that the current element namespace is the same as the
+        -: 1279: * one read upon parsing.
+        -: 1280: * DEPRECATED
+        -: 1281: *
+        -: 1282: * Returns 1 if true 0 otherwise
+        -: 1283: */
+        -: 1284:
+        -: 1285:int
+    #####: 1286:checkNamespace(void *ctx ATTRIBUTE_UNUSED,
+        -: 1287:               xmlChar * namespace ATTRIBUTE_UNUSED)
+        -: 1288:{
+    #####: 1289:    DEPRECATED("checkNamespace")
+    #####: 1290:        return (0);
+        -: 1291:}
+        -: 1292:
+        -: 1293:/**
+        -: 1294: * namespaceDecl:
+        -: 1295: * @ctx: the user data (XML parser context)
+        -: 1296: * @href:  the namespace associated URN
+        -: 1297: * @prefix: the namespace prefix
+        -: 1298: *
+        -: 1299: * A namespace has been parsed.
+        -: 1300: * DEPRECATED
+        -: 1301: */
+        -: 1302:void
+    #####: 1303:namespaceDecl(void *ctx ATTRIBUTE_UNUSED,
+        -: 1304:              const xmlChar * href ATTRIBUTE_UNUSED,
+        -: 1305:              const xmlChar * prefix ATTRIBUTE_UNUSED)
+        -: 1306:{
+    #####: 1307:    DEPRECATED("namespaceDecl")
+    #####: 1308:}
+        -: 1309:
+        -: 1310:/**
+        -: 1311: * comment:
+        -: 1312: * @ctx: the user data (XML parser context)
+        -: 1313: * @value:  the comment content
+        -: 1314: *
+        -: 1315: * A comment has been parsed.
+        -: 1316: * DEPRECATED: use xmlSAX2Comment()
+        -: 1317: */
+        -: 1318:void
+    #####: 1319:comment(void *ctx, const xmlChar * value)
+        -: 1320:{
+    #####: 1321:    DEPRECATED("comment")
+    #####: 1322:        xmlSAX2Comment(ctx, value);
+    #####: 1323:}
+        -: 1324:
+        -: 1325:/**
+        -: 1326: * cdataBlock:
+        -: 1327: * @ctx: the user data (XML parser context)
+        -: 1328: * @value:  The pcdata content
+        -: 1329: * @len:  the block length
+        -: 1330: *
+        -: 1331: * called when a pcdata block has been parsed
+        -: 1332: * DEPRECATED: use xmlSAX2CDataBlock()
+        -: 1333: */
+        -: 1334:void
+    #####: 1335:cdataBlock(void *ctx, const xmlChar * value, int len)
+        -: 1336:{
+    #####: 1337:    DEPRECATED("cdataBlock")
+    #####: 1338:        xmlSAX2CDataBlock(ctx, value, len);
+    #####: 1339:}
+        -: 1340:#define bottom_legacy
+        -: 1341:#include "elfgcchack.h"
+        -: 1342:#endif /* LIBXML_LEGACY_ENABLED */
+        -: 1343:

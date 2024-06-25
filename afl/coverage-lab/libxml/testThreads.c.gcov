@@ -1,0 +1,202 @@
+        -:    0:Source:testThreads.c
+        -:    0:Programs:38
+        -:    1:#include "libxml.h"
+        -:    2:
+        -:    3:#include <stdlib.h>
+        -:    4:#include <stdio.h>
+        -:    5:
+        -:    6:#if defined(LIBXML_THREAD_ENABLED) && defined(LIBXML_CATALOG_ENABLED) && defined(LIBXML_SAX1_ENABLED)
+        -:    7:#include <libxml/globals.h>
+        -:    8:#include <libxml/threads.h>
+        -:    9:#include <libxml/parser.h>
+        -:   10:#include <libxml/catalog.h>
+        -:   11:#ifdef HAVE_PTHREAD_H
+        -:   12:#include <pthread.h>
+        -:   13:#elif defined HAVE_BEOS_THREADS
+        -:   14:#include <OS.h>
+        -:   15:#endif
+        -:   16:#include <string.h>
+        -:   17:#if !defined(_MSC_VER)
+        -:   18:#include <unistd.h>
+        -:   19:#endif
+        -:   20:#include <assert.h>
+        -:   21:
+        -:   22:#define	MAX_ARGC	20
+        -:   23:#ifdef HAVE_PTHREAD_H
+        -:   24:static pthread_t tid[MAX_ARGC];
+        -:   25:#elif defined HAVE_BEOS_THREADS
+        -:   26:static thread_id tid[MAX_ARGC];
+        -:   27:#endif
+        -:   28:
+        -:   29:static const char *catalog = "test/threads/complex.xml";
+        -:   30:static const char *testfiles[] = {
+        -:   31:    "test/threads/abc.xml",
+        -:   32:    "test/threads/acb.xml",
+        -:   33:    "test/threads/bac.xml",
+        -:   34:    "test/threads/bca.xml",
+        -:   35:    "test/threads/cab.xml",
+        -:   36:    "test/threads/cba.xml",
+        -:   37:    "test/threads/invalid.xml",
+        -:   38:};
+        -:   39:
+        -:   40:static const char *Okay = "OK";
+        -:   41:static const char *Failed = "Failed";
+        -:   42:
+        -:   43:#ifndef xmlDoValidityCheckingDefaultValue
+        -:   44:#error xmlDoValidityCheckingDefaultValue is not a macro
+        -:   45:#endif
+        -:   46:#ifndef xmlGenericErrorContext
+        -:   47:#error xmlGenericErrorContext is not a macro
+        -:   48:#endif
+        -:   49:
+        -:   50:static void *
+    #####:   51:thread_specific_data(void *private_data)
+        -:   52:{
+        -:   53:    xmlDocPtr myDoc;
+    #####:   54:    const char *filename = (const char *) private_data;
+    #####:   55:    int okay = 1;
+        -:   56:
+    #####:   57:    if (!strcmp(filename, "test/threads/invalid.xml")) {
+    #####:   58:        xmlDoValidityCheckingDefaultValue = 0;
+    #####:   59:        xmlGenericErrorContext = stdout;
+        -:   60:    } else {
+    #####:   61:        xmlDoValidityCheckingDefaultValue = 1;
+    #####:   62:        xmlGenericErrorContext = stderr;
+        -:   63:    }
+    #####:   64:    myDoc = xmlParseFile(filename);
+    #####:   65:    if (myDoc) {
+    #####:   66:        xmlFreeDoc(myDoc);
+        -:   67:    } else {
+    #####:   68:        printf("parse failed\n");
+    #####:   69:	okay = 0;
+        -:   70:    }
+    #####:   71:    if (!strcmp(filename, "test/threads/invalid.xml")) {
+    #####:   72:        if (xmlDoValidityCheckingDefaultValue != 0) {
+    #####:   73:	    printf("ValidityCheckingDefaultValue override failed\n");
+    #####:   74:	    okay = 0;
+        -:   75:	}
+    #####:   76:        if (xmlGenericErrorContext != stdout) {
+    #####:   77:	    printf("xmlGenericErrorContext override failed\n");
+    #####:   78:	    okay = 0;
+        -:   79:	}
+        -:   80:    } else {
+    #####:   81:        if (xmlDoValidityCheckingDefaultValue != 1) {
+    #####:   82:	    printf("ValidityCheckingDefaultValue override failed\n");
+    #####:   83:	    okay = 0;
+        -:   84:	}
+    #####:   85:        if (xmlGenericErrorContext != stderr) {
+    #####:   86:	    printf("xmlGenericErrorContext override failed\n");
+    #####:   87:	    okay = 0;
+        -:   88:	}
+        -:   89:    }
+    #####:   90:    if (okay == 0)
+    #####:   91:	return((void *) Failed);
+    #####:   92:    return ((void *) Okay);
+        -:   93:}
+        -:   94:
+        -:   95:#ifdef HAVE_PTHREAD_H
+        -:   96:int
+    #####:   97:main(void)
+        -:   98:{
+        -:   99:    unsigned int i, repeat;
+    #####:  100:    unsigned int num_threads = sizeof(testfiles) / sizeof(testfiles[0]);
+        -:  101:    void *results[MAX_ARGC];
+        -:  102:    int ret;
+        -:  103:
+    #####:  104:    xmlInitParser();
+    #####:  105:    for (repeat = 0;repeat < 500;repeat++) {
+    #####:  106:	xmlLoadCatalog(catalog);
+        -:  107:
+    #####:  108:        memset(results, 0, sizeof(*results)*num_threads);
+    #####:  109:        memset(tid, 0xff, sizeof(*tid)*num_threads);
+        -:  110:
+    #####:  111:	for (i = 0; i < num_threads; i++) {
+    #####:  112:	    ret = pthread_create(&tid[i], NULL, thread_specific_data,
+    #####:  113:				 (void *) testfiles[i]);
+    #####:  114:	    if (ret != 0) {
+    #####:  115:		perror("pthread_create");
+    #####:  116:		exit(1);
+        -:  117:	    }
+        -:  118:	}
+    #####:  119:	for (i = 0; i < num_threads; i++) {
+    #####:  120:	    ret = pthread_join(tid[i], &results[i]);
+    #####:  121:	    if (ret != 0) {
+    #####:  122:		perror("pthread_join");
+    #####:  123:		exit(1);
+        -:  124:	    }
+        -:  125:	}
+        -:  126:
+    #####:  127:	xmlCatalogCleanup();
+    #####:  128:	for (i = 0; i < num_threads; i++)
+    #####:  129:	    if (results[i] != (void *) Okay)
+    #####:  130:		printf("Thread %d handling %s failed\n", i, testfiles[i]);
+        -:  131:    }
+    #####:  132:    xmlCleanupParser();
+    #####:  133:    xmlMemoryDump();
+    #####:  134:    return (0);
+        -:  135:}
+        -:  136:#elif defined HAVE_BEOS_THREADS
+        -:  137:int
+        -:  138:main(void)
+        -:  139:{
+        -:  140:    unsigned int i, repeat;
+        -:  141:    unsigned int num_threads = sizeof(testfiles) / sizeof(testfiles[0]);
+        -:  142:    void *results[MAX_ARGC];
+        -:  143:    status_t ret;
+        -:  144:
+        -:  145:    xmlInitParser();
+        -:  146:    printf("Parser initialized\n");
+        -:  147:    for (repeat = 0;repeat < 500;repeat++) {
+        -:  148:    printf("repeat: %d\n",repeat);
+        -:  149:	xmlLoadCatalog(catalog);
+        -:  150:	printf("loaded catalog: %s\n", catalog);
+        -:  151:	for (i = 0; i < num_threads; i++) {
+        -:  152:	    results[i] = NULL;
+        -:  153:	    tid[i] = (thread_id) -1;
+        -:  154:	}
+        -:  155:	printf("cleaned threads\n");
+        -:  156:	for (i = 0; i < num_threads; i++) {
+        -:  157:		tid[i] = spawn_thread(thread_specific_data, "xmlTestThread", B_NORMAL_PRIORITY, (void *) testfiles[i]);
+        -:  158:		if (tid[i] < B_OK) {
+        -:  159:			perror("beos_thread_create");
+        -:  160:			exit(1);
+        -:  161:		}
+        -:  162:		printf("beos_thread_create %d -> %d\n", i, tid[i]);
+        -:  163:	}
+        -:  164:	for (i = 0; i < num_threads; i++) {
+        -:  165:	    ret = wait_for_thread(tid[i], &results[i]);
+        -:  166:	    printf("beos_thread_wait %d -> %d\n", i, ret);
+        -:  167:	    if (ret != B_OK) {
+        -:  168:			perror("beos_thread_wait");
+        -:  169:			exit(1);
+        -:  170:	    }
+        -:  171:	}
+        -:  172:
+        -:  173:	xmlCatalogCleanup();
+        -:  174:	ret = B_OK;
+        -:  175:	for (i = 0; i < num_threads; i++)
+        -:  176:	    if (results[i] != (void *) Okay) {
+        -:  177:			printf("Thread %d handling %s failed\n", i, testfiles[i]);
+        -:  178:			ret = B_ERROR;
+        -:  179:		}
+        -:  180:    }
+        -:  181:    xmlCleanupParser();
+        -:  182:    xmlMemoryDump();
+        -:  183:
+        -:  184:	if (ret == B_OK)
+        -:  185:		printf("testThread : BeOS : SUCCESS!\n");
+        -:  186:	else
+        -:  187:		printf("testThread : BeOS : FAILED!\n");
+        -:  188:
+        -:  189:    return (0);
+        -:  190:}
+        -:  191:#endif /* pthreads or BeOS threads */
+        -:  192:
+        -:  193:#else /* !LIBXML_THREADS_ENABLED */
+        -:  194:int
+        -:  195:main(void)
+        -:  196:{
+        -:  197:    fprintf(stderr, "libxml was not compiled with thread or catalog support\n");
+        -:  198:    return (0);
+        -:  199:}
+        -:  200:#endif

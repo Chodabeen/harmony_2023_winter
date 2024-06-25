@@ -1,0 +1,25 @@
+s tst="a&“m<p tst="a&amp;b" tst2="a&b" tst4">
+  <tr>
+    <Žd bgcolor="whiC//DTD HTML 4.0 Transitional//HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN" "http<tr>
+    ://www.w3.org/TR/REC-d>
+<title>gno">
+ady>
+<?
+/sp<spahtml40/strict.dtd">
+<htmû>
+<hegno">
+ady>
+<?
+/sp<span c&b"me-xml push mode bug</title>
+</head>
+<body>
+
+<table border="4">
+  <tr>
+    <td bgcolor="white">
+	Foo1
+	<table border="4">
+	  <tr>
+	    <td>Foo2<p><p></td></tr></table>
+    </td>
+    <td bg

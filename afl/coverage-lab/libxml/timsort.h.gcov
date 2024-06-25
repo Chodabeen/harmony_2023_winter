@@ -1,0 +1,516 @@
+        -:    0:Source:timsort.h
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * taken from https://github.com/swenson/sort
+        -:    3: * Kept as is for the moment to be able to apply upstream patches for that
+        -:    4: * code, currently used only to speed up XPath node sorting, see xpath.c
+        -:    5: */
+        -:    6:
+        -:    7:/*
+        -:    8: * All code in this header, unless otherwise specified, is hereby licensed under the MIT Public License:
+        -:    9:
+        -:   10:Copyright (c) 2010 Christopher Swenson
+        -:   11:
+        -:   12:Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+        -:   13:
+        -:   14:The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+        -:   15:
+        -:   16:THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+        -:   17:*/
+        -:   18:
+        -:   19:#include <stdlib.h>
+        -:   20:#include <stdio.h>
+        -:   21:#include <string.h>
+        -:   22:#ifdef HAVE_STDINT_H
+        -:   23:#include <stdint.h>
+        -:   24:#else
+        -:   25:#ifdef HAVE_INTTYPES_H
+        -:   26:#include <inttypes.h>
+        -:   27:#elif defined(WIN32)
+        -:   28:typedef __int64 int64_t;
+        -:   29:typedef unsigned __int64 uint64_t;
+        -:   30:#endif
+        -:   31:#endif
+        -:   32:
+        -:   33:#ifndef MK_UINT64
+        -:   34:#if defined(WIN32) && defined(_MSC_VER) && _MSC_VER < 1300
+        -:   35:#define MK_UINT64(x) ((uint64_t)(x))
+        -:   36:#else
+        -:   37:#define MK_UINT64(x) x##ULL
+        -:   38:#endif
+        -:   39:#endif
+        -:   40:
+        -:   41:#ifndef MAX
+        -:   42:#define MAX(x,y) (((x) > (y) ? (x) : (y)))
+        -:   43:#endif
+        -:   44:#ifndef MIN
+        -:   45:#define MIN(x,y) (((x) < (y) ? (x) : (y)))
+        -:   46:#endif
+        -:   47:
+        -:   48:int compute_minrun(uint64_t);
+        -:   49:
+        -:   50:#ifndef CLZ
+        -:   51:#if defined(__GNUC__) && ((__GNUC__ == 3 && __GNUC_MINOR__ >= 4) || (__GNUC__ > 3))
+        -:   52:#define CLZ __builtin_clzll
+        -:   53:#else
+        -:   54:
+        -:   55:int clzll(uint64_t);
+        -:   56:
+        -:   57:/* adapted from Hacker's Delight */
+        -:   58:int clzll(uint64_t x) /* {{{ */
+        -:   59:{
+        -:   60:  int n;
+        -:   61:
+        -:   62:  if (x == 0) return(64);
+        -:   63:  n = 0;
+        -:   64:  if (x <= MK_UINT64(0x00000000FFFFFFFF)) {n = n + 32; x = x << 32;}
+        -:   65:  if (x <= MK_UINT64(0x0000FFFFFFFFFFFF)) {n = n + 16; x = x << 16;}
+        -:   66:  if (x <= MK_UINT64(0x00FFFFFFFFFFFFFF)) {n = n + 8; x = x << 8;}
+        -:   67:  if (x <= MK_UINT64(0x0FFFFFFFFFFFFFFF)) {n = n + 4; x = x << 4;}
+        -:   68:  if (x <= MK_UINT64(0x3FFFFFFFFFFFFFFF)) {n = n + 2; x = x << 2;}
+        -:   69:  if (x <= MK_UINT64(0x7FFFFFFFFFFFFFFF)) {n = n + 1;}
+        -:   70:  return n;
+        -:   71:}
+        -:   72:/* }}} */
+        -:   73:
+        -:   74:#define CLZ clzll
+        -:   75:#endif
+        -:   76:#endif
+        -:   77:
+    #####:   78:int compute_minrun(uint64_t size) /* {{{ */
+        -:   79:{
+    #####:   80:  const int top_bit = 64 - CLZ(size);
+    #####:   81:  const int shift = MAX(top_bit, 6) - 6;
+    #####:   82:  const int minrun = size >> shift;
+    #####:   83:  const uint64_t mask = (MK_UINT64(1) << shift) - 1;
+    #####:   84:  if (mask & size) return minrun + 1;
+    #####:   85:  return minrun;
+        -:   86:}
+        -:   87:/* }}} */
+        -:   88:
+        -:   89:#ifndef SORT_NAME
+        -:   90:#error "Must declare SORT_NAME"
+        -:   91:#endif
+        -:   92:
+        -:   93:#ifndef SORT_TYPE
+        -:   94:#error "Must declare SORT_TYPE"
+        -:   95:#endif
+        -:   96:
+        -:   97:#ifndef SORT_CMP
+        -:   98:#define SORT_CMP(x, y)  ((x) < (y) ? -1 : ((x) == (y) ? 0 : 1))
+        -:   99:#endif
+        -:  100:
+        -:  101:
+        -:  102:#define SORT_SWAP(x,y) {SORT_TYPE __SORT_SWAP_t = (x); (x) = (y); (y) = __SORT_SWAP_t;}
+        -:  103:
+        -:  104:#define SORT_CONCAT(x, y) x ## _ ## y
+        -:  105:#define SORT_MAKE_STR1(x, y) SORT_CONCAT(x,y)
+        -:  106:#define SORT_MAKE_STR(x) SORT_MAKE_STR1(SORT_NAME,x)
+        -:  107:
+        -:  108:#define BINARY_INSERTION_FIND  SORT_MAKE_STR(binary_insertion_find)
+        -:  109:#define BINARY_INSERTION_SORT_START SORT_MAKE_STR(binary_insertion_sort_start)
+        -:  110:#define BINARY_INSERTION_SORT  SORT_MAKE_STR(binary_insertion_sort)
+        -:  111:#define REVERSE_ELEMENTS       SORT_MAKE_STR(reverse_elements)
+        -:  112:#define COUNT_RUN              SORT_MAKE_STR(count_run)
+        -:  113:#define CHECK_INVARIANT        SORT_MAKE_STR(check_invariant)
+        -:  114:#define TIM_SORT               SORT_MAKE_STR(tim_sort)
+        -:  115:#define TIM_SORT_RESIZE        SORT_MAKE_STR(tim_sort_resize)
+        -:  116:#define TIM_SORT_MERGE         SORT_MAKE_STR(tim_sort_merge)
+        -:  117:#define TIM_SORT_COLLAPSE      SORT_MAKE_STR(tim_sort_collapse)
+        -:  118:
+        -:  119:#define TIM_SORT_RUN_T         SORT_MAKE_STR(tim_sort_run_t)
+        -:  120:#define TEMP_STORAGE_T         SORT_MAKE_STR(temp_storage_t)
+        -:  121:
+        -:  122:typedef struct {
+        -:  123:  int64_t start;
+        -:  124:  int64_t length;
+        -:  125:} TIM_SORT_RUN_T;
+        -:  126:
+        -:  127:void BINARY_INSERTION_SORT(SORT_TYPE *dst, const size_t size);
+        -:  128:void TIM_SORT(SORT_TYPE *dst, const size_t size);
+        -:  129:
+        -:  130:/* Function used to do a binary search for binary insertion sort */
+    #####:  131:static int64_t BINARY_INSERTION_FIND(SORT_TYPE *dst, const SORT_TYPE x, const size_t size)
+        -:  132:{
+        -:  133:  int64_t l, c, r;
+        -:  134:  SORT_TYPE lx;
+        -:  135:  SORT_TYPE cx;
+    #####:  136:  l = 0;
+    #####:  137:  r = size - 1;
+    #####:  138:  c = r >> 1;
+    #####:  139:  lx = dst[l];
+        -:  140:
+        -:  141:  /* check for beginning conditions */
+    #####:  142:  if (SORT_CMP(x, lx) < 0)
+    #####:  143:    return 0;
+    #####:  144:  else if (SORT_CMP(x, lx) == 0)
+        -:  145:  {
+    #####:  146:    int64_t i = 1;
+    #####:  147:    while (SORT_CMP(x, dst[i]) == 0) i++;
+    #####:  148:    return i;
+        -:  149:  }
+        -:  150:
+    #####:  151:  cx = dst[c];
+        -:  152:  while (1)
+    #####:  153:  {
+    #####:  154:    const int val = SORT_CMP(x, cx);
+    #####:  155:    if (val < 0)
+        -:  156:    {
+    #####:  157:      if (c - l <= 1) return c;
+    #####:  158:      r = c;
+        -:  159:    }
+    #####:  160:    else if (val > 0)
+        -:  161:    {
+    #####:  162:      if (r - c <= 1) return c + 1;
+    #####:  163:      l = c;
+    #####:  164:      lx = cx;
+        -:  165:    }
+        -:  166:    else
+        -:  167:    {
+        -:  168:      do
+        -:  169:      {
+    #####:  170:        cx = dst[++c];
+    #####:  171:      } while (SORT_CMP(x, cx) == 0);
+    #####:  172:      return c;
+        -:  173:    }
+    #####:  174:    c = l + ((r - l) >> 1);
+    #####:  175:    cx = dst[c];
+        -:  176:  }
+        -:  177:}
+        -:  178:
+        -:  179:/* Binary insertion sort, but knowing that the first "start" entries are sorted.  Used in timsort. */
+    #####:  180:static void BINARY_INSERTION_SORT_START(SORT_TYPE *dst, const size_t start, const size_t size)
+        -:  181:{
+        -:  182:  int64_t i;
+    #####:  183:  for (i = start; i < (int64_t) size; i++)
+        -:  184:  {
+        -:  185:    int64_t j;
+        -:  186:    SORT_TYPE x;
+        -:  187:    int64_t location;
+        -:  188:    /* If this entry is already correct, just move along */
+    #####:  189:    if (SORT_CMP(dst[i - 1], dst[i]) <= 0) continue;
+        -:  190:
+        -:  191:    /* Else we need to find the right place, shift everything over, and squeeze in */
+    #####:  192:    x = dst[i];
+    #####:  193:    location = BINARY_INSERTION_FIND(dst, x, i);
+    #####:  194:    for (j = i - 1; j >= location; j--)
+        -:  195:    {
+    #####:  196:      dst[j + 1] = dst[j];
+        -:  197:    }
+    #####:  198:    dst[location] = x;
+        -:  199:  }
+    #####:  200:}
+        -:  201:
+        -:  202:/* Binary insertion sort */
+    #####:  203:void BINARY_INSERTION_SORT(SORT_TYPE *dst, const size_t size)
+        -:  204:{
+    #####:  205:  BINARY_INSERTION_SORT_START(dst, 1, size);
+    #####:  206:}
+        -:  207:
+        -:  208:/* timsort implementation, based on timsort.txt */
+        -:  209:
+    #####:  210:static void REVERSE_ELEMENTS(SORT_TYPE *dst, int64_t start, int64_t end)
+        -:  211:{
+        -:  212:  while (1)
+        -:  213:  {
+    #####:  214:    if (start >= end) return;
+    #####:  215:    SORT_SWAP(dst[start], dst[end]);
+    #####:  216:    start++;
+    #####:  217:    end--;
+        -:  218:  }
+        -:  219:}
+        -:  220:
+    #####:  221:static int64_t COUNT_RUN(SORT_TYPE *dst, const int64_t start, const size_t size)
+        -:  222:{
+        -:  223:  int64_t curr;
+    #####:  224:  if (size - start == 1) return 1;
+    #####:  225:  if (start >= (int64_t) size - 2)
+        -:  226:  {
+    #####:  227:    if (SORT_CMP(dst[size - 2], dst[size - 1]) > 0)
+    #####:  228:      SORT_SWAP(dst[size - 2], dst[size - 1]);
+    #####:  229:    return 2;
+        -:  230:  }
+        -:  231:
+    #####:  232:  curr = start + 2;
+        -:  233:
+    #####:  234:  if (SORT_CMP(dst[start], dst[start + 1]) <= 0)
+        -:  235:  {
+        -:  236:    /* increasing run */
+        -:  237:    while (1)
+        -:  238:    {
+    #####:  239:      if (curr == (int64_t) size - 1) break;
+    #####:  240:      if (SORT_CMP(dst[curr - 1], dst[curr]) > 0) break;
+    #####:  241:      curr++;
+        -:  242:    }
+    #####:  243:    return curr - start;
+        -:  244:  }
+        -:  245:  else
+        -:  246:  {
+        -:  247:    /* decreasing run */
+        -:  248:    while (1)
+        -:  249:    {
+    #####:  250:      if (curr == (int64_t) size - 1) break;
+    #####:  251:      if (SORT_CMP(dst[curr - 1], dst[curr]) <= 0) break;
+    #####:  252:      curr++;
+        -:  253:    }
+        -:  254:    /* reverse in-place */
+    #####:  255:    REVERSE_ELEMENTS(dst, start, curr - 1);
+    #####:  256:    return curr - start;
+        -:  257:  }
+        -:  258:}
+        -:  259:
+        -:  260:#define PUSH_NEXT() do {\
+        -:  261:len = COUNT_RUN(dst, curr, size);\
+        -:  262:run = minrun;\
+        -:  263:if (run < minrun) run = minrun;\
+        -:  264:if (run > (int64_t) size - curr) run = size - curr;\
+        -:  265:if (run > len)\
+        -:  266:{\
+        -:  267:  BINARY_INSERTION_SORT_START(&dst[curr], len, run);\
+        -:  268:  len = run;\
+        -:  269:}\
+        -:  270:{\
+        -:  271:run_stack[stack_curr].start = curr;\
+        -:  272:run_stack[stack_curr].length = len;\
+        -:  273:stack_curr++;\
+        -:  274:}\
+        -:  275:curr += len;\
+        -:  276:if (curr == (int64_t) size)\
+        -:  277:{\
+        -:  278:  /* finish up */ \
+        -:  279:  while (stack_curr > 1) \
+        -:  280:  { \
+        -:  281:    TIM_SORT_MERGE(dst, run_stack, stack_curr, store); \
+        -:  282:    run_stack[stack_curr - 2].length += run_stack[stack_curr - 1].length; \
+        -:  283:    stack_curr--; \
+        -:  284:  } \
+        -:  285:  if (store->storage != NULL)\
+        -:  286:  {\
+        -:  287:    free(store->storage);\
+        -:  288:    store->storage = NULL;\
+        -:  289:  }\
+        -:  290:  return;\
+        -:  291:}\
+        -:  292:}\
+        -:  293:while (0)
+        -:  294:
+    #####:  295:static int CHECK_INVARIANT(TIM_SORT_RUN_T *stack, const int stack_curr)
+        -:  296:{
+        -:  297:  int64_t A, B, C;
+    #####:  298:  if (stack_curr < 2) return 1;
+    #####:  299:  if (stack_curr == 2)
+        -:  300:  {
+    #####:  301:    const int64_t A1 = stack[stack_curr - 2].length;
+    #####:  302:    const int64_t B1 = stack[stack_curr - 1].length;
+    #####:  303:    if (A1 <= B1) return 0;
+    #####:  304:    return 1;
+        -:  305:  }
+    #####:  306:  A = stack[stack_curr - 3].length;
+    #####:  307:  B = stack[stack_curr - 2].length;
+    #####:  308:  C = stack[stack_curr - 1].length;
+    #####:  309:  if ((A <= B + C) || (B <= C)) return 0;
+    #####:  310:  return 1;
+        -:  311:}
+        -:  312:
+        -:  313:typedef struct {
+        -:  314:  size_t alloc;
+        -:  315:  SORT_TYPE *storage;
+        -:  316:} TEMP_STORAGE_T;
+        -:  317:
+        -:  318:
+    #####:  319:static void TIM_SORT_RESIZE(TEMP_STORAGE_T *store, const size_t new_size)
+        -:  320:{
+    #####:  321:  if (store->alloc < new_size)
+        -:  322:  {
+    #####:  323:    SORT_TYPE *tempstore = (SORT_TYPE *)realloc(store->storage, new_size * sizeof(SORT_TYPE));
+    #####:  324:    if (tempstore == NULL)
+        -:  325:    {
+    #####:  326:      fprintf(stderr, "Error allocating temporary storage for tim sort: need %lu bytes", sizeof(SORT_TYPE) * new_size);
+    #####:  327:      exit(1);
+        -:  328:    }
+    #####:  329:    store->storage = tempstore;
+    #####:  330:    store->alloc = new_size;
+        -:  331:  }
+    #####:  332:}
+        -:  333:
+    #####:  334:static void TIM_SORT_MERGE(SORT_TYPE *dst, const TIM_SORT_RUN_T *stack, const int stack_curr, TEMP_STORAGE_T *store)
+        -:  335:{
+    #####:  336:  const int64_t A = stack[stack_curr - 2].length;
+    #####:  337:  const int64_t B = stack[stack_curr - 1].length;
+    #####:  338:  const int64_t curr = stack[stack_curr - 2].start;
+        -:  339:  SORT_TYPE *storage;
+        -:  340:  int64_t i, j, k;
+        -:  341:
+    #####:  342:  TIM_SORT_RESIZE(store, MIN(A, B));
+    #####:  343:  storage = store->storage;
+        -:  344:
+        -:  345:  /* left merge */
+    #####:  346:  if (A < B)
+        -:  347:  {
+    #####:  348:    memcpy(storage, &dst[curr], A * sizeof(SORT_TYPE));
+    #####:  349:    i = 0;
+    #####:  350:    j = curr + A;
+        -:  351:
+    #####:  352:    for (k = curr; k < curr + A + B; k++)
+        -:  353:    {
+    #####:  354:      if ((i < A) && (j < curr + A + B))
+        -:  355:      {
+    #####:  356:        if (SORT_CMP(storage[i], dst[j]) <= 0)
+    #####:  357:          dst[k] = storage[i++];
+        -:  358:        else
+    #####:  359:          dst[k] = dst[j++];
+        -:  360:      }
+    #####:  361:      else if (i < A)
+        -:  362:      {
+    #####:  363:        dst[k] = storage[i++];
+        -:  364:      }
+        -:  365:      else
+    #####:  366:        dst[k] = dst[j++];
+        -:  367:    }
+        -:  368:  }
+        -:  369:  /* right merge */
+        -:  370:  else
+        -:  371:  {
+    #####:  372:    memcpy(storage, &dst[curr + A], B * sizeof(SORT_TYPE));
+    #####:  373:    i = B - 1;
+    #####:  374:    j = curr + A - 1;
+        -:  375:
+    #####:  376:    for (k = curr + A + B - 1; k >= curr; k--)
+        -:  377:    {
+    #####:  378:      if ((i >= 0) && (j >= curr))
+        -:  379:      {
+    #####:  380:          if (SORT_CMP(dst[j], storage[i]) > 0)
+    #####:  381:            dst[k] = dst[j--];
+        -:  382:          else
+    #####:  383:            dst[k] = storage[i--];
+        -:  384:      }
+    #####:  385:      else if (i >= 0)
+    #####:  386:        dst[k] = storage[i--];
+        -:  387:      else
+    #####:  388:        dst[k] = dst[j--];
+        -:  389:    }
+        -:  390:  }
+    #####:  391:}
+        -:  392:
+    #####:  393:static int TIM_SORT_COLLAPSE(SORT_TYPE *dst, TIM_SORT_RUN_T *stack, int stack_curr, TEMP_STORAGE_T *store, const size_t size)
+        -:  394:{
+        -:  395:  while (1)
+    #####:  396:  {
+        -:  397:    int64_t A, B, C;
+        -:  398:    /* if the stack only has one thing on it, we are done with the collapse */
+    #####:  399:    if (stack_curr <= 1) break;
+        -:  400:    /* if this is the last merge, just do it */
+    #####:  401:    if ((stack_curr == 2) &&
+    #####:  402:        (stack[0].length + stack[1].length == (int64_t) size))
+        -:  403:    {
+    #####:  404:      TIM_SORT_MERGE(dst, stack, stack_curr, store);
+    #####:  405:      stack[0].length += stack[1].length;
+    #####:  406:      stack_curr--;
+    #####:  407:      break;
+        -:  408:    }
+        -:  409:    /* check if the invariant is off for a stack of 2 elements */
+    #####:  410:    else if ((stack_curr == 2) && (stack[0].length <= stack[1].length))
+        -:  411:    {
+    #####:  412:      TIM_SORT_MERGE(dst, stack, stack_curr, store);
+    #####:  413:      stack[0].length += stack[1].length;
+    #####:  414:      stack_curr--;
+    #####:  415:      break;
+        -:  416:    }
+    #####:  417:    else if (stack_curr == 2)
+    #####:  418:      break;
+        -:  419:
+    #####:  420:    A = stack[stack_curr - 3].length;
+    #####:  421:    B = stack[stack_curr - 2].length;
+    #####:  422:    C = stack[stack_curr - 1].length;
+        -:  423:
+        -:  424:    /* check first invariant */
+    #####:  425:    if (A <= B + C)
+        -:  426:    {
+    #####:  427:      if (A < C)
+        -:  428:      {
+    #####:  429:        TIM_SORT_MERGE(dst, stack, stack_curr - 1, store);
+    #####:  430:        stack[stack_curr - 3].length += stack[stack_curr - 2].length;
+    #####:  431:        stack[stack_curr - 2] = stack[stack_curr - 1];
+    #####:  432:        stack_curr--;
+        -:  433:      }
+        -:  434:      else
+        -:  435:      {
+    #####:  436:        TIM_SORT_MERGE(dst, stack, stack_curr, store);
+    #####:  437:        stack[stack_curr - 2].length += stack[stack_curr - 1].length;
+    #####:  438:        stack_curr--;
+        -:  439:      }
+        -:  440:    }
+        -:  441:    /* check second invariant */
+    #####:  442:    else if (B <= C)
+        -:  443:    {
+    #####:  444:      TIM_SORT_MERGE(dst, stack, stack_curr, store);
+    #####:  445:      stack[stack_curr - 2].length += stack[stack_curr - 1].length;
+    #####:  446:      stack_curr--;
+        -:  447:    }
+        -:  448:    else
+    #####:  449:      break;
+        -:  450:  }
+    #####:  451:  return stack_curr;
+        -:  452:}
+        -:  453:
+    #####:  454:void TIM_SORT(SORT_TYPE *dst, const size_t size)
+        -:  455:{
+        -:  456:  int minrun;
+        -:  457:  TEMP_STORAGE_T _store, *store;
+        -:  458:  TIM_SORT_RUN_T run_stack[128];
+    #####:  459:  int stack_curr = 0;
+        -:  460:  int64_t len, run;
+    #####:  461:  int64_t curr = 0;
+        -:  462:
+    #####:  463:  if (size < 64)
+        -:  464:  {
+    #####:  465:    BINARY_INSERTION_SORT(dst, size);
+    #####:  466:    return;
+        -:  467:  }
+        -:  468:
+        -:  469:  /* compute the minimum run length */
+    #####:  470:  minrun = compute_minrun(size);
+        -:  471:
+        -:  472:  /* temporary storage for merges */
+    #####:  473:  store = &_store;
+    #####:  474:  store->alloc = 0;
+    #####:  475:  store->storage = NULL;
+        -:  476:
+    #####:  477:  PUSH_NEXT();
+    #####:  478:  PUSH_NEXT();
+    #####:  479:  PUSH_NEXT();
+        -:  480:
+        -:  481:  while (1)
+        -:  482:  {
+    #####:  483:    if (!CHECK_INVARIANT(run_stack, stack_curr))
+        -:  484:    {
+    #####:  485:      stack_curr = TIM_SORT_COLLAPSE(dst, run_stack, stack_curr, store, size);
+    #####:  486:      continue;
+        -:  487:    }
+    #####:  488:    PUSH_NEXT();
+        -:  489:  }
+        -:  490:}
+        -:  491:
+        -:  492:#undef SORT_CONCAT
+        -:  493:#undef SORT_MAKE_STR1
+        -:  494:#undef SORT_MAKE_STR
+        -:  495:#undef SORT_NAME
+        -:  496:#undef SORT_TYPE
+        -:  497:#undef SORT_CMP
+        -:  498:#undef TEMP_STORAGE_T
+        -:  499:#undef TIM_SORT_RUN_T
+        -:  500:#undef PUSH_NEXT
+        -:  501:#undef SORT_SWAP
+        -:  502:#undef SORT_CONCAT
+        -:  503:#undef SORT_MAKE_STR1
+        -:  504:#undef SORT_MAKE_STR
+        -:  505:#undef BINARY_INSERTION_FIND
+        -:  506:#undef BINARY_INSERTION_SORT_START
+        -:  507:#undef BINARY_INSERTION_SORT
+        -:  508:#undef REVERSE_ELEMENTS
+        -:  509:#undef COUNT_RUN
+        -:  510:#undef TIM_SORT
+        -:  511:#undef TIM_SORT_RESIZE
+        -:  512:#undef TIM_SORT_COLLAPSE
+        -:  513:#undef TIM_SORT_RUN_T
+        -:  514:#undef TEMP_STORAGE_T

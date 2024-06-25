@@ -1,0 +1,11 @@
+<p tst="a&aaaaaaaamp$t>
+a&amp;b
+a&b
+` & b
+& b
+<.p&st3="a & b">
+a&amp;b
+a&ÿ
+<rr>
+a & b
+</p>

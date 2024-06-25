@@ -1,0 +1,9 @@
+[submodule "challenges/libxml/libxml2"]
+	path = challenges/libxml2/libxml2
+	url = https://gitlab.gnome.org/GNOME/libxml2.git
+[submodule "challenges/heartbleed/openssl"]
+	path = challenges/heartbleed/openssl
+	url = https://github.com/openssl/openssl.git
+[submodule "challenges/date/coreutils"]
+	path = challenges/date/coreutils
+	url = https://git.savannah.gnu.org/git/coreutils.git

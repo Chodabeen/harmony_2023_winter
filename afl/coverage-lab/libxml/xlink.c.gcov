@@ -1,0 +1,185 @@
+        -:    0:Source:xlink.c
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * xlink.c : implementation of the hyperlinks detection module
+        -:    3: *           This version supports both XML XLinks and HTML simple links
+        -:    4: *
+        -:    5: * See Copyright for the status of this software.
+        -:    6: *
+        -:    7: * daniel@veillard.com
+        -:    8: */
+        -:    9:
+        -:   10:
+        -:   11:#define IN_LIBXML
+        -:   12:#include "libxml.h"
+        -:   13:
+        -:   14:#ifdef LIBXML_XPTR_ENABLED
+        -:   15:#include <string.h> /* for memset() only */
+        -:   16:#ifdef HAVE_CTYPE_H
+        -:   17:#include <ctype.h>
+        -:   18:#endif
+        -:   19:#ifdef HAVE_STDLIB_H
+        -:   20:#include <stdlib.h>
+        -:   21:#endif
+        -:   22:#ifdef HAVE_SYS_STAT_H
+        -:   23:#include <sys/stat.h>
+        -:   24:#endif
+        -:   25:#ifdef HAVE_FCNTL_H
+        -:   26:#include <fcntl.h>
+        -:   27:#endif
+        -:   28:#ifdef HAVE_UNISTD_H
+        -:   29:#include <unistd.h>
+        -:   30:#endif
+        -:   31:#ifdef HAVE_ZLIB_H
+        -:   32:#include <zlib.h>
+        -:   33:#endif
+        -:   34:
+        -:   35:#include <libxml/xmlmemory.h>
+        -:   36:#include <libxml/tree.h>
+        -:   37:#include <libxml/parser.h>
+        -:   38:#include <libxml/valid.h>
+        -:   39:#include <libxml/xlink.h>
+        -:   40:#include <libxml/globals.h>
+        -:   41:
+        -:   42:#define XLINK_NAMESPACE (BAD_CAST "http://www.w3.org/1999/xlink/namespace/")
+        -:   43:#define XHTML_NAMESPACE (BAD_CAST "http://www.w3.org/1999/xhtml/")
+        -:   44:
+        -:   45:/****************************************************************
+        -:   46: *								*
+        -:   47: *           Default setting and related functions		*
+        -:   48: *								*
+        -:   49: ****************************************************************/
+        -:   50:
+        -:   51:static xlinkHandlerPtr xlinkDefaultHandler = NULL;
+        -:   52:static xlinkNodeDetectFunc	xlinkDefaultDetect = NULL;
+        -:   53:
+        -:   54:/**
+        -:   55: * xlinkGetDefaultHandler:
+        -:   56: *
+        -:   57: * Get the default xlink handler.
+        -:   58: *
+        -:   59: * Returns the current xlinkHandlerPtr value.
+        -:   60: */
+        -:   61:xlinkHandlerPtr
+    #####:   62:xlinkGetDefaultHandler(void) {
+    #####:   63:    return(xlinkDefaultHandler);
+        -:   64:}
+        -:   65:
+        -:   66:
+        -:   67:/**
+        -:   68: * xlinkSetDefaultHandler:
+        -:   69: * @handler:  the new value for the xlink handler block
+        -:   70: *
+        -:   71: * Set the default xlink handlers
+        -:   72: */
+        -:   73:void
+    #####:   74:xlinkSetDefaultHandler(xlinkHandlerPtr handler) {
+    #####:   75:    xlinkDefaultHandler = handler;
+    #####:   76:}
+        -:   77:
+        -:   78:/**
+        -:   79: * xlinkGetDefaultDetect:
+        -:   80: *
+        -:   81: * Get the default xlink detection routine
+        -:   82: *
+        -:   83: * Returns the current function or NULL;
+        -:   84: */
+        -:   85:xlinkNodeDetectFunc
+    #####:   86:xlinkGetDefaultDetect	(void) {
+    #####:   87:    return(xlinkDefaultDetect);
+        -:   88:}
+        -:   89:
+        -:   90:/**
+        -:   91: * xlinkSetDefaultDetect:
+        -:   92: * @func: pointer to the new detection routine.
+        -:   93: *
+        -:   94: * Set the default xlink detection routine
+        -:   95: */
+        -:   96:void
+    #####:   97:xlinkSetDefaultDetect	(xlinkNodeDetectFunc func) {
+    #####:   98:    xlinkDefaultDetect = func;
+    #####:   99:}
+        -:  100:
+        -:  101:/****************************************************************
+        -:  102: *								*
+        -:  103: *                  The detection routines			*
+        -:  104: *								*
+        -:  105: ****************************************************************/
+        -:  106:
+        -:  107:
+        -:  108:/**
+        -:  109: * xlinkIsLink:
+        -:  110: * @doc:  the document containing the node
+        -:  111: * @node:  the node pointer itself
+        -:  112: *
+        -:  113: * Check whether the given node carries the attributes needed
+        -:  114: * to be a link element (or is one of the linking elements issued
+        -:  115: * from the (X)HTML DtDs).
+        -:  116: * This routine don't try to do full checking of the link validity
+        -:  117: * but tries to detect and return the appropriate link type.
+        -:  118: *
+        -:  119: * Returns the xlinkType of the node (XLINK_TYPE_NONE if there is no
+        -:  120: *         link detected.
+        -:  121: */
+        -:  122:xlinkType
+    #####:  123:xlinkIsLink	(xmlDocPtr doc, xmlNodePtr node) {
+    #####:  124:    xmlChar *type = NULL, *role = NULL;
+    #####:  125:    xlinkType ret = XLINK_TYPE_NONE;
+        -:  126:
+    #####:  127:    if (node == NULL) return(XLINK_TYPE_NONE);
+    #####:  128:    if (doc == NULL) doc = node->doc;
+    #####:  129:    if ((doc != NULL) && (doc->type == XML_HTML_DOCUMENT_NODE)) {
+        -:  130:        /*
+        -:  131:	 * This is an HTML document.
+        -:  132:	 */
+    #####:  133:    } else if ((node->ns != NULL) &&
+    #####:  134:               (xmlStrEqual(node->ns->href, XHTML_NAMESPACE))) {
+        -:  135:	/*
+        -:  136:	 * !!!! We really need an IS_XHTML_ELEMENT function from HTMLtree.h @@@
+        -:  137:	 */
+        -:  138:        /*
+        -:  139:	 * This is an XHTML element within an XML document
+        -:  140:	 * Check whether it's one of the element able to carry links
+        -:  141:	 * and in that case if it holds the attributes.
+        -:  142:	 */
+        -:  143:    }
+        -:  144:
+        -:  145:    /*
+        -:  146:     * We don't prevent a-priori having XML Linking constructs on
+        -:  147:     * XHTML elements
+        -:  148:     */
+    #####:  149:    type = xmlGetNsProp(node, BAD_CAST"type", XLINK_NAMESPACE);
+    #####:  150:    if (type != NULL) {
+    #####:  151:	if (xmlStrEqual(type, BAD_CAST "simple")) {
+    #####:  152:            ret = XLINK_TYPE_SIMPLE;
+    #####:  153:	} else if (xmlStrEqual(type, BAD_CAST "extended")) {
+    #####:  154:	    role = xmlGetNsProp(node, BAD_CAST "role", XLINK_NAMESPACE);
+    #####:  155:	    if (role != NULL) {
+        -:  156:		xmlNsPtr xlink;
+    #####:  157:		xlink = xmlSearchNs(doc, node, XLINK_NAMESPACE);
+    #####:  158:		if (xlink == NULL) {
+        -:  159:		    /* Humm, fallback method */
+    #####:  160:		    if (xmlStrEqual(role, BAD_CAST"xlink:external-linkset"))
+    #####:  161:			ret = XLINK_TYPE_EXTENDED_SET;
+        -:  162:		} else {
+        -:  163:		    xmlChar buf[200];
+    #####:  164:		    snprintf((char *) buf, sizeof(buf), "%s:external-linkset",
+    #####:  165:			     (char *) xlink->prefix);
+    #####:  166:                    buf[sizeof(buf) - 1] = 0;
+    #####:  167:		    if (xmlStrEqual(role, buf))
+    #####:  168:			ret = XLINK_TYPE_EXTENDED_SET;
+        -:  169:
+        -:  170:		}
+        -:  171:
+        -:  172:	    }
+    #####:  173:	    ret = XLINK_TYPE_EXTENDED;
+        -:  174:	}
+        -:  175:    }
+        -:  176:
+    #####:  177:    if (type != NULL) xmlFree(type);
+    #####:  178:    if (role != NULL) xmlFree(role);
+    #####:  179:    return(ret);
+        -:  180:}
+        -:  181:#endif /* LIBXML_XPTR_ENABLED */
+        -:  182:#define bottom_xlink
+        -:  183:#include "elfgcchack.h"

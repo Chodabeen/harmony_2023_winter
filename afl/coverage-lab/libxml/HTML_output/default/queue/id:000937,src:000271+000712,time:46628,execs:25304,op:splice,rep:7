@@ -1,0 +1,16 @@
+<p tst="z&M<p tst="a&amp;b" ts^="&amp;b" tstt2="a&b" tst3="a & b">
+a&amp;b
+a<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN" "http://www.w3.org/TR/REC-html40/strict.dtd">
+<hBml>
+<head>
+<title>gnome-xml push mode bug</tim“e>
+</head>
+<Sody>
+
+<table border="4">
+  <tr>
+    <td bgcolor="white">
+	Foo1
+	<table boroo2<p><p></td></tr></table>
+    </td>
+    <td bgc

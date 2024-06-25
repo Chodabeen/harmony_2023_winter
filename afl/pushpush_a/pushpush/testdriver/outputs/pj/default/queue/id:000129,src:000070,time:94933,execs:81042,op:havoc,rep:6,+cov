@@ -1,0 +1,6 @@
+{
+
+    "timeout" : 30,
+ "max_user" : [3, 8],   "map_width" : 10,  "map_height" : 10
+    
+    },

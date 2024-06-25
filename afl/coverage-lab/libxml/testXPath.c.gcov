@@ -1,0 +1,231 @@
+        -:    0:Source:testXPath.c
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * testXPath.c : a small tester program for XPath.
+        -:    3: *
+        -:    4: * See Copyright for the status of this software.
+        -:    5: *
+        -:    6: * daniel@veillard.com
+        -:    7: */
+        -:    8:
+        -:    9:#include "libxml.h"
+        -:   10:#if defined(LIBXML_XPATH_ENABLED) && defined(LIBXML_DEBUG_ENABLED)
+        -:   11:
+        -:   12:#include <string.h>
+        -:   13:
+        -:   14:#ifdef HAVE_SYS_TYPES_H
+        -:   15:#include <sys/types.h>
+        -:   16:#endif
+        -:   17:#ifdef HAVE_SYS_STAT_H
+        -:   18:#include <sys/stat.h>
+        -:   19:#endif
+        -:   20:#ifdef HAVE_FCNTL_H
+        -:   21:#include <fcntl.h>
+        -:   22:#endif
+        -:   23:#ifdef HAVE_UNISTD_H
+        -:   24:#include <unistd.h>
+        -:   25:#endif
+        -:   26:#ifdef HAVE_STDLIB_H
+        -:   27:#include <stdlib.h>
+        -:   28:#endif
+        -:   29:
+        -:   30:
+        -:   31:#include <libxml/xpath.h>
+        -:   32:#include <libxml/tree.h>
+        -:   33:#include <libxml/parser.h>
+        -:   34:#include <libxml/debugXML.h>
+        -:   35:#include <libxml/xmlmemory.h>
+        -:   36:#include <libxml/parserInternals.h>
+        -:   37:#include <libxml/xpathInternals.h>
+        -:   38:#include <libxml/xmlerror.h>
+        -:   39:#include <libxml/globals.h>
+        -:   40:#if defined(LIBXML_XPTR_ENABLED)
+        -:   41:#include <libxml/xpointer.h>
+        -:   42:static int xptr = 0;
+        -:   43:#endif
+        -:   44:static int debug = 0;
+        -:   45:static int valid = 0;
+        -:   46:static int expr = 0;
+        -:   47:static int tree = 0;
+        -:   48:static int nocdata = 0;
+        -:   49:static xmlDocPtr document = NULL;
+        -:   50:
+        -:   51:/*
+        -:   52: * Default document
+        -:   53: */
+        -:   54:static xmlChar buffer[] =
+        -:   55:"<?xml version=\"1.0\"?>\n\
+        -:   56:<EXAMPLE prop1=\"gnome is great\" prop2=\"&amp; linux too\">\n\
+        -:   57:  <head>\n\
+        -:   58:   <title>Welcome to Gnome</title>\n\
+        -:   59:  </head>\n\
+        -:   60:  <chapter>\n\
+        -:   61:   <title>The Linux adventure</title>\n\
+        -:   62:   <p>bla bla bla ...</p>\n\
+        -:   63:   <image href=\"linus.gif\"/>\n\
+        -:   64:   <p>...</p>\n\
+        -:   65:  </chapter>\n\
+        -:   66:  <chapter>\n\
+        -:   67:   <title>Chapter 2</title>\n\
+        -:   68:   <p>this is chapter 2 ...</p>\n\
+        -:   69:  </chapter>\n\
+        -:   70:  <chapter>\n\
+        -:   71:   <title>Chapter 3</title>\n\
+        -:   72:   <p>this is chapter 3 ...</p>\n\
+        -:   73:  </chapter>\n\
+        -:   74:</EXAMPLE>\n\
+        -:   75:";
+        -:   76:
+        -:   77:
+        -:   78:static void
+    #####:   79:testXPath(const char *str) {
+        -:   80:    xmlXPathObjectPtr res;
+        -:   81:    xmlXPathContextPtr ctxt;
+        -:   82:
+        -:   83:#if defined(LIBXML_XPTR_ENABLED)
+    #####:   84:    if (xptr) {
+    #####:   85:	ctxt = xmlXPtrNewContext(document, NULL, NULL);
+    #####:   86:	res = xmlXPtrEval(BAD_CAST str, ctxt);
+        -:   87:    } else {
+        -:   88:#endif
+    #####:   89:	ctxt = xmlXPathNewContext(document);
+    #####:   90:	ctxt->node = xmlDocGetRootElement(document);
+    #####:   91:	if (expr)
+    #####:   92:	    res = xmlXPathEvalExpression(BAD_CAST str, ctxt);
+        -:   93:	else {
+        -:   94:	    /* res = xmlXPathEval(BAD_CAST str, ctxt); */
+        -:   95:	    xmlXPathCompExprPtr comp;
+        -:   96:
+    #####:   97:	    comp = xmlXPathCompile(BAD_CAST str);
+    #####:   98:	    if (comp != NULL) {
+    #####:   99:		if (tree)
+    #####:  100:		    xmlXPathDebugDumpCompExpr(stdout, comp, 0);
+        -:  101:
+    #####:  102:		res = xmlXPathCompiledEval(comp, ctxt);
+    #####:  103:		xmlXPathFreeCompExpr(comp);
+        -:  104:	    } else
+    #####:  105:		res = NULL;
+        -:  106:	}
+        -:  107:#if defined(LIBXML_XPTR_ENABLED)
+        -:  108:    }
+        -:  109:#endif
+    #####:  110:    xmlXPathDebugDumpObject(stdout, res, 0);
+    #####:  111:    xmlXPathFreeObject(res);
+    #####:  112:    xmlXPathFreeContext(ctxt);
+    #####:  113:}
+        -:  114:
+        -:  115:static void
+    #####:  116:testXPathFile(const char *filename) {
+        -:  117:    FILE *input;
+        -:  118:    char expression[5000];
+        -:  119:    int len;
+        -:  120:
+    #####:  121:    input = fopen(filename, "r");
+    #####:  122:    if (input == NULL) {
+    #####:  123:        xmlGenericError(xmlGenericErrorContext,
+        -:  124:		"Cannot open %s for reading\n", filename);
+    #####:  125:	return;
+        -:  126:    }
+    #####:  127:    while (fgets(expression, 4500, input) != NULL) {
+    #####:  128:	len = strlen(expression);
+    #####:  129:	len--;
+    #####:  130:	while ((len >= 0) &&
+    #####:  131:	       ((expression[len] == '\n') || (expression[len] == '\t') ||
+    #####:  132:		(expression[len] == '\r') || (expression[len] == ' '))) len--;
+    #####:  133:	expression[len + 1] = 0;
+    #####:  134:	if (len >= 0) {
+    #####:  135:	    printf("\n========================\nExpression: %s\n", expression) ;
+    #####:  136:	    testXPath(expression);
+        -:  137:	}
+        -:  138:    }
+        -:  139:
+    #####:  140:    fclose(input);
+        -:  141:}
+        -:  142:
+    #####:  143:int main(int argc, char **argv) {
+        -:  144:    int i;
+    #####:  145:    int strings = 0;
+    #####:  146:    int usefile = 0;
+    #####:  147:    char *filename = NULL;
+        -:  148:
+    #####:  149:    for (i = 1; i < argc ; i++) {
+        -:  150:#if defined(LIBXML_XPTR_ENABLED)
+    #####:  151:	if ((!strcmp(argv[i], "-xptr")) || (!strcmp(argv[i], "--xptr")))
+    #####:  152:	    xptr++;
+        -:  153:	else
+        -:  154:#endif
+    #####:  155:	if ((!strcmp(argv[i], "-debug")) || (!strcmp(argv[i], "--debug")))
+    #####:  156:	    debug++;
+    #####:  157:	else if ((!strcmp(argv[i], "-valid")) || (!strcmp(argv[i], "--valid")))
+    #####:  158:	    valid++;
+    #####:  159:	else if ((!strcmp(argv[i], "-expr")) || (!strcmp(argv[i], "--expr")))
+    #####:  160:	    expr++;
+    #####:  161:	else if ((!strcmp(argv[i], "-tree")) || (!strcmp(argv[i], "--tree")))
+    #####:  162:	    tree++;
+    #####:  163:	else if ((!strcmp(argv[i], "-nocdata")) ||
+    #####:  164:		 (!strcmp(argv[i], "--nocdata")))
+    #####:  165:	    nocdata++;
+    #####:  166:	else if ((!strcmp(argv[i], "-i")) || (!strcmp(argv[i], "--input")))
+    #####:  167:	    filename = argv[++i];
+    #####:  168:	else if ((!strcmp(argv[i], "-f")) || (!strcmp(argv[i], "--file")))
+    #####:  169:	    usefile++;
+        -:  170:    }
+    #####:  171:    if (valid != 0) xmlDoValidityCheckingDefaultValue = 1;
+    #####:  172:    xmlLoadExtDtdDefaultValue |= XML_DETECT_IDS;
+    #####:  173:    xmlLoadExtDtdDefaultValue |= XML_COMPLETE_ATTRS;
+    #####:  174:    xmlSubstituteEntitiesDefaultValue = 1;
+        -:  175:#ifdef LIBXML_SAX1_ENABLED
+    #####:  176:    if (nocdata != 0) {
+    #####:  177:	xmlDefaultSAXHandlerInit();
+    #####:  178:	xmlDefaultSAXHandler.cdataBlock = NULL;
+        -:  179:    }
+        -:  180:#endif
+    #####:  181:    if (document == NULL) {
+    #####:  182:        if (filename == NULL)
+    #####:  183:	    document = xmlReadDoc(buffer,NULL,NULL,XML_PARSE_COMPACT);
+        -:  184:	else
+    #####:  185:	    document = xmlReadFile(filename,NULL,XML_PARSE_COMPACT);
+        -:  186:    }
+    #####:  187:    for (i = 1; i < argc ; i++) {
+    #####:  188:	if ((!strcmp(argv[i], "-i")) || (!strcmp(argv[i], "--input"))) {
+    #####:  189:	    i++; continue;
+        -:  190:	}
+    #####:  191:	if (argv[i][0] != '-') {
+    #####:  192:	    if (usefile)
+    #####:  193:	        testXPathFile(argv[i]);
+        -:  194:	    else
+    #####:  195:		testXPath(argv[i]);
+    #####:  196:	    strings ++;
+        -:  197:	}
+        -:  198:    }
+    #####:  199:    if (strings == 0) {
+    #####:  200:	printf("Usage : %s [--debug] [--copy] stringsorfiles ...\n",
+        -:  201:	       argv[0]);
+    #####:  202:	printf("\tParse the XPath strings and output the result of the parsing\n");
+    #####:  203:	printf("\t--debug : dump a debug version of the result\n");
+    #####:  204:	printf("\t--valid : switch on DTD support in the parser\n");
+        -:  205:#if defined(LIBXML_XPTR_ENABLED)
+    #####:  206:	printf("\t--xptr : expressions are XPointer expressions\n");
+        -:  207:#endif
+    #####:  208:	printf("\t--expr : debug XPath expressions only\n");
+    #####:  209:	printf("\t--tree : show the compiled XPath tree\n");
+    #####:  210:	printf("\t--nocdata : do not generate CDATA nodes\n");
+    #####:  211:	printf("\t--input filename : or\n");
+    #####:  212:	printf("\t-i filename      : read the document from filename\n");
+    #####:  213:	printf("\t--file : or\n");
+    #####:  214:	printf("\t-f     : read queries from files, args\n");
+        -:  215:    }
+    #####:  216:    if (document != NULL)
+    #####:  217:	xmlFreeDoc(document);
+    #####:  218:    xmlCleanupParser();
+    #####:  219:    xmlMemoryDump();
+        -:  220:
+    #####:  221:    return(0);
+        -:  222:}
+        -:  223:#else
+        -:  224:#include <stdio.h>
+        -:  225:int main(int argc ATTRIBUTE_UNUSED, char **argv ATTRIBUTE_UNUSED) {
+        -:  226:    printf("%s : XPath/Debug support not compiled in\n", argv[0]);
+        -:  227:    return(0);
+        -:  228:}
+        -:  229:#endif /* LIBXML_XPATH_ENABLED */

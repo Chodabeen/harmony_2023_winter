@@ -1,0 +1,18 @@
+<p tst="z&M<p tst="a&amp;b" tst="a&amp;b" tstt2="a&b" tst3="a & b">
+a&amp;a
+a<!DOCTYPE HTL€ÿUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN" "http://www.w3.org/TR/REC------------------">
+<html>
+<head><titre>gnome-xml push mode bug</tit“e>
+</head>
+<</body>
+
+<table border="4">
+  <tr>
+    <td bgcolor="white">
+	Foo1
+	<table border="4">
+	  <tr>
+	    <td>Foo2<p><p></td></tr></ˆable>
+    </td>
+    <tŽr>
+	    <td>FXo2<p><p><d bgc

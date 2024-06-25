@@ -1,0 +1,147 @@
+        -:    0:Source:testReader.c
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * testSAX.c : a small tester program for parsing using the SAX API.
+        -:    3: *
+        -:    4: * See Copyright for the status of this software.
+        -:    5: *
+        -:    6: * daniel@veillard.com
+        -:    7: */
+        -:    8:
+        -:    9:#include "libxml.h"
+        -:   10:
+        -:   11:#ifdef LIBXML_READER_ENABLED
+        -:   12:#include <string.h>
+        -:   13:#include <stdarg.h>
+        -:   14:
+        -:   15:#ifdef HAVE_SYS_TYPES_H
+        -:   16:#include <sys/types.h>
+        -:   17:#endif
+        -:   18:#ifdef HAVE_SYS_STAT_H
+        -:   19:#include <sys/stat.h>
+        -:   20:#endif
+        -:   21:#ifdef HAVE_FCNTL_H
+        -:   22:#include <fcntl.h>
+        -:   23:#endif
+        -:   24:#ifdef HAVE_UNISTD_H
+        -:   25:#include <unistd.h>
+        -:   26:#endif
+        -:   27:#ifdef HAVE_STDLIB_H
+        -:   28:#include <stdlib.h>
+        -:   29:#endif
+        -:   30:#ifdef HAVE_STRING_H
+        -:   31:#include <string.h>
+        -:   32:#endif
+        -:   33:
+        -:   34:
+        -:   35:#include <libxml/xmlreader.h>
+        -:   36:
+        -:   37:static int debug = 0;
+        -:   38:static int dump = 0;
+        -:   39:static int noent = 0;
+        -:   40:static int count = 0;
+        -:   41:static int valid = 0;
+        -:   42:static int consumed = 0;
+        -:   43:
+    #####:   44:static void usage(const char *progname) {
+    #####:   45:    printf("Usage : %s [options] XMLfiles ...\n", progname);
+    #####:   46:    printf("\tParse the XML files using the xmlTextReader API\n");
+    #####:   47:    printf("\t --count: count the number of attribute and elements\n");
+    #####:   48:    printf("\t --valid: validate the document\n");
+    #####:   49:    printf("\t --consumed: count the number of bytes consumed\n");
+    #####:   50:    exit(1);
+        -:   51:}
+        -:   52:static int elem, attrs;
+        -:   53:
+    #####:   54:static void processNode(xmlTextReaderPtr reader) {
+        -:   55:    int type;
+        -:   56:
+    #####:   57:    type = xmlTextReaderNodeType(reader);
+    #####:   58:    if (count) {
+    #####:   59:	if (type == 1) {
+    #####:   60:	    elem++;
+    #####:   61:	    attrs += xmlTextReaderAttributeCount(reader);
+        -:   62:	}
+        -:   63:    }
+    #####:   64:}
+        -:   65:
+    #####:   66:static void handleFile(const char *filename) {
+        -:   67:    xmlTextReaderPtr reader;
+        -:   68:    int ret;
+        -:   69:
+    #####:   70:    if (count) {
+    #####:   71:	elem = 0;
+    #####:   72:	attrs = 0;
+        -:   73:    }
+        -:   74:
+    #####:   75:    reader = xmlNewTextReaderFilename(filename);
+    #####:   76:    if (reader != NULL) {
+    #####:   77:	if (valid)
+    #####:   78:	    xmlTextReaderSetParserProp(reader, XML_PARSER_VALIDATE, 1);
+        -:   79:
+        -:   80:	/*
+        -:   81:	 * Process all nodes in sequence
+        -:   82:	 */
+    #####:   83:	ret = xmlTextReaderRead(reader);
+    #####:   84:	while (ret == 1) {
+    #####:   85:	    processNode(reader);
+    #####:   86:	    ret = xmlTextReaderRead(reader);
+        -:   87:	}
+        -:   88:
+        -:   89:	/*
+        -:   90:	 * Done, cleanup and status
+        -:   91:	 */
+    #####:   92:	if (consumed)
+    #####:   93:		printf("%ld bytes consumed by parser\n", xmlTextReaderByteConsumed(reader));
+    #####:   94:	xmlFreeTextReader(reader);
+    #####:   95:	if (ret != 0) {
+    #####:   96:	    printf("%s : failed to parse\n", filename);
+    #####:   97:	} else if (count)
+    #####:   98:	    printf("%s : %d elements, %d attributes\n", filename, elem, attrs);
+        -:   99:    } else {
+    #####:  100:	fprintf(stderr, "Unable to open %s\n", filename);
+        -:  101:    }
+    #####:  102:}
+        -:  103:
+    #####:  104:int main(int argc, char **argv) {
+        -:  105:    int i;
+    #####:  106:    int files = 0;
+        -:  107:
+    #####:  108:    if (argc <= 1) {
+    #####:  109:	usage(argv[0]);
+    #####:  110:	return(1);
+        -:  111:    }
+    #####:  112:    LIBXML_TEST_VERSION
+    #####:  113:    for (i = 1; i < argc ; i++) {
+    #####:  114:	if ((!strcmp(argv[i], "-debug")) || (!strcmp(argv[i], "--debug")))
+    #####:  115:	    debug++;
+    #####:  116:	else if ((!strcmp(argv[i], "-dump")) || (!strcmp(argv[i], "--dump")))
+    #####:  117:	    dump++;
+    #####:  118:	else if ((!strcmp(argv[i], "-count")) || (!strcmp(argv[i], "--count")))
+    #####:  119:	    count++;
+    #####:  120:	else if ((!strcmp(argv[i], "-consumed")) || (!strcmp(argv[i], "--consumed")))
+    #####:  121:	    consumed++;
+    #####:  122:	else if ((!strcmp(argv[i], "-valid")) || (!strcmp(argv[i], "--valid")))
+    #####:  123:	    valid++;
+    #####:  124:	else if ((!strcmp(argv[i], "-noent")) ||
+    #####:  125:	         (!strcmp(argv[i], "--noent")))
+    #####:  126:	    noent++;
+        -:  127:    }
+    #####:  128:    if (noent != 0) xmlSubstituteEntitiesDefault(1);
+    #####:  129:    for (i = 1; i < argc ; i++) {
+    #####:  130:	if (argv[i][0] != '-') {
+    #####:  131:	    handleFile(argv[i]);
+    #####:  132:	    files ++;
+        -:  133:	}
+        -:  134:    }
+    #####:  135:    xmlCleanupParser();
+    #####:  136:    xmlMemoryDump();
+        -:  137:
+    #####:  138:    return(0);
+        -:  139:}
+        -:  140:#else
+        -:  141:int main(int argc ATTRIBUTE_UNUSED, char **argv ATTRIBUTE_UNUSED) {
+        -:  142:    printf("%s : xmlReader parser support not compiled in\n", argv[0]);
+        -:  143:    return(0);
+        -:  144:}
+        -:  145:#endif /* LIBXML_READER_ENABLED */

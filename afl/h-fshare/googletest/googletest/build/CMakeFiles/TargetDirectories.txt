@@ -1,0 +1,8 @@
+/home/s22000711/2023_winter/afl/24-Fshare/googletest/googletest/build/CMakeFiles/install/strip.dir
+/home/s22000711/2023_winter/afl/24-Fshare/googletest/googletest/build/CMakeFiles/install/local.dir
+/home/s22000711/2023_winter/afl/24-Fshare/googletest/googletest/build/CMakeFiles/edit_cache.dir
+/home/s22000711/2023_winter/afl/24-Fshare/googletest/googletest/build/CMakeFiles/gtest_main.dir
+/home/s22000711/2023_winter/afl/24-Fshare/googletest/googletest/build/CMakeFiles/list_install_components.dir
+/home/s22000711/2023_winter/afl/24-Fshare/googletest/googletest/build/CMakeFiles/gtest.dir
+/home/s22000711/2023_winter/afl/24-Fshare/googletest/googletest/build/CMakeFiles/rebuild_cache.dir
+/home/s22000711/2023_winter/afl/24-Fshare/googletest/googletest/build/CMakeFiles/install.dir

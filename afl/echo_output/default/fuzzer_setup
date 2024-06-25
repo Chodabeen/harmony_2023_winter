@@ -1,0 +1,6 @@
+# environment variables:
+AFL_CUSTOM_INFO_PROGRAM=./a.out
+AFL_CUSTOM_INFO_PROGRAM_ARGV=
+AFL_CUSTOM_INFO_OUT=./echo_output/default
+# command line:
+'./AFLplusplus/afl-fuzz' '-i' './inputs/' '-o' './echo_output' './a.out'

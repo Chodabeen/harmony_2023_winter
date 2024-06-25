@@ -1,0 +1,6 @@
+<p tst="a&amp;b" tst2="a&b">
+a&amp;b
+a&b
+` & b
+& b
+<.p>

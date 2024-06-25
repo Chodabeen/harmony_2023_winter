@@ -1,0 +1,781 @@
+        -:    0:Source:list.c
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * list.c: lists handling implementation
+        -:    3: *
+        -:    4: * Copyright (C) 2000 Gary Pennington and Daniel Veillard.
+        -:    5: *
+        -:    6: * Permission to use, copy, modify, and distribute this software for any
+        -:    7: * purpose with or without fee is hereby granted, provided that the above
+        -:    8: * copyright notice and this permission notice appear in all copies.
+        -:    9: *
+        -:   10: * THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR IMPLIED
+        -:   11: * WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF
+        -:   12: * MERCHANTIBILITY AND FITNESS FOR A PARTICULAR PURPOSE. THE AUTHORS AND
+        -:   13: * CONTRIBUTORS ACCEPT NO RESPONSIBILITY IN ANY CONCEIVABLE MANNER.
+        -:   14: *
+        -:   15: * Author: Gary.Pennington@uk.sun.com
+        -:   16: */
+        -:   17:
+        -:   18:#define IN_LIBXML
+        -:   19:#include "libxml.h"
+        -:   20:
+        -:   21:#include <stdlib.h>
+        -:   22:#include <string.h>
+        -:   23:#include <libxml/xmlmemory.h>
+        -:   24:#include <libxml/list.h>
+        -:   25:#include <libxml/globals.h>
+        -:   26:
+        -:   27:/*
+        -:   28: * Type definition are kept internal
+        -:   29: */
+        -:   30:
+        -:   31:struct _xmlLink
+        -:   32:{
+        -:   33:    struct _xmlLink *next;
+        -:   34:    struct _xmlLink *prev;
+        -:   35:    void *data;
+        -:   36:};
+        -:   37:
+        -:   38:struct _xmlList
+        -:   39:{
+        -:   40:    xmlLinkPtr sentinel;
+        -:   41:    void (*linkDeallocator)(xmlLinkPtr );
+        -:   42:    int (*linkCompare)(const void *, const void*);
+        -:   43:};
+        -:   44:
+        -:   45:/************************************************************************
+        -:   46: *                                    *
+        -:   47: *                Interfaces                *
+        -:   48: *                                    *
+        -:   49: ************************************************************************/
+        -:   50:
+        -:   51:/**
+        -:   52: * xmlLinkDeallocator:
+        -:   53: * @l:  a list
+        -:   54: * @lk:  a link
+        -:   55: *
+        -:   56: * Unlink and deallocate @lk from list @l
+        -:   57: */
+        -:   58:static void
+    #####:   59:xmlLinkDeallocator(xmlListPtr l, xmlLinkPtr lk)
+        -:   60:{
+    #####:   61:    (lk->prev)->next = lk->next;
+    #####:   62:    (lk->next)->prev = lk->prev;
+    #####:   63:    if(l->linkDeallocator)
+    #####:   64:        l->linkDeallocator(lk);
+    #####:   65:    xmlFree(lk);
+    #####:   66:}
+        -:   67:
+        -:   68:/**
+        -:   69: * xmlLinkCompare:
+        -:   70: * @data0:  first data
+        -:   71: * @data1:  second data
+        -:   72: *
+        -:   73: * Compares two arbitrary data
+        -:   74: *
+        -:   75: * Returns -1, 0 or 1 depending on whether data1 is greater equal or smaller
+        -:   76: *          than data0
+        -:   77: */
+        -:   78:static int
+    #####:   79:xmlLinkCompare(const void *data0, const void *data1)
+        -:   80:{
+    #####:   81:    if (data0 < data1)
+    #####:   82:        return (-1);
+    #####:   83:    else if (data0 == data1)
+    #####:   84:	return (0);
+    #####:   85:    return (1);
+        -:   86:}
+        -:   87:
+        -:   88:/**
+        -:   89: * xmlListLowerSearch:
+        -:   90: * @l:  a list
+        -:   91: * @data:  a data
+        -:   92: *
+        -:   93: * Search data in the ordered list walking from the beginning
+        -:   94: *
+        -:   95: * Returns the link containing the data or NULL
+        -:   96: */
+        -:   97:static xmlLinkPtr
+    #####:   98:xmlListLowerSearch(xmlListPtr l, void *data)
+        -:   99:{
+        -:  100:    xmlLinkPtr lk;
+        -:  101:
+    #####:  102:    if (l == NULL)
+    #####:  103:        return(NULL);
+    #####:  104:    for(lk = l->sentinel->next;lk != l->sentinel && l->linkCompare(lk->data, data) <0 ;lk = lk->next);
+    #####:  105:    return lk;
+        -:  106:}
+        -:  107:
+        -:  108:/**
+        -:  109: * xmlListHigherSearch:
+        -:  110: * @l:  a list
+        -:  111: * @data:  a data
+        -:  112: *
+        -:  113: * Search data in the ordered list walking backward from the end
+        -:  114: *
+        -:  115: * Returns the link containing the data or NULL
+        -:  116: */
+        -:  117:static xmlLinkPtr
+    #####:  118:xmlListHigherSearch(xmlListPtr l, void *data)
+        -:  119:{
+        -:  120:    xmlLinkPtr lk;
+        -:  121:
+    #####:  122:    if (l == NULL)
+    #####:  123:        return(NULL);
+    #####:  124:    for(lk = l->sentinel->prev;lk != l->sentinel && l->linkCompare(lk->data, data) >0 ;lk = lk->prev);
+    #####:  125:    return lk;
+        -:  126:}
+        -:  127:
+        -:  128:/**
+        -:  129: * xmlListSearch:
+        -:  130: * @l:  a list
+        -:  131: * @data:  a data
+        -:  132: *
+        -:  133: * Search data in the list
+        -:  134: *
+        -:  135: * Returns the link containing the data or NULL
+        -:  136: */
+        -:  137:static xmlLinkPtr
+    #####:  138:xmlListLinkSearch(xmlListPtr l, void *data)
+        -:  139:{
+        -:  140:    xmlLinkPtr lk;
+    #####:  141:    if (l == NULL)
+    #####:  142:        return(NULL);
+    #####:  143:    lk = xmlListLowerSearch(l, data);
+    #####:  144:    if (lk == l->sentinel)
+    #####:  145:        return NULL;
+        -:  146:    else {
+    #####:  147:        if (l->linkCompare(lk->data, data) ==0)
+    #####:  148:            return lk;
+    #####:  149:        return NULL;
+        -:  150:    }
+        -:  151:}
+        -:  152:
+        -:  153:/**
+        -:  154: * xmlListLinkReverseSearch:
+        -:  155: * @l:  a list
+        -:  156: * @data:  a data
+        -:  157: *
+        -:  158: * Search data in the list processing backward
+        -:  159: *
+        -:  160: * Returns the link containing the data or NULL
+        -:  161: */
+        -:  162:static xmlLinkPtr
+    #####:  163:xmlListLinkReverseSearch(xmlListPtr l, void *data)
+        -:  164:{
+        -:  165:    xmlLinkPtr lk;
+    #####:  166:    if (l == NULL)
+    #####:  167:        return(NULL);
+    #####:  168:    lk = xmlListHigherSearch(l, data);
+    #####:  169:    if (lk == l->sentinel)
+    #####:  170:        return NULL;
+        -:  171:    else {
+    #####:  172:        if (l->linkCompare(lk->data, data) ==0)
+    #####:  173:            return lk;
+    #####:  174:        return NULL;
+        -:  175:    }
+        -:  176:}
+        -:  177:
+        -:  178:/**
+        -:  179: * xmlListCreate:
+        -:  180: * @deallocator:  an optional deallocator function
+        -:  181: * @compare:  an optional comparison function
+        -:  182: *
+        -:  183: * Create a new list
+        -:  184: *
+        -:  185: * Returns the new list or NULL in case of error
+        -:  186: */
+        -:  187:xmlListPtr
+    #####:  188:xmlListCreate(xmlListDeallocator deallocator, xmlListDataCompare compare)
+        -:  189:{
+        -:  190:    xmlListPtr l;
+    #####:  191:    if (NULL == (l = (xmlListPtr )xmlMalloc( sizeof(xmlList)))) {
+    #####:  192:        xmlGenericError(xmlGenericErrorContext,
+        -:  193:		        "Cannot initialize memory for list");
+    #####:  194:        return (NULL);
+        -:  195:    }
+        -:  196:    /* Initialize the list to NULL */
+    #####:  197:    memset(l, 0, sizeof(xmlList));
+        -:  198:
+        -:  199:    /* Add the sentinel */
+    #####:  200:    if (NULL ==(l->sentinel = (xmlLinkPtr )xmlMalloc(sizeof(xmlLink)))) {
+    #####:  201:        xmlGenericError(xmlGenericErrorContext,
+        -:  202:		        "Cannot initialize memory for sentinel");
+    #####:  203:	xmlFree(l);
+    #####:  204:        return (NULL);
+        -:  205:    }
+    #####:  206:    l->sentinel->next = l->sentinel;
+    #####:  207:    l->sentinel->prev = l->sentinel;
+    #####:  208:    l->sentinel->data = NULL;
+        -:  209:
+        -:  210:    /* If there is a link deallocator, use it */
+    #####:  211:    if (deallocator != NULL)
+    #####:  212:        l->linkDeallocator = deallocator;
+        -:  213:    /* If there is a link comparator, use it */
+    #####:  214:    if (compare != NULL)
+    #####:  215:        l->linkCompare = compare;
+        -:  216:    else /* Use our own */
+    #####:  217:        l->linkCompare = xmlLinkCompare;
+    #####:  218:    return l;
+        -:  219:}
+        -:  220:
+        -:  221:/**
+        -:  222: * xmlListSearch:
+        -:  223: * @l:  a list
+        -:  224: * @data:  a search value
+        -:  225: *
+        -:  226: * Search the list for an existing value of @data
+        -:  227: *
+        -:  228: * Returns the value associated to @data or NULL in case of error
+        -:  229: */
+        -:  230:void *
+    #####:  231:xmlListSearch(xmlListPtr l, void *data)
+        -:  232:{
+        -:  233:    xmlLinkPtr lk;
+    #####:  234:    if (l == NULL)
+    #####:  235:        return(NULL);
+    #####:  236:    lk = xmlListLinkSearch(l, data);
+    #####:  237:    if (lk)
+    #####:  238:        return (lk->data);
+    #####:  239:    return NULL;
+        -:  240:}
+        -:  241:
+        -:  242:/**
+        -:  243: * xmlListReverseSearch:
+        -:  244: * @l:  a list
+        -:  245: * @data:  a search value
+        -:  246: *
+        -:  247: * Search the list in reverse order for an existing value of @data
+        -:  248: *
+        -:  249: * Returns the value associated to @data or NULL in case of error
+        -:  250: */
+        -:  251:void *
+    #####:  252:xmlListReverseSearch(xmlListPtr l, void *data)
+        -:  253:{
+        -:  254:    xmlLinkPtr lk;
+    #####:  255:    if (l == NULL)
+    #####:  256:        return(NULL);
+    #####:  257:    lk = xmlListLinkReverseSearch(l, data);
+    #####:  258:    if (lk)
+    #####:  259:        return (lk->data);
+    #####:  260:    return NULL;
+        -:  261:}
+        -:  262:
+        -:  263:/**
+        -:  264: * xmlListInsert:
+        -:  265: * @l:  a list
+        -:  266: * @data:  the data
+        -:  267: *
+        -:  268: * Insert data in the ordered list at the beginning for this value
+        -:  269: *
+        -:  270: * Returns 0 in case of success, 1 in case of failure
+        -:  271: */
+        -:  272:int
+    #####:  273:xmlListInsert(xmlListPtr l, void *data)
+        -:  274:{
+        -:  275:    xmlLinkPtr lkPlace, lkNew;
+        -:  276:
+    #####:  277:    if (l == NULL)
+    #####:  278:        return(1);
+    #####:  279:    lkPlace = xmlListLowerSearch(l, data);
+        -:  280:    /* Add the new link */
+    #####:  281:    lkNew = (xmlLinkPtr) xmlMalloc(sizeof(xmlLink));
+    #####:  282:    if (lkNew == NULL) {
+    #####:  283:        xmlGenericError(xmlGenericErrorContext,
+        -:  284:		        "Cannot initialize memory for new link");
+    #####:  285:        return (1);
+        -:  286:    }
+    #####:  287:    lkNew->data = data;
+    #####:  288:    lkPlace = lkPlace->prev;
+    #####:  289:    lkNew->next = lkPlace->next;
+    #####:  290:    (lkPlace->next)->prev = lkNew;
+    #####:  291:    lkPlace->next = lkNew;
+    #####:  292:    lkNew->prev = lkPlace;
+    #####:  293:    return 0;
+        -:  294:}
+        -:  295:
+        -:  296:/**
+        -:  297: * xmlListAppend:
+        -:  298: * @l:  a list
+        -:  299: * @data:  the data
+        -:  300: *
+        -:  301: * Insert data in the ordered list at the end for this value
+        -:  302: *
+        -:  303: * Returns 0 in case of success, 1 in case of failure
+        -:  304: */
+    #####:  305:int xmlListAppend(xmlListPtr l, void *data)
+        -:  306:{
+        -:  307:    xmlLinkPtr lkPlace, lkNew;
+        -:  308:
+    #####:  309:    if (l == NULL)
+    #####:  310:        return(1);
+    #####:  311:    lkPlace = xmlListHigherSearch(l, data);
+        -:  312:    /* Add the new link */
+    #####:  313:    lkNew = (xmlLinkPtr) xmlMalloc(sizeof(xmlLink));
+    #####:  314:    if (lkNew == NULL) {
+    #####:  315:        xmlGenericError(xmlGenericErrorContext,
+        -:  316:		        "Cannot initialize memory for new link");
+    #####:  317:        return (1);
+        -:  318:    }
+    #####:  319:    lkNew->data = data;
+    #####:  320:    lkNew->next = lkPlace->next;
+    #####:  321:    (lkPlace->next)->prev = lkNew;
+    #####:  322:    lkPlace->next = lkNew;
+    #####:  323:    lkNew->prev = lkPlace;
+    #####:  324:    return 0;
+        -:  325:}
+        -:  326:
+        -:  327:/**
+        -:  328: * xmlListDelete:
+        -:  329: * @l:  a list
+        -:  330: *
+        -:  331: * Deletes the list and its associated data
+        -:  332: */
+    #####:  333:void xmlListDelete(xmlListPtr l)
+        -:  334:{
+    #####:  335:    if (l == NULL)
+    #####:  336:        return;
+        -:  337:
+    #####:  338:    xmlListClear(l);
+    #####:  339:    xmlFree(l->sentinel);
+    #####:  340:    xmlFree(l);
+        -:  341:}
+        -:  342:
+        -:  343:/**
+        -:  344: * xmlListRemoveFirst:
+        -:  345: * @l:  a list
+        -:  346: * @data:  list data
+        -:  347: *
+        -:  348: * Remove the first instance associated to data in the list
+        -:  349: *
+        -:  350: * Returns 1 if a deallocation occured, or 0 if not found
+        -:  351: */
+        -:  352:int
+    #####:  353:xmlListRemoveFirst(xmlListPtr l, void *data)
+        -:  354:{
+        -:  355:    xmlLinkPtr lk;
+        -:  356:
+    #####:  357:    if (l == NULL)
+    #####:  358:        return(0);
+        -:  359:    /*Find the first instance of this data */
+    #####:  360:    lk = xmlListLinkSearch(l, data);
+    #####:  361:    if (lk != NULL) {
+    #####:  362:        xmlLinkDeallocator(l, lk);
+    #####:  363:        return 1;
+        -:  364:    }
+    #####:  365:    return 0;
+        -:  366:}
+        -:  367:
+        -:  368:/**
+        -:  369: * xmlListRemoveLast:
+        -:  370: * @l:  a list
+        -:  371: * @data:  list data
+        -:  372: *
+        -:  373: * Remove the last instance associated to data in the list
+        -:  374: *
+        -:  375: * Returns 1 if a deallocation occured, or 0 if not found
+        -:  376: */
+        -:  377:int
+    #####:  378:xmlListRemoveLast(xmlListPtr l, void *data)
+        -:  379:{
+        -:  380:    xmlLinkPtr lk;
+        -:  381:
+    #####:  382:    if (l == NULL)
+    #####:  383:        return(0);
+        -:  384:    /*Find the last instance of this data */
+    #####:  385:    lk = xmlListLinkReverseSearch(l, data);
+    #####:  386:    if (lk != NULL) {
+    #####:  387:	xmlLinkDeallocator(l, lk);
+    #####:  388:        return 1;
+        -:  389:    }
+    #####:  390:    return 0;
+        -:  391:}
+        -:  392:
+        -:  393:/**
+        -:  394: * xmlListRemoveAll:
+        -:  395: * @l:  a list
+        -:  396: * @data:  list data
+        -:  397: *
+        -:  398: * Remove the all instance associated to data in the list
+        -:  399: *
+        -:  400: * Returns the number of deallocation, or 0 if not found
+        -:  401: */
+        -:  402:int
+    #####:  403:xmlListRemoveAll(xmlListPtr l, void *data)
+        -:  404:{
+    #####:  405:    int count=0;
+        -:  406:
+    #####:  407:    if (l == NULL)
+    #####:  408:        return(0);
+        -:  409:
+    #####:  410:    while(xmlListRemoveFirst(l, data))
+    #####:  411:        count++;
+    #####:  412:    return count;
+        -:  413:}
+        -:  414:
+        -:  415:/**
+        -:  416: * xmlListClear:
+        -:  417: * @l:  a list
+        -:  418: *
+        -:  419: * Remove the all data in the list
+        -:  420: */
+        -:  421:void
+    #####:  422:xmlListClear(xmlListPtr l)
+        -:  423:{
+        -:  424:    xmlLinkPtr  lk;
+        -:  425:
+    #####:  426:    if (l == NULL)
+    #####:  427:        return;
+    #####:  428:    lk = l->sentinel->next;
+    #####:  429:    while(lk != l->sentinel) {
+    #####:  430:        xmlLinkPtr next = lk->next;
+        -:  431:
+    #####:  432:        xmlLinkDeallocator(l, lk);
+    #####:  433:        lk = next;
+        -:  434:    }
+        -:  435:}
+        -:  436:
+        -:  437:/**
+        -:  438: * xmlListEmpty:
+        -:  439: * @l:  a list
+        -:  440: *
+        -:  441: * Is the list empty ?
+        -:  442: *
+        -:  443: * Returns 1 if the list is empty, 0 if not empty and -1 in case of error
+        -:  444: */
+        -:  445:int
+    #####:  446:xmlListEmpty(xmlListPtr l)
+        -:  447:{
+    #####:  448:    if (l == NULL)
+    #####:  449:        return(-1);
+    #####:  450:    return (l->sentinel->next == l->sentinel);
+        -:  451:}
+        -:  452:
+        -:  453:/**
+        -:  454: * xmlListFront:
+        -:  455: * @l:  a list
+        -:  456: *
+        -:  457: * Get the first element in the list
+        -:  458: *
+        -:  459: * Returns the first element in the list, or NULL
+        -:  460: */
+        -:  461:xmlLinkPtr
+    #####:  462:xmlListFront(xmlListPtr l)
+        -:  463:{
+    #####:  464:    if (l == NULL)
+    #####:  465:        return(NULL);
+    #####:  466:    return (l->sentinel->next);
+        -:  467:}
+        -:  468:
+        -:  469:/**
+        -:  470: * xmlListEnd:
+        -:  471: * @l:  a list
+        -:  472: *
+        -:  473: * Get the last element in the list
+        -:  474: *
+        -:  475: * Returns the last element in the list, or NULL
+        -:  476: */
+        -:  477:xmlLinkPtr
+    #####:  478:xmlListEnd(xmlListPtr l)
+        -:  479:{
+    #####:  480:    if (l == NULL)
+    #####:  481:        return(NULL);
+    #####:  482:    return (l->sentinel->prev);
+        -:  483:}
+        -:  484:
+        -:  485:/**
+        -:  486: * xmlListSize:
+        -:  487: * @l:  a list
+        -:  488: *
+        -:  489: * Get the number of elements in the list
+        -:  490: *
+        -:  491: * Returns the number of elements in the list or -1 in case of error
+        -:  492: */
+        -:  493:int
+    #####:  494:xmlListSize(xmlListPtr l)
+        -:  495:{
+        -:  496:    xmlLinkPtr lk;
+    #####:  497:    int count=0;
+        -:  498:
+    #####:  499:    if (l == NULL)
+    #####:  500:        return(-1);
+        -:  501:    /* TODO: keep a counter in xmlList instead */
+    #####:  502:    for(lk = l->sentinel->next; lk != l->sentinel; lk = lk->next, count++);
+    #####:  503:    return count;
+        -:  504:}
+        -:  505:
+        -:  506:/**
+        -:  507: * xmlListPopFront:
+        -:  508: * @l:  a list
+        -:  509: *
+        -:  510: * Removes the first element in the list
+        -:  511: */
+        -:  512:void
+    #####:  513:xmlListPopFront(xmlListPtr l)
+        -:  514:{
+    #####:  515:    if(!xmlListEmpty(l))
+    #####:  516:        xmlLinkDeallocator(l, l->sentinel->next);
+    #####:  517:}
+        -:  518:
+        -:  519:/**
+        -:  520: * xmlListPopBack:
+        -:  521: * @l:  a list
+        -:  522: *
+        -:  523: * Removes the last element in the list
+        -:  524: */
+        -:  525:void
+    #####:  526:xmlListPopBack(xmlListPtr l)
+        -:  527:{
+    #####:  528:    if(!xmlListEmpty(l))
+    #####:  529:        xmlLinkDeallocator(l, l->sentinel->prev);
+    #####:  530:}
+        -:  531:
+        -:  532:/**
+        -:  533: * xmlListPushFront:
+        -:  534: * @l:  a list
+        -:  535: * @data:  new data
+        -:  536: *
+        -:  537: * add the new data at the beginning of the list
+        -:  538: *
+        -:  539: * Returns 1 if successful, 0 otherwise
+        -:  540: */
+        -:  541:int
+    #####:  542:xmlListPushFront(xmlListPtr l, void *data)
+        -:  543:{
+        -:  544:    xmlLinkPtr lkPlace, lkNew;
+        -:  545:
+    #####:  546:    if (l == NULL)
+    #####:  547:        return(0);
+    #####:  548:    lkPlace = l->sentinel;
+        -:  549:    /* Add the new link */
+    #####:  550:    lkNew = (xmlLinkPtr) xmlMalloc(sizeof(xmlLink));
+    #####:  551:    if (lkNew == NULL) {
+    #####:  552:        xmlGenericError(xmlGenericErrorContext,
+        -:  553:		        "Cannot initialize memory for new link");
+    #####:  554:        return (0);
+        -:  555:    }
+    #####:  556:    lkNew->data = data;
+    #####:  557:    lkNew->next = lkPlace->next;
+    #####:  558:    (lkPlace->next)->prev = lkNew;
+    #####:  559:    lkPlace->next = lkNew;
+    #####:  560:    lkNew->prev = lkPlace;
+    #####:  561:    return 1;
+        -:  562:}
+        -:  563:
+        -:  564:/**
+        -:  565: * xmlListPushBack:
+        -:  566: * @l:  a list
+        -:  567: * @data:  new data
+        -:  568: *
+        -:  569: * add the new data at the end of the list
+        -:  570: *
+        -:  571: * Returns 1 if successful, 0 otherwise
+        -:  572: */
+        -:  573:int
+    #####:  574:xmlListPushBack(xmlListPtr l, void *data)
+        -:  575:{
+        -:  576:    xmlLinkPtr lkPlace, lkNew;
+        -:  577:
+    #####:  578:    if (l == NULL)
+    #####:  579:        return(0);
+    #####:  580:    lkPlace = l->sentinel->prev;
+        -:  581:    /* Add the new link */
+    #####:  582:    if (NULL ==(lkNew = (xmlLinkPtr )xmlMalloc(sizeof(xmlLink)))) {
+    #####:  583:        xmlGenericError(xmlGenericErrorContext,
+        -:  584:		        "Cannot initialize memory for new link");
+    #####:  585:        return (0);
+        -:  586:    }
+    #####:  587:    lkNew->data = data;
+    #####:  588:    lkNew->next = lkPlace->next;
+    #####:  589:    (lkPlace->next)->prev = lkNew;
+    #####:  590:    lkPlace->next = lkNew;
+    #####:  591:    lkNew->prev = lkPlace;
+    #####:  592:    return 1;
+        -:  593:}
+        -:  594:
+        -:  595:/**
+        -:  596: * xmlLinkGetData:
+        -:  597: * @lk:  a link
+        -:  598: *
+        -:  599: * See Returns.
+        -:  600: *
+        -:  601: * Returns a pointer to the data referenced from this link
+        -:  602: */
+        -:  603:void *
+    #####:  604:xmlLinkGetData(xmlLinkPtr lk)
+        -:  605:{
+    #####:  606:    if (lk == NULL)
+    #####:  607:        return(NULL);
+    #####:  608:    return lk->data;
+        -:  609:}
+        -:  610:
+        -:  611:/**
+        -:  612: * xmlListReverse:
+        -:  613: * @l:  a list
+        -:  614: *
+        -:  615: * Reverse the order of the elements in the list
+        -:  616: */
+        -:  617:void
+    #####:  618:xmlListReverse(xmlListPtr l)
+        -:  619:{
+        -:  620:    xmlLinkPtr lk;
+        -:  621:    xmlLinkPtr lkPrev;
+        -:  622:
+    #####:  623:    if (l == NULL)
+    #####:  624:        return;
+    #####:  625:    lkPrev = l->sentinel;
+    #####:  626:    for (lk = l->sentinel->next; lk != l->sentinel; lk = lk->next) {
+    #####:  627:        lkPrev->next = lkPrev->prev;
+    #####:  628:        lkPrev->prev = lk;
+    #####:  629:        lkPrev = lk;
+        -:  630:    }
+        -:  631:    /* Fix up the last node */
+    #####:  632:    lkPrev->next = lkPrev->prev;
+    #####:  633:    lkPrev->prev = lk;
+        -:  634:}
+        -:  635:
+        -:  636:/**
+        -:  637: * xmlListSort:
+        -:  638: * @l:  a list
+        -:  639: *
+        -:  640: * Sort all the elements in the list
+        -:  641: */
+        -:  642:void
+    #####:  643:xmlListSort(xmlListPtr l)
+        -:  644:{
+        -:  645:    xmlListPtr lTemp;
+        -:  646:
+    #####:  647:    if (l == NULL)
+    #####:  648:        return;
+    #####:  649:    if(xmlListEmpty(l))
+    #####:  650:        return;
+        -:  651:
+        -:  652:    /* I think that the real answer is to implement quicksort, the
+        -:  653:     * alternative is to implement some list copying procedure which
+        -:  654:     * would be based on a list copy followed by a clear followed by
+        -:  655:     * an insert. This is slow...
+        -:  656:     */
+        -:  657:
+    #####:  658:    if (NULL ==(lTemp = xmlListDup(l)))
+    #####:  659:        return;
+    #####:  660:    xmlListClear(l);
+    #####:  661:    xmlListMerge(l, lTemp);
+    #####:  662:    xmlListDelete(lTemp);
+    #####:  663:    return;
+        -:  664:}
+        -:  665:
+        -:  666:/**
+        -:  667: * xmlListWalk:
+        -:  668: * @l:  a list
+        -:  669: * @walker:  a processing function
+        -:  670: * @user:  a user parameter passed to the walker function
+        -:  671: *
+        -:  672: * Walk all the element of the first from first to last and
+        -:  673: * apply the walker function to it
+        -:  674: */
+        -:  675:void
+    #####:  676:xmlListWalk(xmlListPtr l, xmlListWalker walker, const void *user) {
+        -:  677:    xmlLinkPtr lk;
+        -:  678:
+    #####:  679:    if ((l == NULL) || (walker == NULL))
+    #####:  680:        return;
+    #####:  681:    for(lk = l->sentinel->next; lk != l->sentinel; lk = lk->next) {
+    #####:  682:        if((walker(lk->data, user)) == 0)
+    #####:  683:                break;
+        -:  684:    }
+        -:  685:}
+        -:  686:
+        -:  687:/**
+        -:  688: * xmlListReverseWalk:
+        -:  689: * @l:  a list
+        -:  690: * @walker:  a processing function
+        -:  691: * @user:  a user parameter passed to the walker function
+        -:  692: *
+        -:  693: * Walk all the element of the list in reverse order and
+        -:  694: * apply the walker function to it
+        -:  695: */
+        -:  696:void
+    #####:  697:xmlListReverseWalk(xmlListPtr l, xmlListWalker walker, const void *user) {
+        -:  698:    xmlLinkPtr lk;
+        -:  699:
+    #####:  700:    if ((l == NULL) || (walker == NULL))
+    #####:  701:        return;
+    #####:  702:    for(lk = l->sentinel->prev; lk != l->sentinel; lk = lk->prev) {
+    #####:  703:        if((walker(lk->data, user)) == 0)
+    #####:  704:                break;
+        -:  705:    }
+        -:  706:}
+        -:  707:
+        -:  708:/**
+        -:  709: * xmlListMerge:
+        -:  710: * @l1:  the original list
+        -:  711: * @l2:  the new list
+        -:  712: *
+        -:  713: * include all the elements of the second list in the first one and
+        -:  714: * clear the second list
+        -:  715: */
+        -:  716:void
+    #####:  717:xmlListMerge(xmlListPtr l1, xmlListPtr l2)
+        -:  718:{
+    #####:  719:    xmlListCopy(l1, l2);
+    #####:  720:    xmlListClear(l2);
+    #####:  721:}
+        -:  722:
+        -:  723:/**
+        -:  724: * xmlListDup:
+        -:  725: * @old:  the list
+        -:  726: *
+        -:  727: * Duplicate the list
+        -:  728: *
+        -:  729: * Returns a new copy of the list or NULL in case of error
+        -:  730: */
+        -:  731:xmlListPtr
+    #####:  732:xmlListDup(const xmlListPtr old)
+        -:  733:{
+        -:  734:    xmlListPtr cur;
+        -:  735:
+    #####:  736:    if (old == NULL)
+    #####:  737:        return(NULL);
+        -:  738:    /* Hmmm, how to best deal with allocation issues when copying
+        -:  739:     * lists. If there is a de-allocator, should responsibility lie with
+        -:  740:     * the new list or the old list. Surely not both. I'll arbitrarily
+        -:  741:     * set it to be the old list for the time being whilst I work out
+        -:  742:     * the answer
+        -:  743:     */
+    #####:  744:    if (NULL ==(cur = xmlListCreate(NULL, old->linkCompare)))
+    #####:  745:        return (NULL);
+    #####:  746:    if (0 != xmlListCopy(cur, old))
+    #####:  747:        return NULL;
+    #####:  748:    return cur;
+        -:  749:}
+        -:  750:
+        -:  751:/**
+        -:  752: * xmlListCopy:
+        -:  753: * @cur:  the new list
+        -:  754: * @old:  the old list
+        -:  755: *
+        -:  756: * Move all the element from the old list in the new list
+        -:  757: *
+        -:  758: * Returns 0 in case of success 1 in case of error
+        -:  759: */
+        -:  760:int
+    #####:  761:xmlListCopy(xmlListPtr cur, const xmlListPtr old)
+        -:  762:{
+        -:  763:    /* Walk the old tree and insert the data into the new one */
+        -:  764:    xmlLinkPtr lk;
+        -:  765:
+    #####:  766:    if ((old == NULL) || (cur == NULL))
+    #####:  767:        return(1);
+    #####:  768:    for(lk = old->sentinel->next; lk != old->sentinel; lk = lk->next) {
+    #####:  769:        if (0 !=xmlListInsert(cur, lk->data)) {
+    #####:  770:            xmlListDelete(cur);
+    #####:  771:            return (1);
+        -:  772:        }
+        -:  773:    }
+    #####:  774:    return (0);
+        -:  775:}
+        -:  776:/* xmlListUnique() */
+        -:  777:/* xmlListSwap */
+        -:  778:#define bottom_list
+        -:  779:#include "elfgcchack.h"

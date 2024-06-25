@@ -1,0 +1,182 @@
+        -:    0:Source:SAX.c
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * SAX.c : Old SAX v1 handlers to build a tree.
+        -:    3: *         Deprecated except for compatibility
+        -:    4: *
+        -:    5: * See Copyright for the status of this software.
+        -:    6: *
+        -:    7: * Daniel Veillard <daniel@veillard.com>
+        -:    8: */
+        -:    9:
+        -:   10:
+        -:   11:#define IN_LIBXML
+        -:   12:#include "libxml.h"
+        -:   13:#include <stdlib.h>
+        -:   14:#include <string.h>
+        -:   15:#include <libxml/xmlmemory.h>
+        -:   16:#include <libxml/tree.h>
+        -:   17:#include <libxml/parser.h>
+        -:   18:#include <libxml/parserInternals.h>
+        -:   19:#include <libxml/valid.h>
+        -:   20:#include <libxml/entities.h>
+        -:   21:#include <libxml/xmlerror.h>
+        -:   22:#include <libxml/debugXML.h>
+        -:   23:#include <libxml/xmlIO.h>
+        -:   24:#include <libxml/SAX.h>
+        -:   25:#include <libxml/uri.h>
+        -:   26:#include <libxml/valid.h>
+        -:   27:#include <libxml/HTMLtree.h>
+        -:   28:#include <libxml/globals.h>
+        -:   29:#include <libxml/SAX2.h>
+        -:   30:
+        -:   31:#ifdef LIBXML_LEGACY_ENABLED
+        -:   32:#ifdef LIBXML_SAX1_ENABLED
+        -:   33:/**
+        -:   34: * initxmlDefaultSAXHandler:
+        -:   35: * @hdlr:  the SAX handler
+        -:   36: * @warning:  flag if non-zero sets the handler warning procedure
+        -:   37: *
+        -:   38: * Initialize the default XML SAX version 1 handler
+        -:   39: * DEPRECATED: use xmlSAX2InitDefaultSAXHandler() for the new SAX2 blocks
+        -:   40: */
+        -:   41:void
+    #####:   42:initxmlDefaultSAXHandler(xmlSAXHandlerV1 *hdlr, int warning)
+        -:   43:{
+        -:   44:
+    #####:   45:    if(hdlr->initialized == 1)
+    #####:   46:	return;
+        -:   47:
+    #####:   48:    hdlr->internalSubset = xmlSAX2InternalSubset;
+    #####:   49:    hdlr->externalSubset = xmlSAX2ExternalSubset;
+    #####:   50:    hdlr->isStandalone = xmlSAX2IsStandalone;
+    #####:   51:    hdlr->hasInternalSubset = xmlSAX2HasInternalSubset;
+    #####:   52:    hdlr->hasExternalSubset = xmlSAX2HasExternalSubset;
+    #####:   53:    hdlr->resolveEntity = xmlSAX2ResolveEntity;
+    #####:   54:    hdlr->getEntity = xmlSAX2GetEntity;
+    #####:   55:    hdlr->getParameterEntity = xmlSAX2GetParameterEntity;
+    #####:   56:    hdlr->entityDecl = xmlSAX2EntityDecl;
+    #####:   57:    hdlr->attributeDecl = xmlSAX2AttributeDecl;
+    #####:   58:    hdlr->elementDecl = xmlSAX2ElementDecl;
+    #####:   59:    hdlr->notationDecl = xmlSAX2NotationDecl;
+    #####:   60:    hdlr->unparsedEntityDecl = xmlSAX2UnparsedEntityDecl;
+    #####:   61:    hdlr->setDocumentLocator = xmlSAX2SetDocumentLocator;
+    #####:   62:    hdlr->startDocument = xmlSAX2StartDocument;
+    #####:   63:    hdlr->endDocument = xmlSAX2EndDocument;
+    #####:   64:    hdlr->startElement = xmlSAX2StartElement;
+    #####:   65:    hdlr->endElement = xmlSAX2EndElement;
+    #####:   66:    hdlr->reference = xmlSAX2Reference;
+    #####:   67:    hdlr->characters = xmlSAX2Characters;
+    #####:   68:    hdlr->cdataBlock = xmlSAX2CDataBlock;
+    #####:   69:    hdlr->ignorableWhitespace = xmlSAX2Characters;
+    #####:   70:    hdlr->processingInstruction = xmlSAX2ProcessingInstruction;
+    #####:   71:    if (warning == 0)
+    #####:   72:	hdlr->warning = NULL;
+        -:   73:    else
+    #####:   74:	hdlr->warning = xmlParserWarning;
+    #####:   75:    hdlr->error = xmlParserError;
+    #####:   76:    hdlr->fatalError = xmlParserError;
+        -:   77:
+    #####:   78:    hdlr->initialized = 1;
+        -:   79:}
+        -:   80:
+        -:   81:#ifdef LIBXML_HTML_ENABLED
+        -:   82:
+        -:   83:/**
+        -:   84: * inithtmlDefaultSAXHandler:
+        -:   85: * @hdlr:  the SAX handler
+        -:   86: *
+        -:   87: * Initialize the default HTML SAX version 1 handler
+        -:   88: * DEPRECATED: use xmlSAX2InitHtmlDefaultSAXHandler() for the new SAX2 blocks
+        -:   89: */
+        -:   90:void
+    #####:   91:inithtmlDefaultSAXHandler(xmlSAXHandlerV1 *hdlr)
+        -:   92:{
+    #####:   93:    if(hdlr->initialized == 1)
+    #####:   94:	return;
+        -:   95:
+    #####:   96:    hdlr->internalSubset = xmlSAX2InternalSubset;
+    #####:   97:    hdlr->externalSubset = NULL;
+    #####:   98:    hdlr->isStandalone = NULL;
+    #####:   99:    hdlr->hasInternalSubset = NULL;
+    #####:  100:    hdlr->hasExternalSubset = NULL;
+    #####:  101:    hdlr->resolveEntity = NULL;
+    #####:  102:    hdlr->getEntity = xmlSAX2GetEntity;
+    #####:  103:    hdlr->getParameterEntity = NULL;
+    #####:  104:    hdlr->entityDecl = NULL;
+    #####:  105:    hdlr->attributeDecl = NULL;
+    #####:  106:    hdlr->elementDecl = NULL;
+    #####:  107:    hdlr->notationDecl = NULL;
+    #####:  108:    hdlr->unparsedEntityDecl = NULL;
+    #####:  109:    hdlr->setDocumentLocator = xmlSAX2SetDocumentLocator;
+    #####:  110:    hdlr->startDocument = xmlSAX2StartDocument;
+    #####:  111:    hdlr->endDocument = xmlSAX2EndDocument;
+    #####:  112:    hdlr->startElement = xmlSAX2StartElement;
+    #####:  113:    hdlr->endElement = xmlSAX2EndElement;
+    #####:  114:    hdlr->reference = NULL;
+    #####:  115:    hdlr->characters = xmlSAX2Characters;
+    #####:  116:    hdlr->cdataBlock = xmlSAX2CDataBlock;
+    #####:  117:    hdlr->ignorableWhitespace = xmlSAX2IgnorableWhitespace;
+    #####:  118:    hdlr->processingInstruction = xmlSAX2ProcessingInstruction;
+    #####:  119:    hdlr->comment = xmlSAX2Comment;
+    #####:  120:    hdlr->warning = xmlParserWarning;
+    #####:  121:    hdlr->error = xmlParserError;
+    #####:  122:    hdlr->fatalError = xmlParserError;
+        -:  123:
+    #####:  124:    hdlr->initialized = 1;
+        -:  125:}
+        -:  126:
+        -:  127:#endif /* LIBXML_HTML_ENABLED */
+        -:  128:
+        -:  129:#ifdef LIBXML_DOCB_ENABLED
+        -:  130:/**
+        -:  131: * initdocbDefaultSAXHandler:
+        -:  132: * @hdlr:  the SAX handler
+        -:  133: *
+        -:  134: * Initialize the default DocBook SAX version 1 handler
+        -:  135: * DEPRECATED: use xmlSAX2InitDocbDefaultSAXHandler() for the new SAX2 blocks
+        -:  136: */
+        -:  137:void
+    #####:  138:initdocbDefaultSAXHandler(xmlSAXHandlerV1 *hdlr)
+        -:  139:{
+    #####:  140:    if(hdlr->initialized == 1)
+    #####:  141:	return;
+        -:  142:
+    #####:  143:    hdlr->internalSubset = xmlSAX2InternalSubset;
+    #####:  144:    hdlr->externalSubset = NULL;
+    #####:  145:    hdlr->isStandalone = xmlSAX2IsStandalone;
+    #####:  146:    hdlr->hasInternalSubset = xmlSAX2HasInternalSubset;
+    #####:  147:    hdlr->hasExternalSubset = xmlSAX2HasExternalSubset;
+    #####:  148:    hdlr->resolveEntity = xmlSAX2ResolveEntity;
+    #####:  149:    hdlr->getEntity = xmlSAX2GetEntity;
+    #####:  150:    hdlr->getParameterEntity = NULL;
+    #####:  151:    hdlr->entityDecl = xmlSAX2EntityDecl;
+    #####:  152:    hdlr->attributeDecl = NULL;
+    #####:  153:    hdlr->elementDecl = NULL;
+    #####:  154:    hdlr->notationDecl = NULL;
+    #####:  155:    hdlr->unparsedEntityDecl = NULL;
+    #####:  156:    hdlr->setDocumentLocator = xmlSAX2SetDocumentLocator;
+    #####:  157:    hdlr->startDocument = xmlSAX2StartDocument;
+    #####:  158:    hdlr->endDocument = xmlSAX2EndDocument;
+    #####:  159:    hdlr->startElement = xmlSAX2StartElement;
+    #####:  160:    hdlr->endElement = xmlSAX2EndElement;
+    #####:  161:    hdlr->reference = xmlSAX2Reference;
+    #####:  162:    hdlr->characters = xmlSAX2Characters;
+    #####:  163:    hdlr->cdataBlock = NULL;
+    #####:  164:    hdlr->ignorableWhitespace = xmlSAX2IgnorableWhitespace;
+    #####:  165:    hdlr->processingInstruction = NULL;
+    #####:  166:    hdlr->comment = xmlSAX2Comment;
+    #####:  167:    hdlr->warning = xmlParserWarning;
+    #####:  168:    hdlr->error = xmlParserError;
+    #####:  169:    hdlr->fatalError = xmlParserError;
+        -:  170:
+    #####:  171:    hdlr->initialized = 1;
+        -:  172:}
+        -:  173:
+        -:  174:#endif /* LIBXML_DOCB_ENABLED */
+        -:  175:
+        -:  176:#endif /* LIBXML_SAX1_ENABLED */
+        -:  177:
+        -:  178:#define bottom_SAX
+        -:  179:#include "elfgcchack.h"
+        -:  180:#endif /* LIBXML_LEGACY_ENABLED */

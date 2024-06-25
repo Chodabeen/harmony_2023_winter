@@ -1,0 +1,1126 @@
+        -:    0:Source:hash.c
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * hash.c: chained hash tables
+        -:    3: *
+        -:    4: * Reference: Your favorite introductory book on algorithms
+        -:    5: *
+        -:    6: * Copyright (C) 2000,2012 Bjorn Reese and Daniel Veillard.
+        -:    7: *
+        -:    8: * Permission to use, copy, modify, and distribute this software for any
+        -:    9: * purpose with or without fee is hereby granted, provided that the above
+        -:   10: * copyright notice and this permission notice appear in all copies.
+        -:   11: *
+        -:   12: * THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR IMPLIED
+        -:   13: * WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF
+        -:   14: * MERCHANTIBILITY AND FITNESS FOR A PARTICULAR PURPOSE. THE AUTHORS AND
+        -:   15: * CONTRIBUTORS ACCEPT NO RESPONSIBILITY IN ANY CONCEIVABLE MANNER.
+        -:   16: *
+        -:   17: * Author: breese@users.sourceforge.net
+        -:   18: */
+        -:   19:
+        -:   20:#define IN_LIBXML
+        -:   21:#include "libxml.h"
+        -:   22:
+        -:   23:#include <string.h>
+        -:   24:#ifdef HAVE_STDLIB_H
+        -:   25:#include <stdlib.h>
+        -:   26:#endif
+        -:   27:#ifdef HAVE_TIME_H
+        -:   28:#include <time.h>
+        -:   29:#endif
+        -:   30:
+        -:   31:/*
+        -:   32: * Following http://www.ocert.org/advisories/ocert-2011-003.html
+        -:   33: * it seems that having hash randomization might be a good idea
+        -:   34: * when using XML with untrusted data
+        -:   35: */
+        -:   36:#if defined(HAVE_RAND) && defined(HAVE_SRAND) && defined(HAVE_TIME)
+        -:   37:#define HASH_RANDOMIZATION
+        -:   38:#endif
+        -:   39:
+        -:   40:#include <libxml/parser.h>
+        -:   41:#include <libxml/hash.h>
+        -:   42:#include <libxml/xmlmemory.h>
+        -:   43:#include <libxml/xmlerror.h>
+        -:   44:#include <libxml/globals.h>
+        -:   45:
+        -:   46:#define MAX_HASH_LEN 8
+        -:   47:
+        -:   48:/* #define DEBUG_GROW */
+        -:   49:
+        -:   50:/*
+        -:   51: * A single entry in the hash table
+        -:   52: */
+        -:   53:typedef struct _xmlHashEntry xmlHashEntry;
+        -:   54:typedef xmlHashEntry *xmlHashEntryPtr;
+        -:   55:struct _xmlHashEntry {
+        -:   56:    struct _xmlHashEntry *next;
+        -:   57:    xmlChar *name;
+        -:   58:    xmlChar *name2;
+        -:   59:    xmlChar *name3;
+        -:   60:    void *payload;
+        -:   61:    int valid;
+        -:   62:};
+        -:   63:
+        -:   64:/*
+        -:   65: * The entire hash table
+        -:   66: */
+        -:   67:struct _xmlHashTable {
+        -:   68:    struct _xmlHashEntry *table;
+        -:   69:    int size;
+        -:   70:    int nbElems;
+        -:   71:    xmlDictPtr dict;
+        -:   72:#ifdef HASH_RANDOMIZATION
+        -:   73:    int random_seed;
+        -:   74:#endif
+        -:   75:};
+        -:   76:
+        -:   77:/*
+        -:   78: * xmlHashComputeKey:
+        -:   79: * Calculate the hash key
+        -:   80: */
+        -:   81:static unsigned long
+    #####:   82:xmlHashComputeKey(xmlHashTablePtr table, const xmlChar *name,
+        -:   83:	          const xmlChar *name2, const xmlChar *name3) {
+    #####:   84:    unsigned long value = 0L;
+        -:   85:    char ch;
+        -:   86:
+        -:   87:#ifdef HASH_RANDOMIZATION
+    #####:   88:    value = table->random_seed;
+        -:   89:#endif
+    #####:   90:    if (name != NULL) {
+    #####:   91:	value += 30 * (*name);
+    #####:   92:	while ((ch = *name++) != 0) {
+    #####:   93:	    value = value ^ ((value << 5) + (value >> 3) + (unsigned long)ch);
+        -:   94:	}
+        -:   95:    }
+    #####:   96:    value = value ^ ((value << 5) + (value >> 3));
+    #####:   97:    if (name2 != NULL) {
+    #####:   98:	while ((ch = *name2++) != 0) {
+    #####:   99:	    value = value ^ ((value << 5) + (value >> 3) + (unsigned long)ch);
+        -:  100:	}
+        -:  101:    }
+    #####:  102:    value = value ^ ((value << 5) + (value >> 3));
+    #####:  103:    if (name3 != NULL) {
+    #####:  104:	while ((ch = *name3++) != 0) {
+    #####:  105:	    value = value ^ ((value << 5) + (value >> 3) + (unsigned long)ch);
+        -:  106:	}
+        -:  107:    }
+    #####:  108:    return (value % table->size);
+        -:  109:}
+        -:  110:
+        -:  111:static unsigned long
+    #####:  112:xmlHashComputeQKey(xmlHashTablePtr table,
+        -:  113:		   const xmlChar *prefix, const xmlChar *name,
+        -:  114:		   const xmlChar *prefix2, const xmlChar *name2,
+        -:  115:		   const xmlChar *prefix3, const xmlChar *name3) {
+    #####:  116:    unsigned long value = 0L;
+        -:  117:    char ch;
+        -:  118:
+        -:  119:#ifdef HASH_RANDOMIZATION
+    #####:  120:    value = table->random_seed;
+        -:  121:#endif
+    #####:  122:    if (prefix != NULL)
+    #####:  123:	value += 30 * (*prefix);
+        -:  124:    else
+    #####:  125:	value += 30 * (*name);
+        -:  126:
+    #####:  127:    if (prefix != NULL) {
+    #####:  128:	while ((ch = *prefix++) != 0) {
+    #####:  129:	    value = value ^ ((value << 5) + (value >> 3) + (unsigned long)ch);
+        -:  130:	}
+    #####:  131:	value = value ^ ((value << 5) + (value >> 3) + (unsigned long)':');
+        -:  132:    }
+    #####:  133:    if (name != NULL) {
+    #####:  134:	while ((ch = *name++) != 0) {
+    #####:  135:	    value = value ^ ((value << 5) + (value >> 3) + (unsigned long)ch);
+        -:  136:	}
+        -:  137:    }
+    #####:  138:    value = value ^ ((value << 5) + (value >> 3));
+    #####:  139:    if (prefix2 != NULL) {
+    #####:  140:	while ((ch = *prefix2++) != 0) {
+    #####:  141:	    value = value ^ ((value << 5) + (value >> 3) + (unsigned long)ch);
+        -:  142:	}
+    #####:  143:	value = value ^ ((value << 5) + (value >> 3) + (unsigned long)':');
+        -:  144:    }
+    #####:  145:    if (name2 != NULL) {
+    #####:  146:	while ((ch = *name2++) != 0) {
+    #####:  147:	    value = value ^ ((value << 5) + (value >> 3) + (unsigned long)ch);
+        -:  148:	}
+        -:  149:    }
+    #####:  150:    value = value ^ ((value << 5) + (value >> 3));
+    #####:  151:    if (prefix3 != NULL) {
+    #####:  152:	while ((ch = *prefix3++) != 0) {
+    #####:  153:	    value = value ^ ((value << 5) + (value >> 3) + (unsigned long)ch);
+        -:  154:	}
+    #####:  155:	value = value ^ ((value << 5) + (value >> 3) + (unsigned long)':');
+        -:  156:    }
+    #####:  157:    if (name3 != NULL) {
+    #####:  158:	while ((ch = *name3++) != 0) {
+    #####:  159:	    value = value ^ ((value << 5) + (value >> 3) + (unsigned long)ch);
+        -:  160:	}
+        -:  161:    }
+    #####:  162:    return (value % table->size);
+        -:  163:}
+        -:  164:
+        -:  165:/**
+        -:  166: * xmlHashCreate:
+        -:  167: * @size: the size of the hash table
+        -:  168: *
+        -:  169: * Create a new xmlHashTablePtr.
+        -:  170: *
+        -:  171: * Returns the newly created object, or NULL if an error occured.
+        -:  172: */
+        -:  173:xmlHashTablePtr
+    #####:  174:xmlHashCreate(int size) {
+        -:  175:    xmlHashTablePtr table;
+        -:  176:
+    #####:  177:    if (size <= 0)
+    #####:  178:        size = 256;
+        -:  179:
+    #####:  180:    table = xmlMalloc(sizeof(xmlHashTable));
+    #####:  181:    if (table) {
+    #####:  182:        table->dict = NULL;
+    #####:  183:        table->size = size;
+    #####:  184:	table->nbElems = 0;
+    #####:  185:        table->table = xmlMalloc(size * sizeof(xmlHashEntry));
+    #####:  186:        if (table->table) {
+    #####:  187:	    memset(table->table, 0, size * sizeof(xmlHashEntry));
+        -:  188:#ifdef HASH_RANDOMIZATION
+    #####:  189:            table->random_seed = __xmlRandom();
+        -:  190:#endif
+    #####:  191:	    return(table);
+        -:  192:        }
+    #####:  193:        xmlFree(table);
+        -:  194:    }
+    #####:  195:    return(NULL);
+        -:  196:}
+        -:  197:
+        -:  198:/**
+        -:  199: * xmlHashCreateDict:
+        -:  200: * @size: the size of the hash table
+        -:  201: * @dict: a dictionary to use for the hash
+        -:  202: *
+        -:  203: * Create a new xmlHashTablePtr which will use @dict as the internal dictionary
+        -:  204: *
+        -:  205: * Returns the newly created object, or NULL if an error occured.
+        -:  206: */
+        -:  207:xmlHashTablePtr
+    #####:  208:xmlHashCreateDict(int size, xmlDictPtr dict) {
+        -:  209:    xmlHashTablePtr table;
+        -:  210:
+    #####:  211:    table = xmlHashCreate(size);
+    #####:  212:    if (table != NULL) {
+    #####:  213:        table->dict = dict;
+    #####:  214:	xmlDictReference(dict);
+        -:  215:    }
+    #####:  216:    return(table);
+        -:  217:}
+        -:  218:
+        -:  219:/**
+        -:  220: * xmlHashGrow:
+        -:  221: * @table: the hash table
+        -:  222: * @size: the new size of the hash table
+        -:  223: *
+        -:  224: * resize the hash table
+        -:  225: *
+        -:  226: * Returns 0 in case of success, -1 in case of failure
+        -:  227: */
+        -:  228:static int
+    #####:  229:xmlHashGrow(xmlHashTablePtr table, int size) {
+        -:  230:    unsigned long key;
+        -:  231:    int oldsize, i;
+        -:  232:    xmlHashEntryPtr iter, next;
+        -:  233:    struct _xmlHashEntry *oldtable;
+        -:  234:#ifdef DEBUG_GROW
+        -:  235:    unsigned long nbElem = 0;
+        -:  236:#endif
+        -:  237:
+    #####:  238:    if (table == NULL)
+    #####:  239:	return(-1);
+    #####:  240:    if (size < 8)
+    #####:  241:        return(-1);
+    #####:  242:    if (size > 8 * 2048)
+    #####:  243:	return(-1);
+        -:  244:
+    #####:  245:    oldsize = table->size;
+    #####:  246:    oldtable = table->table;
+    #####:  247:    if (oldtable == NULL)
+    #####:  248:        return(-1);
+        -:  249:
+    #####:  250:    table->table = xmlMalloc(size * sizeof(xmlHashEntry));
+    #####:  251:    if (table->table == NULL) {
+    #####:  252:	table->table = oldtable;
+    #####:  253:	return(-1);
+        -:  254:    }
+    #####:  255:    memset(table->table, 0, size * sizeof(xmlHashEntry));
+    #####:  256:    table->size = size;
+        -:  257:
+        -:  258:    /*	If the two loops are merged, there would be situations where
+        -:  259:	a new entry needs to allocated and data copied into it from
+        -:  260:	the main table. So instead, we run through the array twice, first
+        -:  261:	copying all the elements in the main array (where we can't get
+        -:  262:	conflicts) and then the rest, so we only free (and don't allocate)
+        -:  263:    */
+    #####:  264:    for (i = 0; i < oldsize; i++) {
+    #####:  265:	if (oldtable[i].valid == 0)
+    #####:  266:	    continue;
+    #####:  267:	key = xmlHashComputeKey(table, oldtable[i].name, oldtable[i].name2,
+    #####:  268:				oldtable[i].name3);
+    #####:  269:	memcpy(&(table->table[key]), &(oldtable[i]), sizeof(xmlHashEntry));
+    #####:  270:	table->table[key].next = NULL;
+        -:  271:    }
+        -:  272:
+    #####:  273:    for (i = 0; i < oldsize; i++) {
+    #####:  274:	iter = oldtable[i].next;
+    #####:  275:	while (iter) {
+    #####:  276:	    next = iter->next;
+        -:  277:
+        -:  278:	    /*
+        -:  279:	     * put back the entry in the new table
+        -:  280:	     */
+        -:  281:
+    #####:  282:	    key = xmlHashComputeKey(table, iter->name, iter->name2,
+    #####:  283:		                    iter->name3);
+    #####:  284:	    if (table->table[key].valid == 0) {
+    #####:  285:		memcpy(&(table->table[key]), iter, sizeof(xmlHashEntry));
+    #####:  286:		table->table[key].next = NULL;
+    #####:  287:		xmlFree(iter);
+        -:  288:	    } else {
+    #####:  289:		iter->next = table->table[key].next;
+    #####:  290:		table->table[key].next = iter;
+        -:  291:	    }
+        -:  292:
+        -:  293:#ifdef DEBUG_GROW
+        -:  294:	    nbElem++;
+        -:  295:#endif
+        -:  296:
+    #####:  297:	    iter = next;
+        -:  298:	}
+        -:  299:    }
+        -:  300:
+    #####:  301:    xmlFree(oldtable);
+        -:  302:
+        -:  303:#ifdef DEBUG_GROW
+        -:  304:    xmlGenericError(xmlGenericErrorContext,
+        -:  305:	    "xmlHashGrow : from %d to %d, %d elems\n", oldsize, size, nbElem);
+        -:  306:#endif
+        -:  307:
+    #####:  308:    return(0);
+        -:  309:}
+        -:  310:
+        -:  311:/**
+        -:  312: * xmlHashFree:
+        -:  313: * @table: the hash table
+        -:  314: * @f:  the deallocator function for items in the hash
+        -:  315: *
+        -:  316: * Free the hash @table and its contents. The userdata is
+        -:  317: * deallocated with @f if provided.
+        -:  318: */
+        -:  319:void
+    #####:  320:xmlHashFree(xmlHashTablePtr table, xmlHashDeallocator f) {
+        -:  321:    int i;
+        -:  322:    xmlHashEntryPtr iter;
+        -:  323:    xmlHashEntryPtr next;
+    #####:  324:    int inside_table = 0;
+        -:  325:    int nbElems;
+        -:  326:
+    #####:  327:    if (table == NULL)
+    #####:  328:	return;
+    #####:  329:    if (table->table) {
+    #####:  330:	nbElems = table->nbElems;
+    #####:  331:	for(i = 0; (i < table->size) && (nbElems > 0); i++) {
+    #####:  332:	    iter = &(table->table[i]);
+    #####:  333:	    if (iter->valid == 0)
+    #####:  334:		continue;
+    #####:  335:	    inside_table = 1;
+    #####:  336:	    while (iter) {
+    #####:  337:		next = iter->next;
+    #####:  338:		if ((f != NULL) && (iter->payload != NULL))
+    #####:  339:		    f(iter->payload, iter->name);
+    #####:  340:		if (table->dict == NULL) {
+    #####:  341:		    if (iter->name)
+    #####:  342:			xmlFree(iter->name);
+    #####:  343:		    if (iter->name2)
+    #####:  344:			xmlFree(iter->name2);
+    #####:  345:		    if (iter->name3)
+    #####:  346:			xmlFree(iter->name3);
+        -:  347:		}
+    #####:  348:		iter->payload = NULL;
+    #####:  349:		if (!inside_table)
+    #####:  350:		    xmlFree(iter);
+    #####:  351:		nbElems--;
+    #####:  352:		inside_table = 0;
+    #####:  353:		iter = next;
+        -:  354:	    }
+        -:  355:	}
+    #####:  356:	xmlFree(table->table);
+        -:  357:    }
+    #####:  358:    if (table->dict)
+    #####:  359:        xmlDictFree(table->dict);
+    #####:  360:    xmlFree(table);
+        -:  361:}
+        -:  362:
+        -:  363:/**
+        -:  364: * xmlHashAddEntry:
+        -:  365: * @table: the hash table
+        -:  366: * @name: the name of the userdata
+        -:  367: * @userdata: a pointer to the userdata
+        -:  368: *
+        -:  369: * Add the @userdata to the hash @table. This can later be retrieved
+        -:  370: * by using the @name. Duplicate names generate errors.
+        -:  371: *
+        -:  372: * Returns 0 the addition succeeded and -1 in case of error.
+        -:  373: */
+        -:  374:int
+    #####:  375:xmlHashAddEntry(xmlHashTablePtr table, const xmlChar *name, void *userdata) {
+    #####:  376:    return(xmlHashAddEntry3(table, name, NULL, NULL, userdata));
+        -:  377:}
+        -:  378:
+        -:  379:/**
+        -:  380: * xmlHashAddEntry2:
+        -:  381: * @table: the hash table
+        -:  382: * @name: the name of the userdata
+        -:  383: * @name2: a second name of the userdata
+        -:  384: * @userdata: a pointer to the userdata
+        -:  385: *
+        -:  386: * Add the @userdata to the hash @table. This can later be retrieved
+        -:  387: * by using the (@name, @name2) tuple. Duplicate tuples generate errors.
+        -:  388: *
+        -:  389: * Returns 0 the addition succeeded and -1 in case of error.
+        -:  390: */
+        -:  391:int
+    #####:  392:xmlHashAddEntry2(xmlHashTablePtr table, const xmlChar *name,
+        -:  393:	        const xmlChar *name2, void *userdata) {
+    #####:  394:    return(xmlHashAddEntry3(table, name, name2, NULL, userdata));
+        -:  395:}
+        -:  396:
+        -:  397:/**
+        -:  398: * xmlHashUpdateEntry:
+        -:  399: * @table: the hash table
+        -:  400: * @name: the name of the userdata
+        -:  401: * @userdata: a pointer to the userdata
+        -:  402: * @f: the deallocator function for replaced item (if any)
+        -:  403: *
+        -:  404: * Add the @userdata to the hash @table. This can later be retrieved
+        -:  405: * by using the @name. Existing entry for this @name will be removed
+        -:  406: * and freed with @f if found.
+        -:  407: *
+        -:  408: * Returns 0 the addition succeeded and -1 in case of error.
+        -:  409: */
+        -:  410:int
+    #####:  411:xmlHashUpdateEntry(xmlHashTablePtr table, const xmlChar *name,
+        -:  412:	           void *userdata, xmlHashDeallocator f) {
+    #####:  413:    return(xmlHashUpdateEntry3(table, name, NULL, NULL, userdata, f));
+        -:  414:}
+        -:  415:
+        -:  416:/**
+        -:  417: * xmlHashUpdateEntry2:
+        -:  418: * @table: the hash table
+        -:  419: * @name: the name of the userdata
+        -:  420: * @name2: a second name of the userdata
+        -:  421: * @userdata: a pointer to the userdata
+        -:  422: * @f: the deallocator function for replaced item (if any)
+        -:  423: *
+        -:  424: * Add the @userdata to the hash @table. This can later be retrieved
+        -:  425: * by using the (@name, @name2) tuple. Existing entry for this tuple will
+        -:  426: * be removed and freed with @f if found.
+        -:  427: *
+        -:  428: * Returns 0 the addition succeeded and -1 in case of error.
+        -:  429: */
+        -:  430:int
+    #####:  431:xmlHashUpdateEntry2(xmlHashTablePtr table, const xmlChar *name,
+        -:  432:	           const xmlChar *name2, void *userdata,
+        -:  433:		   xmlHashDeallocator f) {
+    #####:  434:    return(xmlHashUpdateEntry3(table, name, name2, NULL, userdata, f));
+        -:  435:}
+        -:  436:
+        -:  437:/**
+        -:  438: * xmlHashLookup:
+        -:  439: * @table: the hash table
+        -:  440: * @name: the name of the userdata
+        -:  441: *
+        -:  442: * Find the userdata specified by the @name.
+        -:  443: *
+        -:  444: * Returns the pointer to the userdata
+        -:  445: */
+        -:  446:void *
+    #####:  447:xmlHashLookup(xmlHashTablePtr table, const xmlChar *name) {
+    #####:  448:    return(xmlHashLookup3(table, name, NULL, NULL));
+        -:  449:}
+        -:  450:
+        -:  451:/**
+        -:  452: * xmlHashLookup2:
+        -:  453: * @table: the hash table
+        -:  454: * @name: the name of the userdata
+        -:  455: * @name2: a second name of the userdata
+        -:  456: *
+        -:  457: * Find the userdata specified by the (@name, @name2) tuple.
+        -:  458: *
+        -:  459: * Returns the pointer to the userdata
+        -:  460: */
+        -:  461:void *
+    #####:  462:xmlHashLookup2(xmlHashTablePtr table, const xmlChar *name,
+        -:  463:	      const xmlChar *name2) {
+    #####:  464:    return(xmlHashLookup3(table, name, name2, NULL));
+        -:  465:}
+        -:  466:
+        -:  467:/**
+        -:  468: * xmlHashQLookup:
+        -:  469: * @table: the hash table
+        -:  470: * @prefix: the prefix of the userdata
+        -:  471: * @name: the name of the userdata
+        -:  472: *
+        -:  473: * Find the userdata specified by the QName @prefix:@name/@name.
+        -:  474: *
+        -:  475: * Returns the pointer to the userdata
+        -:  476: */
+        -:  477:void *
+    #####:  478:xmlHashQLookup(xmlHashTablePtr table, const xmlChar *prefix,
+        -:  479:               const xmlChar *name) {
+    #####:  480:    return(xmlHashQLookup3(table, prefix, name, NULL, NULL, NULL, NULL));
+        -:  481:}
+        -:  482:
+        -:  483:/**
+        -:  484: * xmlHashQLookup2:
+        -:  485: * @table: the hash table
+        -:  486: * @prefix: the prefix of the userdata
+        -:  487: * @name: the name of the userdata
+        -:  488: * @prefix2: the second prefix of the userdata
+        -:  489: * @name2: a second name of the userdata
+        -:  490: *
+        -:  491: * Find the userdata specified by the QNames tuple
+        -:  492: *
+        -:  493: * Returns the pointer to the userdata
+        -:  494: */
+        -:  495:void *
+    #####:  496:xmlHashQLookup2(xmlHashTablePtr table, const xmlChar *prefix,
+        -:  497:                const xmlChar *name, const xmlChar *prefix2,
+        -:  498:	        const xmlChar *name2) {
+    #####:  499:    return(xmlHashQLookup3(table, prefix, name, prefix2, name2, NULL, NULL));
+        -:  500:}
+        -:  501:
+        -:  502:/**
+        -:  503: * xmlHashAddEntry3:
+        -:  504: * @table: the hash table
+        -:  505: * @name: the name of the userdata
+        -:  506: * @name2: a second name of the userdata
+        -:  507: * @name3: a third name of the userdata
+        -:  508: * @userdata: a pointer to the userdata
+        -:  509: *
+        -:  510: * Add the @userdata to the hash @table. This can later be retrieved
+        -:  511: * by using the tuple (@name, @name2, @name3). Duplicate entries generate
+        -:  512: * errors.
+        -:  513: *
+        -:  514: * Returns 0 the addition succeeded and -1 in case of error.
+        -:  515: */
+        -:  516:int
+    #####:  517:xmlHashAddEntry3(xmlHashTablePtr table, const xmlChar *name,
+        -:  518:	         const xmlChar *name2, const xmlChar *name3,
+        -:  519:		 void *userdata) {
+    #####:  520:    unsigned long key, len = 0;
+        -:  521:    xmlHashEntryPtr entry;
+        -:  522:    xmlHashEntryPtr insert;
+        -:  523:
+    #####:  524:    if ((table == NULL) || (name == NULL))
+    #####:  525:	return(-1);
+        -:  526:
+        -:  527:    /*
+        -:  528:     * If using a dict internalize if needed
+        -:  529:     */
+    #####:  530:    if (table->dict) {
+    #####:  531:        if (!xmlDictOwns(table->dict, name)) {
+    #####:  532:	    name = xmlDictLookup(table->dict, name, -1);
+    #####:  533:	    if (name == NULL)
+    #####:  534:	        return(-1);
+        -:  535:	}
+    #####:  536:        if ((name2 != NULL) && (!xmlDictOwns(table->dict, name2))) {
+    #####:  537:	    name2 = xmlDictLookup(table->dict, name2, -1);
+    #####:  538:	    if (name2 == NULL)
+    #####:  539:	        return(-1);
+        -:  540:	}
+    #####:  541:        if ((name3 != NULL) && (!xmlDictOwns(table->dict, name3))) {
+    #####:  542:	    name3 = xmlDictLookup(table->dict, name3, -1);
+    #####:  543:	    if (name3 == NULL)
+    #####:  544:	        return(-1);
+        -:  545:	}
+        -:  546:    }
+        -:  547:
+        -:  548:    /*
+        -:  549:     * Check for duplicate and insertion location.
+        -:  550:     */
+    #####:  551:    key = xmlHashComputeKey(table, name, name2, name3);
+    #####:  552:    if (table->table[key].valid == 0) {
+    #####:  553:	insert = NULL;
+        -:  554:    } else {
+    #####:  555:        if (table->dict) {
+    #####:  556:	    for (insert = &(table->table[key]); insert->next != NULL;
+    #####:  557:		 insert = insert->next) {
+    #####:  558:		if ((insert->name == name) &&
+    #####:  559:		    (insert->name2 == name2) &&
+    #####:  560:		    (insert->name3 == name3))
+    #####:  561:		    return(-1);
+    #####:  562:		len++;
+        -:  563:	    }
+    #####:  564:	    if ((insert->name == name) &&
+    #####:  565:		(insert->name2 == name2) &&
+    #####:  566:		(insert->name3 == name3))
+    #####:  567:		return(-1);
+        -:  568:	} else {
+    #####:  569:	    for (insert = &(table->table[key]); insert->next != NULL;
+    #####:  570:		 insert = insert->next) {
+    #####:  571:		if ((xmlStrEqual(insert->name, name)) &&
+    #####:  572:		    (xmlStrEqual(insert->name2, name2)) &&
+    #####:  573:		    (xmlStrEqual(insert->name3, name3)))
+    #####:  574:		    return(-1);
+    #####:  575:		len++;
+        -:  576:	    }
+    #####:  577:	    if ((xmlStrEqual(insert->name, name)) &&
+    #####:  578:		(xmlStrEqual(insert->name2, name2)) &&
+    #####:  579:		(xmlStrEqual(insert->name3, name3)))
+    #####:  580:		return(-1);
+        -:  581:	}
+        -:  582:    }
+        -:  583:
+    #####:  584:    if (insert == NULL) {
+    #####:  585:	entry = &(table->table[key]);
+        -:  586:    } else {
+    #####:  587:	entry = xmlMalloc(sizeof(xmlHashEntry));
+    #####:  588:	if (entry == NULL)
+    #####:  589:	     return(-1);
+        -:  590:    }
+        -:  591:
+    #####:  592:    if (table->dict != NULL) {
+    #####:  593:        entry->name = (xmlChar *) name;
+    #####:  594:        entry->name2 = (xmlChar *) name2;
+    #####:  595:        entry->name3 = (xmlChar *) name3;
+        -:  596:    } else {
+    #####:  597:	entry->name = xmlStrdup(name);
+    #####:  598:	entry->name2 = xmlStrdup(name2);
+    #####:  599:	entry->name3 = xmlStrdup(name3);
+        -:  600:    }
+    #####:  601:    entry->payload = userdata;
+    #####:  602:    entry->next = NULL;
+    #####:  603:    entry->valid = 1;
+        -:  604:
+        -:  605:
+    #####:  606:    if (insert != NULL)
+    #####:  607:	insert->next = entry;
+        -:  608:
+    #####:  609:    table->nbElems++;
+        -:  610:
+    #####:  611:    if (len > MAX_HASH_LEN)
+    #####:  612:	xmlHashGrow(table, MAX_HASH_LEN * table->size);
+        -:  613:
+    #####:  614:    return(0);
+        -:  615:}
+        -:  616:
+        -:  617:/**
+        -:  618: * xmlHashUpdateEntry3:
+        -:  619: * @table: the hash table
+        -:  620: * @name: the name of the userdata
+        -:  621: * @name2: a second name of the userdata
+        -:  622: * @name3: a third name of the userdata
+        -:  623: * @userdata: a pointer to the userdata
+        -:  624: * @f: the deallocator function for replaced item (if any)
+        -:  625: *
+        -:  626: * Add the @userdata to the hash @table. This can later be retrieved
+        -:  627: * by using the tuple (@name, @name2, @name3). Existing entry for this tuple
+        -:  628: * will be removed and freed with @f if found.
+        -:  629: *
+        -:  630: * Returns 0 the addition succeeded and -1 in case of error.
+        -:  631: */
+        -:  632:int
+    #####:  633:xmlHashUpdateEntry3(xmlHashTablePtr table, const xmlChar *name,
+        -:  634:	           const xmlChar *name2, const xmlChar *name3,
+        -:  635:		   void *userdata, xmlHashDeallocator f) {
+        -:  636:    unsigned long key;
+        -:  637:    xmlHashEntryPtr entry;
+        -:  638:    xmlHashEntryPtr insert;
+        -:  639:
+    #####:  640:    if ((table == NULL) || name == NULL)
+    #####:  641:	return(-1);
+        -:  642:
+        -:  643:    /*
+        -:  644:     * If using a dict internalize if needed
+        -:  645:     */
+    #####:  646:    if (table->dict) {
+    #####:  647:        if (!xmlDictOwns(table->dict, name)) {
+    #####:  648:	    name = xmlDictLookup(table->dict, name, -1);
+    #####:  649:	    if (name == NULL)
+    #####:  650:	        return(-1);
+        -:  651:	}
+    #####:  652:        if ((name2 != NULL) && (!xmlDictOwns(table->dict, name2))) {
+    #####:  653:	    name2 = xmlDictLookup(table->dict, name2, -1);
+    #####:  654:	    if (name2 == NULL)
+    #####:  655:	        return(-1);
+        -:  656:	}
+    #####:  657:        if ((name3 != NULL) && (!xmlDictOwns(table->dict, name3))) {
+    #####:  658:	    name3 = xmlDictLookup(table->dict, name3, -1);
+    #####:  659:	    if (name3 == NULL)
+    #####:  660:	        return(-1);
+        -:  661:	}
+        -:  662:    }
+        -:  663:
+        -:  664:    /*
+        -:  665:     * Check for duplicate and insertion location.
+        -:  666:     */
+    #####:  667:    key = xmlHashComputeKey(table, name, name2, name3);
+    #####:  668:    if (table->table[key].valid == 0) {
+    #####:  669:	insert = NULL;
+        -:  670:    } else {
+    #####:  671:        if (table ->dict) {
+    #####:  672:	    for (insert = &(table->table[key]); insert->next != NULL;
+    #####:  673:		 insert = insert->next) {
+    #####:  674:		if ((insert->name == name) &&
+    #####:  675:		    (insert->name2 == name2) &&
+    #####:  676:		    (insert->name3 == name3)) {
+    #####:  677:		    if (f)
+    #####:  678:			f(insert->payload, insert->name);
+    #####:  679:		    insert->payload = userdata;
+    #####:  680:		    return(0);
+        -:  681:		}
+        -:  682:	    }
+    #####:  683:	    if ((insert->name == name) &&
+    #####:  684:		(insert->name2 == name2) &&
+    #####:  685:		(insert->name3 == name3)) {
+    #####:  686:		if (f)
+    #####:  687:		    f(insert->payload, insert->name);
+    #####:  688:		insert->payload = userdata;
+    #####:  689:		return(0);
+        -:  690:	    }
+        -:  691:	} else {
+    #####:  692:	    for (insert = &(table->table[key]); insert->next != NULL;
+    #####:  693:		 insert = insert->next) {
+    #####:  694:		if ((xmlStrEqual(insert->name, name)) &&
+    #####:  695:		    (xmlStrEqual(insert->name2, name2)) &&
+    #####:  696:		    (xmlStrEqual(insert->name3, name3))) {
+    #####:  697:		    if (f)
+    #####:  698:			f(insert->payload, insert->name);
+    #####:  699:		    insert->payload = userdata;
+    #####:  700:		    return(0);
+        -:  701:		}
+        -:  702:	    }
+    #####:  703:	    if ((xmlStrEqual(insert->name, name)) &&
+    #####:  704:		(xmlStrEqual(insert->name2, name2)) &&
+    #####:  705:		(xmlStrEqual(insert->name3, name3))) {
+    #####:  706:		if (f)
+    #####:  707:		    f(insert->payload, insert->name);
+    #####:  708:		insert->payload = userdata;
+    #####:  709:		return(0);
+        -:  710:	    }
+        -:  711:	}
+        -:  712:    }
+        -:  713:
+    #####:  714:    if (insert == NULL) {
+    #####:  715:	entry =  &(table->table[key]);
+        -:  716:    } else {
+    #####:  717:	entry = xmlMalloc(sizeof(xmlHashEntry));
+    #####:  718:	if (entry == NULL)
+    #####:  719:	     return(-1);
+        -:  720:    }
+        -:  721:
+    #####:  722:    if (table->dict != NULL) {
+    #####:  723:        entry->name = (xmlChar *) name;
+    #####:  724:        entry->name2 = (xmlChar *) name2;
+    #####:  725:        entry->name3 = (xmlChar *) name3;
+        -:  726:    } else {
+    #####:  727:	entry->name = xmlStrdup(name);
+    #####:  728:	entry->name2 = xmlStrdup(name2);
+    #####:  729:	entry->name3 = xmlStrdup(name3);
+        -:  730:    }
+    #####:  731:    entry->payload = userdata;
+    #####:  732:    entry->next = NULL;
+    #####:  733:    entry->valid = 1;
+    #####:  734:    table->nbElems++;
+        -:  735:
+        -:  736:
+    #####:  737:    if (insert != NULL) {
+    #####:  738:	insert->next = entry;
+        -:  739:    }
+    #####:  740:    return(0);
+        -:  741:}
+        -:  742:
+        -:  743:/**
+        -:  744: * xmlHashLookup3:
+        -:  745: * @table: the hash table
+        -:  746: * @name: the name of the userdata
+        -:  747: * @name2: a second name of the userdata
+        -:  748: * @name3: a third name of the userdata
+        -:  749: *
+        -:  750: * Find the userdata specified by the (@name, @name2, @name3) tuple.
+        -:  751: *
+        -:  752: * Returns the a pointer to the userdata
+        -:  753: */
+        -:  754:void *
+    #####:  755:xmlHashLookup3(xmlHashTablePtr table, const xmlChar *name,
+        -:  756:	       const xmlChar *name2, const xmlChar *name3) {
+        -:  757:    unsigned long key;
+        -:  758:    xmlHashEntryPtr entry;
+        -:  759:
+    #####:  760:    if (table == NULL)
+    #####:  761:	return(NULL);
+    #####:  762:    if (name == NULL)
+    #####:  763:	return(NULL);
+    #####:  764:    key = xmlHashComputeKey(table, name, name2, name3);
+    #####:  765:    if (table->table[key].valid == 0)
+    #####:  766:	return(NULL);
+    #####:  767:    if (table->dict) {
+    #####:  768:	for (entry = &(table->table[key]); entry != NULL; entry = entry->next) {
+    #####:  769:	    if ((entry->name == name) &&
+    #####:  770:		(entry->name2 == name2) &&
+    #####:  771:		(entry->name3 == name3))
+    #####:  772:		return(entry->payload);
+        -:  773:	}
+        -:  774:    }
+    #####:  775:    for (entry = &(table->table[key]); entry != NULL; entry = entry->next) {
+    #####:  776:	if ((xmlStrEqual(entry->name, name)) &&
+    #####:  777:	    (xmlStrEqual(entry->name2, name2)) &&
+    #####:  778:	    (xmlStrEqual(entry->name3, name3)))
+    #####:  779:	    return(entry->payload);
+        -:  780:    }
+    #####:  781:    return(NULL);
+        -:  782:}
+        -:  783:
+        -:  784:/**
+        -:  785: * xmlHashQLookup3:
+        -:  786: * @table: the hash table
+        -:  787: * @prefix: the prefix of the userdata
+        -:  788: * @name: the name of the userdata
+        -:  789: * @prefix2: the second prefix of the userdata
+        -:  790: * @name2: a second name of the userdata
+        -:  791: * @prefix3: the third prefix of the userdata
+        -:  792: * @name3: a third name of the userdata
+        -:  793: *
+        -:  794: * Find the userdata specified by the (@name, @name2, @name3) tuple.
+        -:  795: *
+        -:  796: * Returns the a pointer to the userdata
+        -:  797: */
+        -:  798:void *
+    #####:  799:xmlHashQLookup3(xmlHashTablePtr table,
+        -:  800:                const xmlChar *prefix, const xmlChar *name,
+        -:  801:		const xmlChar *prefix2, const xmlChar *name2,
+        -:  802:		const xmlChar *prefix3, const xmlChar *name3) {
+        -:  803:    unsigned long key;
+        -:  804:    xmlHashEntryPtr entry;
+        -:  805:
+    #####:  806:    if (table == NULL)
+    #####:  807:	return(NULL);
+    #####:  808:    if (name == NULL)
+    #####:  809:	return(NULL);
+    #####:  810:    key = xmlHashComputeQKey(table, prefix, name, prefix2,
+        -:  811:                             name2, prefix3, name3);
+    #####:  812:    if (table->table[key].valid == 0)
+    #####:  813:	return(NULL);
+    #####:  814:    for (entry = &(table->table[key]); entry != NULL; entry = entry->next) {
+    #####:  815:	if ((xmlStrQEqual(prefix, name, entry->name)) &&
+    #####:  816:	    (xmlStrQEqual(prefix2, name2, entry->name2)) &&
+    #####:  817:	    (xmlStrQEqual(prefix3, name3, entry->name3)))
+    #####:  818:	    return(entry->payload);
+        -:  819:    }
+    #####:  820:    return(NULL);
+        -:  821:}
+        -:  822:
+        -:  823:typedef struct {
+        -:  824:    xmlHashScanner hashscanner;
+        -:  825:    void *data;
+        -:  826:} stubData;
+        -:  827:
+        -:  828:static void
+    #####:  829:stubHashScannerFull (void *payload, void *data, const xmlChar *name,
+        -:  830:                     const xmlChar *name2 ATTRIBUTE_UNUSED,
+        -:  831:		     const xmlChar *name3 ATTRIBUTE_UNUSED) {
+    #####:  832:    stubData *stubdata = (stubData *) data;
+    #####:  833:    stubdata->hashscanner (payload, stubdata->data, (xmlChar *) name);
+    #####:  834:}
+        -:  835:
+        -:  836:/**
+        -:  837: * xmlHashScan:
+        -:  838: * @table: the hash table
+        -:  839: * @f:  the scanner function for items in the hash
+        -:  840: * @data:  extra data passed to f
+        -:  841: *
+        -:  842: * Scan the hash @table and applied @f to each value.
+        -:  843: */
+        -:  844:void
+    #####:  845:xmlHashScan(xmlHashTablePtr table, xmlHashScanner f, void *data) {
+        -:  846:    stubData stubdata;
+    #####:  847:    stubdata.data = data;
+    #####:  848:    stubdata.hashscanner = f;
+    #####:  849:    xmlHashScanFull (table, stubHashScannerFull, &stubdata);
+    #####:  850:}
+        -:  851:
+        -:  852:/**
+        -:  853: * xmlHashScanFull:
+        -:  854: * @table: the hash table
+        -:  855: * @f:  the scanner function for items in the hash
+        -:  856: * @data:  extra data passed to f
+        -:  857: *
+        -:  858: * Scan the hash @table and applied @f to each value.
+        -:  859: */
+        -:  860:void
+    #####:  861:xmlHashScanFull(xmlHashTablePtr table, xmlHashScannerFull f, void *data) {
+        -:  862:    int i, nb;
+        -:  863:    xmlHashEntryPtr iter;
+        -:  864:    xmlHashEntryPtr next;
+        -:  865:
+    #####:  866:    if (table == NULL)
+    #####:  867:	return;
+    #####:  868:    if (f == NULL)
+    #####:  869:	return;
+        -:  870:
+    #####:  871:    if (table->table) {
+    #####:  872:	for(i = 0; i < table->size; i++) {
+    #####:  873:	    if (table->table[i].valid == 0)
+    #####:  874:		continue;
+    #####:  875:	    iter = &(table->table[i]);
+    #####:  876:	    while (iter) {
+    #####:  877:		next = iter->next;
+    #####:  878:                nb = table->nbElems;
+    #####:  879:		if ((f != NULL) && (iter->payload != NULL))
+    #####:  880:		    f(iter->payload, data, iter->name,
+    #####:  881:		      iter->name2, iter->name3);
+    #####:  882:                if (nb != table->nbElems) {
+        -:  883:                    /* table was modified by the callback, be careful */
+    #####:  884:                    if (iter == &(table->table[i])) {
+    #####:  885:                        if (table->table[i].valid == 0)
+    #####:  886:                            iter = NULL;
+    #####:  887:                        if (table->table[i].next != next)
+    #####:  888:			    iter = &(table->table[i]);
+        -:  889:                    } else
+    #####:  890:		        iter = next;
+        -:  891:                } else
+    #####:  892:		    iter = next;
+        -:  893:	    }
+        -:  894:	}
+        -:  895:    }
+        -:  896:}
+        -:  897:
+        -:  898:/**
+        -:  899: * xmlHashScan3:
+        -:  900: * @table: the hash table
+        -:  901: * @name: the name of the userdata or NULL
+        -:  902: * @name2: a second name of the userdata or NULL
+        -:  903: * @name3: a third name of the userdata or NULL
+        -:  904: * @f:  the scanner function for items in the hash
+        -:  905: * @data:  extra data passed to f
+        -:  906: *
+        -:  907: * Scan the hash @table and applied @f to each value matching
+        -:  908: * (@name, @name2, @name3) tuple. If one of the names is null,
+        -:  909: * the comparison is considered to match.
+        -:  910: */
+        -:  911:void
+    #####:  912:xmlHashScan3(xmlHashTablePtr table, const xmlChar *name,
+        -:  913:	     const xmlChar *name2, const xmlChar *name3,
+        -:  914:	     xmlHashScanner f, void *data) {
+    #####:  915:    xmlHashScanFull3 (table, name, name2, name3,
+        -:  916:		      (xmlHashScannerFull) f, data);
+    #####:  917:}
+        -:  918:
+        -:  919:/**
+        -:  920: * xmlHashScanFull3:
+        -:  921: * @table: the hash table
+        -:  922: * @name: the name of the userdata or NULL
+        -:  923: * @name2: a second name of the userdata or NULL
+        -:  924: * @name3: a third name of the userdata or NULL
+        -:  925: * @f:  the scanner function for items in the hash
+        -:  926: * @data:  extra data passed to f
+        -:  927: *
+        -:  928: * Scan the hash @table and applied @f to each value matching
+        -:  929: * (@name, @name2, @name3) tuple. If one of the names is null,
+        -:  930: * the comparison is considered to match.
+        -:  931: */
+        -:  932:void
+    #####:  933:xmlHashScanFull3(xmlHashTablePtr table, const xmlChar *name,
+        -:  934:		 const xmlChar *name2, const xmlChar *name3,
+        -:  935:		 xmlHashScannerFull f, void *data) {
+        -:  936:    int i;
+        -:  937:    xmlHashEntryPtr iter;
+        -:  938:    xmlHashEntryPtr next;
+        -:  939:
+    #####:  940:    if (table == NULL)
+    #####:  941:	return;
+    #####:  942:    if (f == NULL)
+    #####:  943:	return;
+        -:  944:
+    #####:  945:    if (table->table) {
+    #####:  946:	for(i = 0; i < table->size; i++) {
+    #####:  947:	    if (table->table[i].valid == 0)
+    #####:  948:		continue;
+    #####:  949:	    iter = &(table->table[i]);
+    #####:  950:	    while (iter) {
+    #####:  951:		next = iter->next;
+    #####:  952:		if (((name == NULL) || (xmlStrEqual(name, iter->name))) &&
+    #####:  953:		    ((name2 == NULL) || (xmlStrEqual(name2, iter->name2))) &&
+    #####:  954:		    ((name3 == NULL) || (xmlStrEqual(name3, iter->name3))) &&
+    #####:  955:		    (iter->payload != NULL)) {
+    #####:  956:		    f(iter->payload, data, iter->name,
+    #####:  957:		      iter->name2, iter->name3);
+        -:  958:		}
+    #####:  959:		iter = next;
+        -:  960:	    }
+        -:  961:	}
+        -:  962:    }
+        -:  963:}
+        -:  964:
+        -:  965:/**
+        -:  966: * xmlHashCopy:
+        -:  967: * @table: the hash table
+        -:  968: * @f:  the copier function for items in the hash
+        -:  969: *
+        -:  970: * Scan the hash @table and applied @f to each value.
+        -:  971: *
+        -:  972: * Returns the new table or NULL in case of error.
+        -:  973: */
+        -:  974:xmlHashTablePtr
+    #####:  975:xmlHashCopy(xmlHashTablePtr table, xmlHashCopier f) {
+        -:  976:    int i;
+        -:  977:    xmlHashEntryPtr iter;
+        -:  978:    xmlHashEntryPtr next;
+        -:  979:    xmlHashTablePtr ret;
+        -:  980:
+    #####:  981:    if (table == NULL)
+    #####:  982:	return(NULL);
+    #####:  983:    if (f == NULL)
+    #####:  984:	return(NULL);
+        -:  985:
+    #####:  986:    ret = xmlHashCreate(table->size);
+    #####:  987:    if (ret == NULL)
+    #####:  988:        return(NULL);
+        -:  989:
+    #####:  990:    if (table->table) {
+    #####:  991:	for(i = 0; i < table->size; i++) {
+    #####:  992:	    if (table->table[i].valid == 0)
+    #####:  993:		continue;
+    #####:  994:	    iter = &(table->table[i]);
+    #####:  995:	    while (iter) {
+    #####:  996:		next = iter->next;
+    #####:  997:		xmlHashAddEntry3(ret, iter->name, iter->name2,
+    #####:  998:			         iter->name3, f(iter->payload, iter->name));
+    #####:  999:		iter = next;
+        -: 1000:	    }
+        -: 1001:	}
+        -: 1002:    }
+    #####: 1003:    ret->nbElems = table->nbElems;
+    #####: 1004:    return(ret);
+        -: 1005:}
+        -: 1006:
+        -: 1007:/**
+        -: 1008: * xmlHashSize:
+        -: 1009: * @table: the hash table
+        -: 1010: *
+        -: 1011: * Query the number of elements installed in the hash @table.
+        -: 1012: *
+        -: 1013: * Returns the number of elements in the hash table or
+        -: 1014: * -1 in case of error
+        -: 1015: */
+        -: 1016:int
+    #####: 1017:xmlHashSize(xmlHashTablePtr table) {
+    #####: 1018:    if (table == NULL)
+    #####: 1019:	return(-1);
+    #####: 1020:    return(table->nbElems);
+        -: 1021:}
+        -: 1022:
+        -: 1023:/**
+        -: 1024: * xmlHashRemoveEntry:
+        -: 1025: * @table: the hash table
+        -: 1026: * @name: the name of the userdata
+        -: 1027: * @f: the deallocator function for removed item (if any)
+        -: 1028: *
+        -: 1029: * Find the userdata specified by the @name and remove
+        -: 1030: * it from the hash @table. Existing userdata for this tuple will be removed
+        -: 1031: * and freed with @f.
+        -: 1032: *
+        -: 1033: * Returns 0 if the removal succeeded and -1 in case of error or not found.
+        -: 1034: */
+    #####: 1035:int xmlHashRemoveEntry(xmlHashTablePtr table, const xmlChar *name,
+        -: 1036:		       xmlHashDeallocator f) {
+    #####: 1037:    return(xmlHashRemoveEntry3(table, name, NULL, NULL, f));
+        -: 1038:}
+        -: 1039:
+        -: 1040:/**
+        -: 1041: * xmlHashRemoveEntry2:
+        -: 1042: * @table: the hash table
+        -: 1043: * @name: the name of the userdata
+        -: 1044: * @name2: a second name of the userdata
+        -: 1045: * @f: the deallocator function for removed item (if any)
+        -: 1046: *
+        -: 1047: * Find the userdata specified by the (@name, @name2) tuple and remove
+        -: 1048: * it from the hash @table. Existing userdata for this tuple will be removed
+        -: 1049: * and freed with @f.
+        -: 1050: *
+        -: 1051: * Returns 0 if the removal succeeded and -1 in case of error or not found.
+        -: 1052: */
+        -: 1053:int
+    #####: 1054:xmlHashRemoveEntry2(xmlHashTablePtr table, const xmlChar *name,
+        -: 1055:			const xmlChar *name2, xmlHashDeallocator f) {
+    #####: 1056:    return(xmlHashRemoveEntry3(table, name, name2, NULL, f));
+        -: 1057:}
+        -: 1058:
+        -: 1059:/**
+        -: 1060: * xmlHashRemoveEntry3:
+        -: 1061: * @table: the hash table
+        -: 1062: * @name: the name of the userdata
+        -: 1063: * @name2: a second name of the userdata
+        -: 1064: * @name3: a third name of the userdata
+        -: 1065: * @f: the deallocator function for removed item (if any)
+        -: 1066: *
+        -: 1067: * Find the userdata specified by the (@name, @name2, @name3) tuple and remove
+        -: 1068: * it from the hash @table. Existing userdata for this tuple will be removed
+        -: 1069: * and freed with @f.
+        -: 1070: *
+        -: 1071: * Returns 0 if the removal succeeded and -1 in case of error or not found.
+        -: 1072: */
+        -: 1073:int
+    #####: 1074:xmlHashRemoveEntry3(xmlHashTablePtr table, const xmlChar *name,
+        -: 1075:    const xmlChar *name2, const xmlChar *name3, xmlHashDeallocator f) {
+        -: 1076:    unsigned long key;
+        -: 1077:    xmlHashEntryPtr entry;
+    #####: 1078:    xmlHashEntryPtr prev = NULL;
+        -: 1079:
+    #####: 1080:    if (table == NULL || name == NULL)
+    #####: 1081:        return(-1);
+        -: 1082:
+    #####: 1083:    key = xmlHashComputeKey(table, name, name2, name3);
+    #####: 1084:    if (table->table[key].valid == 0) {
+    #####: 1085:        return(-1);
+        -: 1086:    } else {
+    #####: 1087:        for (entry = &(table->table[key]); entry != NULL; entry = entry->next) {
+    #####: 1088:            if (xmlStrEqual(entry->name, name) &&
+    #####: 1089:                    xmlStrEqual(entry->name2, name2) &&
+    #####: 1090:                    xmlStrEqual(entry->name3, name3)) {
+    #####: 1091:                if ((f != NULL) && (entry->payload != NULL))
+    #####: 1092:                    f(entry->payload, entry->name);
+    #####: 1093:                entry->payload = NULL;
+    #####: 1094:		if (table->dict == NULL) {
+    #####: 1095:		    if(entry->name)
+    #####: 1096:			xmlFree(entry->name);
+    #####: 1097:		    if(entry->name2)
+    #####: 1098:			xmlFree(entry->name2);
+    #####: 1099:		    if(entry->name3)
+    #####: 1100:			xmlFree(entry->name3);
+        -: 1101:		}
+    #####: 1102:                if(prev) {
+    #####: 1103:                    prev->next = entry->next;
+    #####: 1104:		    xmlFree(entry);
+        -: 1105:		} else {
+    #####: 1106:		    if (entry->next == NULL) {
+    #####: 1107:			entry->valid = 0;
+        -: 1108:		    } else {
+    #####: 1109:			entry = entry->next;
+    #####: 1110:			memcpy(&(table->table[key]), entry, sizeof(xmlHashEntry));
+    #####: 1111:			xmlFree(entry);
+        -: 1112:		    }
+        -: 1113:		}
+    #####: 1114:                table->nbElems--;
+    #####: 1115:                return(0);
+        -: 1116:            }
+    #####: 1117:            prev = entry;
+        -: 1118:        }
+    #####: 1119:        return(-1);
+        -: 1120:    }
+        -: 1121:}
+        -: 1122:
+        -: 1123:#define bottom_hash
+        -: 1124:#include "elfgcchack.h"

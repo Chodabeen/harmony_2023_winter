@@ -1,0 +1,5 @@
+<p tst="a&amp;b" ts”2="a&b" ts}3="a & b">
+a&amp;b
+a&«
+a & b
+</p>

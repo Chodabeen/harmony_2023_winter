@@ -1,0 +1,7 @@
+<p tst="a&amp;b¶¶¶¶¶¶¶¶¶¶¶¶" kst2="a&b" " tst3=#a & b">
+a&qmp;b
+a&b
+a tst3=#a & b">
+a&qmp;b
+a&b
+a & b</p>

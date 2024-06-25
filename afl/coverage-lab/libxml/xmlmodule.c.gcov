@@ -1,0 +1,462 @@
+        -:    0:Source:xmlmodule.c
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * xmlmodule.c : basic API for dynamic module loading added 2.6.17
+        -:    3: *
+        -:    4: * See Copyright for the status of this software.
+        -:    5: *
+        -:    6: * joelwreed@comcast.net
+        -:    7: *
+        -:    8: * http://www.fortran-2000.com/ArnaudRecipes/sharedlib.html
+        -:    9: */
+        -:   10:
+        -:   11:#define IN_LIBXML
+        -:   12:#include "libxml.h"
+        -:   13:
+        -:   14:#include <string.h>
+        -:   15:#include <libxml/xmlmemory.h>
+        -:   16:#include <libxml/xmlerror.h>
+        -:   17:#include <libxml/xmlmodule.h>
+        -:   18:#include <libxml/globals.h>
+        -:   19:
+        -:   20:#ifdef LIBXML_MODULES_ENABLED
+        -:   21:
+        -:   22:struct _xmlModule {
+        -:   23:    unsigned char *name;
+        -:   24:    void *handle;
+        -:   25:};
+        -:   26:
+        -:   27:static void *xmlModulePlatformOpen(const char *name);
+        -:   28:static int xmlModulePlatformClose(void *handle);
+        -:   29:static int xmlModulePlatformSymbol(void *handle, const char *name, void **result);
+        -:   30:
+        -:   31:/************************************************************************
+        -:   32: *									*
+        -:   33: *		module memory error handler				*
+        -:   34: *									*
+        -:   35: ************************************************************************/
+        -:   36:
+        -:   37:/**
+        -:   38: * xmlModuleErrMemory:
+        -:   39: * @extra:  extra information
+        -:   40: *
+        -:   41: * Handle an out of memory condition
+        -:   42: */
+        -:   43:static void
+    #####:   44:xmlModuleErrMemory(xmlModulePtr module, const char *extra)
+        -:   45:{
+    #####:   46:    const char *name = NULL;
+        -:   47:
+    #####:   48:    if (module != NULL) {
+    #####:   49:        name = (const char *) module->name;
+        -:   50:    }
+        -:   51:
+    #####:   52:    __xmlRaiseError(NULL, NULL, NULL, NULL, NULL, XML_FROM_MODULE,
+        -:   53:                    XML_ERR_NO_MEMORY, XML_ERR_FATAL, NULL, 0, extra,
+        -:   54:                    name, NULL, 0, 0,
+        -:   55:                    "Memory allocation failed : %s\n", extra);
+    #####:   56:}
+        -:   57:
+        -:   58:/**
+        -:   59: * xmlModuleOpen:
+        -:   60: * @name: the module name
+        -:   61: * @options: a set of xmlModuleOption
+        -:   62: *
+        -:   63: * Opens a module/shared library given its name or path
+        -:   64: * NOTE: that due to portability issues, behaviour can only be
+        -:   65: * guaranteed with @name using ASCII. We canot guarantee that
+        -:   66: * an UTF-8 string would work, which is why name is a const char *
+        -:   67: * and not a const xmlChar * .
+        -:   68: * TODO: options are not yet implemented.
+        -:   69: *
+        -:   70: * Returns a handle for the module or NULL in case of error
+        -:   71: */
+        -:   72:xmlModulePtr
+    #####:   73:xmlModuleOpen(const char *name, int options ATTRIBUTE_UNUSED)
+        -:   74:{
+        -:   75:    xmlModulePtr module;
+        -:   76:
+    #####:   77:    module = (xmlModulePtr) xmlMalloc(sizeof(xmlModule));
+    #####:   78:    if (module == NULL) {
+    #####:   79:        xmlModuleErrMemory(NULL, "creating module");
+    #####:   80:        return (NULL);
+        -:   81:    }
+        -:   82:
+    #####:   83:    memset(module, 0, sizeof(xmlModule));
+        -:   84:
+    #####:   85:    module->handle = xmlModulePlatformOpen(name);
+        -:   86:
+    #####:   87:    if (module->handle == NULL) {
+    #####:   88:        xmlFree(module);
+    #####:   89:        __xmlRaiseError(NULL, NULL, NULL, NULL, NULL, XML_FROM_MODULE,
+        -:   90:                        XML_MODULE_OPEN, XML_ERR_FATAL, NULL, 0, 0,
+        -:   91:                        name, NULL, 0, 0, "failed to open %s\n", name);
+    #####:   92:        return(NULL);
+        -:   93:    }
+        -:   94:
+    #####:   95:    module->name = xmlStrdup((const xmlChar *) name);
+    #####:   96:    return (module);
+        -:   97:}
+        -:   98:
+        -:   99:/**
+        -:  100: * xmlModuleSymbol:
+        -:  101: * @module: the module
+        -:  102: * @name: the name of the symbol
+        -:  103: * @symbol: the resulting symbol address
+        -:  104: *
+        -:  105: * Lookup for a symbol address in the given module
+        -:  106: * NOTE: that due to portability issues, behaviour can only be
+        -:  107: * guaranteed with @name using ASCII. We canot guarantee that
+        -:  108: * an UTF-8 string would work, which is why name is a const char *
+        -:  109: * and not a const xmlChar * .
+        -:  110: *
+        -:  111: * Returns 0 if the symbol was found, or -1 in case of error
+        -:  112: */
+        -:  113:int
+    #####:  114:xmlModuleSymbol(xmlModulePtr module, const char *name, void **symbol)
+        -:  115:{
+    #####:  116:    int rc = -1;
+        -:  117:
+    #####:  118:    if ((NULL == module) || (symbol == NULL) || (name == NULL)) {
+    #####:  119:        __xmlRaiseError(NULL, NULL, NULL, NULL, NULL, XML_FROM_MODULE,
+        -:  120:                        XML_MODULE_OPEN, XML_ERR_FATAL, NULL, 0, 0,
+        -:  121:                        NULL, NULL, 0, 0, "null parameter\n");
+    #####:  122:        return rc;
+        -:  123:    }
+        -:  124:
+    #####:  125:    rc = xmlModulePlatformSymbol(module->handle, name, symbol);
+        -:  126:
+    #####:  127:    if (rc == -1) {
+    #####:  128:        __xmlRaiseError(NULL, NULL, NULL, NULL, NULL, XML_FROM_MODULE,
+        -:  129:                        XML_MODULE_OPEN, XML_ERR_FATAL, NULL, 0, 0,
+        -:  130:                        name, NULL, 0, 0,
+        -:  131:                        "failed to find symbol: %s\n",
+        -:  132:			(name == NULL ? "NULL" : name));
+    #####:  133:        return rc;
+        -:  134:    }
+        -:  135:
+    #####:  136:    return rc;
+        -:  137:}
+        -:  138:
+        -:  139:/**
+        -:  140: * xmlModuleClose:
+        -:  141: * @module: the module handle
+        -:  142: *
+        -:  143: * The close operations unload the associated module and free the
+        -:  144: * data associated to the module.
+        -:  145: *
+        -:  146: * Returns 0 in case of success, -1 in case of argument error and -2
+        -:  147: *         if the module could not be closed/unloaded.
+        -:  148: */
+        -:  149:int
+    #####:  150:xmlModuleClose(xmlModulePtr module)
+        -:  151:{
+        -:  152:    int rc;
+        -:  153:
+    #####:  154:    if (NULL == module) {
+    #####:  155:        __xmlRaiseError(NULL, NULL, NULL, NULL, NULL, XML_FROM_MODULE,
+        -:  156:                        XML_MODULE_CLOSE, XML_ERR_FATAL, NULL, 0, 0,
+        -:  157:                        NULL, NULL, 0, 0, "null module pointer\n");
+    #####:  158:        return -1;
+        -:  159:    }
+        -:  160:
+    #####:  161:    rc = xmlModulePlatformClose(module->handle);
+        -:  162:
+    #####:  163:    if (rc != 0) {
+    #####:  164:        __xmlRaiseError(NULL, NULL, NULL, NULL, NULL, XML_FROM_MODULE,
+        -:  165:                        XML_MODULE_CLOSE, XML_ERR_FATAL, NULL, 0, 0,
+    #####:  166:                        (const char *) module->name, NULL, 0, 0,
+        -:  167:                        "failed to close: %s\n", module->name);
+    #####:  168:        return -2;
+        -:  169:    }
+        -:  170:
+    #####:  171:    rc = xmlModuleFree(module);
+    #####:  172:    return (rc);
+        -:  173:}
+        -:  174:
+        -:  175:/**
+        -:  176: * xmlModuleFree:
+        -:  177: * @module: the module handle
+        -:  178: *
+        -:  179: * The free operations free the data associated to the module
+        -:  180: * but does not unload the associated shared library which may still
+        -:  181: * be in use.
+        -:  182: *
+        -:  183: * Returns 0 in case of success, -1 in case of argument error
+        -:  184: */
+        -:  185:int
+    #####:  186:xmlModuleFree(xmlModulePtr module)
+        -:  187:{
+    #####:  188:    if (NULL == module) {
+    #####:  189:        __xmlRaiseError(NULL, NULL, NULL, NULL, NULL, XML_FROM_MODULE,
+        -:  190:                        XML_MODULE_CLOSE, XML_ERR_FATAL, NULL, 0, NULL,
+        -:  191:                        NULL, NULL, 0, 0, "null module pointer\n");
+    #####:  192:        return -1;
+        -:  193:    }
+        -:  194:
+    #####:  195:    xmlFree(module->name);
+    #####:  196:    xmlFree(module);
+        -:  197:
+    #####:  198:    return (0);
+        -:  199:}
+        -:  200:
+        -:  201:#if defined(HAVE_DLOPEN) && !defined(_WIN32)
+        -:  202:#ifdef HAVE_DLFCN_H
+        -:  203:#include <dlfcn.h>
+        -:  204:#endif
+        -:  205:
+        -:  206:#ifndef RTLD_GLOBAL            /* For Tru64 UNIX 4.0 */
+        -:  207:#define RTLD_GLOBAL 0
+        -:  208:#endif
+        -:  209:
+        -:  210:/**
+        -:  211: * xmlModulePlatformOpen:
+        -:  212: * @name: path to the module
+        -:  213: *
+        -:  214: * returns a handle on success, and zero on error.
+        -:  215: */
+        -:  216:
+        -:  217:static void *
+    #####:  218:xmlModulePlatformOpen(const char *name)
+        -:  219:{
+    #####:  220:    return dlopen(name, RTLD_GLOBAL | RTLD_NOW);
+        -:  221:}
+        -:  222:
+        -:  223:/*
+        -:  224: * xmlModulePlatformClose:
+        -:  225: * @handle: handle to the module
+        -:  226: *
+        -:  227: * returns 0 on success, and non-zero on error.
+        -:  228: */
+        -:  229:
+        -:  230:static int
+    #####:  231:xmlModulePlatformClose(void *handle)
+        -:  232:{
+    #####:  233:    return dlclose(handle);
+        -:  234:}
+        -:  235:
+        -:  236:/*
+        -:  237: * xmlModulePlatformSymbol:
+        -:  238: * http://www.opengroup.org/onlinepubs/009695399/functions/dlsym.html
+        -:  239: * returns 0 on success and the loaded symbol in result, and -1 on error.
+        -:  240: */
+        -:  241:
+        -:  242:static int
+    #####:  243:xmlModulePlatformSymbol(void *handle, const char *name, void **symbol)
+        -:  244:{
+    #####:  245:    *symbol = dlsym(handle, name);
+    #####:  246:    if (dlerror() != NULL) {
+    #####:  247:	return -1;
+        -:  248:    }
+    #####:  249:    return 0;
+        -:  250:}
+        -:  251:
+        -:  252:#else /* ! HAVE_DLOPEN */
+        -:  253:
+        -:  254:#ifdef HAVE_SHLLOAD             /* HAVE_SHLLOAD */
+        -:  255:#ifdef HAVE_DL_H
+        -:  256:#include <dl.h>
+        -:  257:#endif
+        -:  258:/*
+        -:  259: * xmlModulePlatformOpen:
+        -:  260: * returns a handle on success, and zero on error.
+        -:  261: */
+        -:  262:
+        -:  263:static void *
+        -:  264:xmlModulePlatformOpen(const char *name)
+        -:  265:{
+        -:  266:    return shl_load(name, BIND_IMMEDIATE, 0L);
+        -:  267:}
+        -:  268:
+        -:  269:/*
+        -:  270: * xmlModulePlatformClose:
+        -:  271: * returns 0 on success, and non-zero on error.
+        -:  272: */
+        -:  273:
+        -:  274:static int
+        -:  275:xmlModulePlatformClose(void *handle)
+        -:  276:{
+        -:  277:    return shl_unload(handle);
+        -:  278:}
+        -:  279:
+        -:  280:/*
+        -:  281: * xmlModulePlatformSymbol:
+        -:  282: * http://docs.hp.com/en/B2355-90683/shl_load.3X.html
+        -:  283: * returns 0 on success and the loaded symbol in result, and -1 on error.
+        -:  284: */
+        -:  285:
+        -:  286:static int
+        -:  287:xmlModulePlatformSymbol(void *handle, const char *name, void **symbol)
+        -:  288:{
+        -:  289:    int rc;
+        -:  290:
+        -:  291:    errno = 0;
+        -:  292:    rc = shl_findsym(&handle, name, TYPE_UNDEFINED, symbol);
+        -:  293:    return rc;
+        -:  294:}
+        -:  295:
+        -:  296:#endif /* HAVE_SHLLOAD */
+        -:  297:#endif /* ! HAVE_DLOPEN */
+        -:  298:
+        -:  299:#ifdef _WIN32
+        -:  300:
+        -:  301:#include <windows.h>
+        -:  302:
+        -:  303:/*
+        -:  304: * xmlModulePlatformOpen:
+        -:  305: * returns a handle on success, and zero on error.
+        -:  306: */
+        -:  307:
+        -:  308:static void *
+        -:  309:xmlModulePlatformOpen(const char *name)
+        -:  310:{
+        -:  311:    return LoadLibraryA(name);
+        -:  312:}
+        -:  313:
+        -:  314:/*
+        -:  315: * xmlModulePlatformClose:
+        -:  316: * returns 0 on success, and non-zero on error.
+        -:  317: */
+        -:  318:
+        -:  319:static int
+        -:  320:xmlModulePlatformClose(void *handle)
+        -:  321:{
+        -:  322:    int rc;
+        -:  323:
+        -:  324:    rc = FreeLibrary(handle);
+        -:  325:    return (0 == rc);
+        -:  326:}
+        -:  327:
+        -:  328:/*
+        -:  329: * xmlModulePlatformSymbol:
+        -:  330: * http://msdn.microsoft.com/library/default.asp?url=/library/en-us/dllproc/base/getprocaddress.asp
+        -:  331: * returns 0 on success and the loaded symbol in result, and -1 on error.
+        -:  332: */
+        -:  333:
+        -:  334:static int
+        -:  335:xmlModulePlatformSymbol(void *handle, const char *name, void **symbol)
+        -:  336:{
+        -:  337:#ifdef _WIN32_WCE
+        -:  338:    /*
+        -:  339:     * GetProcAddressA seems only available on WinCE
+        -:  340:     */
+        -:  341:    *symbol = GetProcAddressA(handle, name);
+        -:  342:#else
+        -:  343:    *symbol = GetProcAddress(handle, name);
+        -:  344:#endif
+        -:  345:    return (NULL == *symbol) ? -1 : 0;
+        -:  346:}
+        -:  347:
+        -:  348:#endif /* _WIN32 */
+        -:  349:
+        -:  350:#ifdef HAVE_BEOS
+        -:  351:
+        -:  352:#include <kernel/image.h>
+        -:  353:
+        -:  354:/*
+        -:  355: * xmlModulePlatformOpen:
+        -:  356: * beos api info: http://www.beunited.org/bebook/The%20Kernel%20Kit/Images.html
+        -:  357: * returns a handle on success, and zero on error.
+        -:  358: */
+        -:  359:
+        -:  360:static void *
+        -:  361:xmlModulePlatformOpen(const char *name)
+        -:  362:{
+        -:  363:    return (void *) load_add_on(name);
+        -:  364:}
+        -:  365:
+        -:  366:/*
+        -:  367: * xmlModulePlatformClose:
+        -:  368: * beos api info: http://www.beunited.org/bebook/The%20Kernel%20Kit/Images.html
+        -:  369: * returns 0 on success, and non-zero on error.
+        -:  370: */
+        -:  371:
+        -:  372:static int
+        -:  373:xmlModulePlatformClose(void *handle)
+        -:  374:{
+        -:  375:    status_t rc;
+        -:  376:
+        -:  377:    rc = unload_add_on((image_id) handle);
+        -:  378:
+        -:  379:    if (rc == B_OK)
+        -:  380:        return 0;
+        -:  381:    else
+        -:  382:        return -1;
+        -:  383:}
+        -:  384:
+        -:  385:/*
+        -:  386: * xmlModulePlatformSymbol:
+        -:  387: * beos api info: http://www.beunited.org/bebook/The%20Kernel%20Kit/Images.html
+        -:  388: * returns 0 on success and the loaded symbol in result, and -1 on error.
+        -:  389: */
+        -:  390:
+        -:  391:static int
+        -:  392:xmlModulePlatformSymbol(void *handle, const char *name, void **symbol)
+        -:  393:{
+        -:  394:    status_t rc;
+        -:  395:
+        -:  396:    rc = get_image_symbol((image_id) handle, name, B_SYMBOL_TYPE_ANY, symbol);
+        -:  397:
+        -:  398:    return (rc == B_OK) ? 0 : -1;
+        -:  399:}
+        -:  400:
+        -:  401:#endif /* HAVE_BEOS */
+        -:  402:
+        -:  403:#ifdef HAVE_OS2
+        -:  404:
+        -:  405:#include <os2.h>
+        -:  406:
+        -:  407:/*
+        -:  408: * xmlModulePlatformOpen:
+        -:  409: * os2 api info: http://www.edm2.com/os2api/Dos/DosLoadModule.html
+        -:  410: * returns a handle on success, and zero on error.
+        -:  411: */
+        -:  412:
+        -:  413:static void *
+        -:  414:xmlModulePlatformOpen(const char *name)
+        -:  415:{
+        -:  416:    char errbuf[256];
+        -:  417:    void *handle;
+        -:  418:    int rc;
+        -:  419:
+        -:  420:    rc = DosLoadModule(errbuf, sizeof(errbuf) - 1, name, &handle);
+        -:  421:
+        -:  422:    if (rc)
+        -:  423:        return 0;
+        -:  424:    else
+        -:  425:        return (handle);
+        -:  426:}
+        -:  427:
+        -:  428:/*
+        -:  429: * xmlModulePlatformClose:
+        -:  430: * os2 api info: http://www.edm2.com/os2api/Dos/DosFreeModule.html
+        -:  431: * returns 0 on success, and non-zero on error.
+        -:  432: */
+        -:  433:
+        -:  434:static int
+        -:  435:xmlModulePlatformClose(void *handle)
+        -:  436:{
+        -:  437:    return DosFreeModule(handle);
+        -:  438:}
+        -:  439:
+        -:  440:/*
+        -:  441: * xmlModulePlatformSymbol:
+        -:  442: * os2 api info: http://www.edm2.com/os2api/Dos/DosQueryProcAddr.html
+        -:  443: * returns 0 on success and the loaded symbol in result, and -1 on error.
+        -:  444: */
+        -:  445:
+        -:  446:static int
+        -:  447:xmlModulePlatformSymbol(void *handle, const char *name, void **symbol)
+        -:  448:{
+        -:  449:    int rc;
+        -:  450:
+        -:  451:    rc = DosQueryProcAddr(handle, 0, name, symbol);
+        -:  452:
+        -:  453:    return (rc == NO_ERROR) ? 0 : -1;
+        -:  454:}
+        -:  455:
+        -:  456:#endif /* HAVE_OS2 */
+        -:  457:
+        -:  458:#define bottom_xmlmodule
+        -:  459:#include "elfgcchack.h"
+        -:  460:#endif /* LIBXML_MODULES_ENABLED */

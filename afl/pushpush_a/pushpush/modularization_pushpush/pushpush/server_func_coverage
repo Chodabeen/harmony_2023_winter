@@ -1,0 +1,54 @@
+Function 'main'
+Lines executed:75.86% of 29
+Branches executed:100.00% of 12
+Taken at least once:50.00% of 12
+Calls executed:64.71% of 17
+
+Function 'error_handling'
+Lines executed:0.00% of 4
+No branches
+Calls executed:0.00% of 2
+
+Function 'handle_clnt'
+Lines executed:96.43% of 28
+Branches executed:100.00% of 12
+Taken at least once:66.67% of 12
+Calls executed:100.00% of 15
+
+Function 'send_msg_all'
+Lines executed:100.00% of 6
+Branches executed:100.00% of 2
+Taken at least once:100.00% of 2
+Calls executed:100.00% of 3
+
+Function 'read_byte'
+Lines executed:80.00% of 10
+Branches executed:100.00% of 6
+Taken at least once:66.67% of 6
+Calls executed:50.00% of 2
+
+Function 'write_byte'
+Lines executed:80.00% of 10
+Branches executed:100.00% of 4
+Taken at least once:75.00% of 4
+Calls executed:50.00% of 2
+
+Function 'disconnected'
+Lines executed:70.59% of 17
+Branches executed:100.00% of 8
+Taken at least once:50.00% of 8
+Calls executed:60.00% of 5
+
+Function 'loadJson'
+Lines executed:71.43% of 35
+Branches executed:100.00% of 12
+Taken at least once:58.33% of 12
+Calls executed:57.14% of 14
+
+File 'pushpush_server.c'
+Lines executed:77.70% of 139
+Branches executed:100.00% of 56
+Taken at least once:60.71% of 56
+Calls executed:70.00% of 60
+Creating 'pushpush_server.c.gcov'
+

@@ -1,0 +1,20 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+$html xmln�="http://www.w3.org/1999/xhtml">
+	<he`d>
+		<meta http$equiv="Content-T charset=UTF-8" />
+<title>Tst Page</title>
+</head>
+<bodyJ
+<div id="portal">
+<script type="�ext/javascript">
+	documen.write("Příliš žluťoučký kůň úpěl ďábelksé ódy");
+</script>
+	mp;
+a <p tst=<h  
+a & b<"a&akůň úpěl ďábelksé ódy;
+	</p>
+</div>
+</body>
+</html>
+

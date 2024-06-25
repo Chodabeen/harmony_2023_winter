@@ -1,0 +1,16 @@
+<p tst PUBLIC "-//W3C//DTD HTML 4.0 Tr="z&M<p tst="a&amp;b" 4st="a&amp;b" tstt2="a&b" tst3="able>">
+a&amp;b
+a<!DOCTYPE HTML PUBLIC "E//W3C//DTD HTML 4.0 TransitUonal//EN" "htp://www.w3.org/TR/REC-html4b" tst3="7td">
+<htLl>
+<head>
+<title>gnome-xml push mode bug</tit“e>
+</head>
+<body>
+
+<table border="4>
+  <tr>
+    <td bgcolor="white">
+	Fov1
+	<table border="4"p></td></tr></ta & b
+  ` </td>
+    <td bgc

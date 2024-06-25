@@ -1,0 +1,8 @@
+<p tst="a&amp;b" tst2st3="a & b">
+a&ÿp;b
+a&b
+a="a&b" tst3="a & b">
+a&ÿp;b
+a&b
+a & b
+</p>

@@ -1,0 +1,609 @@
+        -:    0:Source:runxmlconf.c
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * runsuite.c: C program to run libxml2 againts published testsuites
+        -:    3: *
+        -:    4: * See Copyright for the status of this software.
+        -:    5: *
+        -:    6: * daniel@veillard.com
+        -:    7: */
+        -:    8:
+        -:    9:#include "libxml.h"
+        -:   10:#include <stdio.h>
+        -:   11:
+        -:   12:#ifdef LIBXML_XPATH_ENABLED
+        -:   13:
+        -:   14:#if !defined(_WIN32) || defined(__CYGWIN__)
+        -:   15:#include <unistd.h>
+        -:   16:#endif
+        -:   17:#include <string.h>
+        -:   18:#include <sys/types.h>
+        -:   19:#include <sys/stat.h>
+        -:   20:#include <fcntl.h>
+        -:   21:
+        -:   22:#include <libxml/parser.h>
+        -:   23:#include <libxml/parserInternals.h>
+        -:   24:#include <libxml/tree.h>
+        -:   25:#include <libxml/uri.h>
+        -:   26:#include <libxml/xmlreader.h>
+        -:   27:
+        -:   28:#include <libxml/xpath.h>
+        -:   29:#include <libxml/xpathInternals.h>
+        -:   30:
+        -:   31:#define LOGFILE "runxmlconf.log"
+        -:   32:static FILE *logfile = NULL;
+        -:   33:static int verbose = 0;
+        -:   34:
+        -:   35:#define NB_EXPECTED_ERRORS 15
+        -:   36:
+        -:   37:
+        -:   38:const char *skipped_tests[] = {
+        -:   39:/* http://lists.w3.org/Archives/Public/public-xml-testsuite/2008Jul/0000.html */
+        -:   40:    "rmt-ns10-035",
+        -:   41:    NULL
+        -:   42:};
+        -:   43:
+        -:   44:/************************************************************************
+        -:   45: *									*
+        -:   46: *		File name and path utilities				*
+        -:   47: *									*
+        -:   48: ************************************************************************/
+        -:   49:
+    #####:   50:static int checkTestFile(const char *filename) {
+        -:   51:    struct stat buf;
+        -:   52:
+    #####:   53:    if (stat(filename, &buf) == -1)
+    #####:   54:        return(0);
+        -:   55:
+        -:   56:#if defined(_WIN32) && !defined(__CYGWIN__)
+        -:   57:    if (!(buf.st_mode & _S_IFREG))
+        -:   58:        return(0);
+        -:   59:#else
+    #####:   60:    if (!S_ISREG(buf.st_mode))
+    #####:   61:        return(0);
+        -:   62:#endif
+        -:   63:
+    #####:   64:    return(1);
+        -:   65:}
+        -:   66:
+    #####:   67:static xmlChar *composeDir(const xmlChar *dir, const xmlChar *path) {
+        -:   68:    char buf[500];
+        -:   69:
+    #####:   70:    if (dir == NULL) return(xmlStrdup(path));
+    #####:   71:    if (path == NULL) return(NULL);
+        -:   72:
+    #####:   73:    snprintf(buf, 500, "%s/%s", (const char *) dir, (const char *) path);
+    #####:   74:    return(xmlStrdup((const xmlChar *) buf));
+        -:   75:}
+        -:   76:
+        -:   77:/************************************************************************
+        -:   78: *									*
+        -:   79: *		Libxml2 specific routines				*
+        -:   80: *									*
+        -:   81: ************************************************************************/
+        -:   82:
+        -:   83:static int nb_skipped = 0;
+        -:   84:static int nb_tests = 0;
+        -:   85:static int nb_errors = 0;
+        -:   86:static int nb_leaks = 0;
+        -:   87:
+        -:   88:/*
+        -:   89: * We need to trap calls to the resolver to not account memory for the catalog
+        -:   90: * and not rely on any external resources.
+        -:   91: */
+        -:   92:static xmlParserInputPtr
+    #####:   93:testExternalEntityLoader(const char *URL, const char *ID ATTRIBUTE_UNUSED,
+        -:   94:			 xmlParserCtxtPtr ctxt) {
+        -:   95:    xmlParserInputPtr ret;
+        -:   96:
+    #####:   97:    ret = xmlNewInputFromFile(ctxt, (const char *) URL);
+        -:   98:
+    #####:   99:    return(ret);
+        -:  100:}
+        -:  101:
+        -:  102:/*
+        -:  103: * Trapping the error messages at the generic level to grab the equivalent of
+        -:  104: * stderr messages on CLI tools.
+        -:  105: */
+        -:  106:static char testErrors[32769];
+        -:  107:static int testErrorsSize = 0;
+        -:  108:static int nbError = 0;
+        -:  109:static int nbFatal = 0;
+        -:  110:
+    #####:  111:static void test_log(const char *msg, ...) {
+        -:  112:    va_list args;
+    #####:  113:    if (logfile != NULL) {
+    #####:  114:        fprintf(logfile, "\n------------\n");
+    #####:  115:	va_start(args, msg);
+    #####:  116:	vfprintf(logfile, msg, args);
+    #####:  117:	va_end(args);
+    #####:  118:	fprintf(logfile, "%s", testErrors);
+    #####:  119:	testErrorsSize = 0; testErrors[0] = 0;
+        -:  120:    }
+    #####:  121:    if (verbose) {
+    #####:  122:	va_start(args, msg);
+    #####:  123:	vfprintf(stderr, msg, args);
+    #####:  124:	va_end(args);
+        -:  125:    }
+    #####:  126:}
+        -:  127:
+        -:  128:static void
+    #####:  129:testErrorHandler(void *userData ATTRIBUTE_UNUSED, xmlErrorPtr error) {
+        -:  130:    int res;
+        -:  131:
+    #####:  132:    if (testErrorsSize >= 32768)
+    #####:  133:        return;
+    #####:  134:    res = snprintf(&testErrors[testErrorsSize],
+    #####:  135:                    32768 - testErrorsSize,
+    #####:  136:		   "%s:%d: %s\n", (error->file ? error->file : "entity"),
+        -:  137:		   error->line, error->message);
+    #####:  138:    if (error->level == XML_ERR_FATAL)
+    #####:  139:        nbFatal++;
+    #####:  140:    else if (error->level == XML_ERR_ERROR)
+    #####:  141:        nbError++;
+    #####:  142:    if (testErrorsSize + res >= 32768) {
+        -:  143:        /* buffer is full */
+    #####:  144:	testErrorsSize = 32768;
+    #####:  145:	testErrors[testErrorsSize] = 0;
+        -:  146:    } else {
+    #####:  147:        testErrorsSize += res;
+        -:  148:    }
+    #####:  149:    testErrors[testErrorsSize] = 0;
+        -:  150:}
+        -:  151:
+        -:  152:static xmlXPathContextPtr ctxtXPath;
+        -:  153:
+        -:  154:static void
+    #####:  155:initializeLibxml2(void) {
+    #####:  156:    xmlGetWarningsDefaultValue = 0;
+    #####:  157:    xmlPedanticParserDefault(0);
+        -:  158:
+    #####:  159:    xmlMemSetup(xmlMemFree, xmlMemMalloc, xmlMemRealloc, xmlMemoryStrdup);
+    #####:  160:    xmlInitParser();
+    #####:  161:    xmlSetExternalEntityLoader(testExternalEntityLoader);
+    #####:  162:    ctxtXPath = xmlXPathNewContext(NULL);
+        -:  163:    /*
+        -:  164:    * Deactivate the cache if created; otherwise we have to create/free it
+        -:  165:    * for every test, since it will confuse the memory leak detection.
+        -:  166:    * Note that normally this need not be done, since the cache is not
+        -:  167:    * created until set explicitely with xmlXPathContextSetCache();
+        -:  168:    * but for test purposes it is sometimes usefull to activate the
+        -:  169:    * cache by default for the whole library.
+        -:  170:    */
+    #####:  171:    if (ctxtXPath->cache != NULL)
+    #####:  172:	xmlXPathContextSetCache(ctxtXPath, 0, -1, 0);
+    #####:  173:    xmlSetStructuredErrorFunc(NULL, testErrorHandler);
+    #####:  174:}
+        -:  175:
+        -:  176:/************************************************************************
+        -:  177: *									*
+        -:  178: *		Run the xmlconf test if found				*
+        -:  179: *									*
+        -:  180: ************************************************************************/
+        -:  181:
+        -:  182:static int
+    #####:  183:xmlconfTestInvalid(const char *id, const char *filename, int options) {
+        -:  184:    xmlDocPtr doc;
+        -:  185:    xmlParserCtxtPtr ctxt;
+    #####:  186:    int ret = 1;
+        -:  187:
+    #####:  188:    ctxt = xmlNewParserCtxt();
+    #####:  189:    if (ctxt == NULL) {
+    #####:  190:        test_log("test %s : %s out of memory\n",
+        -:  191:	         id, filename);
+    #####:  192:        return(0);
+        -:  193:    }
+    #####:  194:    doc = xmlCtxtReadFile(ctxt, filename, NULL, options);
+    #####:  195:    if (doc == NULL) {
+    #####:  196:        test_log("test %s : %s invalid document turned not well-formed too\n",
+        -:  197:	         id, filename);
+        -:  198:    } else {
+        -:  199:    /* invalidity should be reported both in the context and in the document */
+    #####:  200:        if ((ctxt->valid != 0) || (doc->properties & XML_DOC_DTDVALID)) {
+    #####:  201:	    test_log("test %s : %s failed to detect invalid document\n",
+        -:  202:		     id, filename);
+    #####:  203:	    nb_errors++;
+    #####:  204:	    ret = 0;
+        -:  205:	}
+    #####:  206:	xmlFreeDoc(doc);
+        -:  207:    }
+    #####:  208:    xmlFreeParserCtxt(ctxt);
+    #####:  209:    return(ret);
+        -:  210:}
+        -:  211:
+        -:  212:static int
+    #####:  213:xmlconfTestValid(const char *id, const char *filename, int options) {
+        -:  214:    xmlDocPtr doc;
+        -:  215:    xmlParserCtxtPtr ctxt;
+    #####:  216:    int ret = 1;
+        -:  217:
+    #####:  218:    ctxt = xmlNewParserCtxt();
+    #####:  219:    if (ctxt == NULL) {
+    #####:  220:        test_log("test %s : %s out of memory\n",
+        -:  221:	         id, filename);
+    #####:  222:        return(0);
+        -:  223:    }
+    #####:  224:    doc = xmlCtxtReadFile(ctxt, filename, NULL, options);
+    #####:  225:    if (doc == NULL) {
+    #####:  226:        test_log("test %s : %s failed to parse a valid document\n",
+        -:  227:	         id, filename);
+    #####:  228:        nb_errors++;
+    #####:  229:	ret = 0;
+        -:  230:    } else {
+        -:  231:    /* validity should be reported both in the context and in the document */
+    #####:  232:        if ((ctxt->valid == 0) || ((doc->properties & XML_DOC_DTDVALID) == 0)) {
+    #####:  233:	    test_log("test %s : %s failed to validate a valid document\n",
+        -:  234:		     id, filename);
+    #####:  235:	    nb_errors++;
+    #####:  236:	    ret = 0;
+        -:  237:	}
+    #####:  238:	xmlFreeDoc(doc);
+        -:  239:    }
+    #####:  240:    xmlFreeParserCtxt(ctxt);
+    #####:  241:    return(ret);
+        -:  242:}
+        -:  243:
+        -:  244:static int
+    #####:  245:xmlconfTestNotNSWF(const char *id, const char *filename, int options) {
+        -:  246:    xmlDocPtr doc;
+    #####:  247:    int ret = 1;
+        -:  248:
+        -:  249:    /*
+        -:  250:     * In case of Namespace errors, libxml2 will still parse the document
+        -:  251:     * but log a Namesapce error.
+        -:  252:     */
+    #####:  253:    doc = xmlReadFile(filename, NULL, options);
+    #####:  254:    if (doc == NULL) {
+    #####:  255:        test_log("test %s : %s failed to parse the XML\n",
+        -:  256:	         id, filename);
+    #####:  257:        nb_errors++;
+    #####:  258:	ret = 0;
+        -:  259:    } else {
+    #####:  260:	if ((xmlLastError.code == XML_ERR_OK) ||
+    #####:  261:	    (xmlLastError.domain != XML_FROM_NAMESPACE)) {
+    #####:  262:	    test_log("test %s : %s failed to detect namespace error\n",
+        -:  263:		     id, filename);
+    #####:  264:	    nb_errors++;
+    #####:  265:	    ret = 0;
+        -:  266:	}
+    #####:  267:	xmlFreeDoc(doc);
+        -:  268:    }
+    #####:  269:    return(ret);
+        -:  270:}
+        -:  271:
+        -:  272:static int
+    #####:  273:xmlconfTestNotWF(const char *id, const char *filename, int options) {
+        -:  274:    xmlDocPtr doc;
+    #####:  275:    int ret = 1;
+        -:  276:
+    #####:  277:    doc = xmlReadFile(filename, NULL, options);
+    #####:  278:    if (doc != NULL) {
+    #####:  279:        test_log("test %s : %s failed to detect not well formedness\n",
+        -:  280:	         id, filename);
+    #####:  281:        nb_errors++;
+    #####:  282:	xmlFreeDoc(doc);
+    #####:  283:	ret = 0;
+        -:  284:    }
+    #####:  285:    return(ret);
+        -:  286:}
+        -:  287:
+        -:  288:static int
+    #####:  289:xmlconfTestItem(xmlDocPtr doc, xmlNodePtr cur) {
+    #####:  290:    int ret = -1;
+    #####:  291:    xmlChar *type = NULL;
+    #####:  292:    xmlChar *filename = NULL;
+    #####:  293:    xmlChar *uri = NULL;
+    #####:  294:    xmlChar *base = NULL;
+    #####:  295:    xmlChar *id = NULL;
+    #####:  296:    xmlChar *rec = NULL;
+    #####:  297:    xmlChar *version = NULL;
+    #####:  298:    xmlChar *entities = NULL;
+    #####:  299:    xmlChar *edition = NULL;
+    #####:  300:    int options = 0;
+    #####:  301:    int nstest = 0;
+        -:  302:    int mem, final;
+        -:  303:    int i;
+        -:  304:
+    #####:  305:    testErrorsSize = 0; testErrors[0] = 0;
+    #####:  306:    nbError = 0;
+    #####:  307:    nbFatal = 0;
+    #####:  308:    id = xmlGetProp(cur, BAD_CAST "ID");
+    #####:  309:    if (id == NULL) {
+    #####:  310:        test_log("test missing ID, line %ld\n", xmlGetLineNo(cur));
+    #####:  311:	goto error;
+        -:  312:    }
+    #####:  313:    for (i = 0;skipped_tests[i] != NULL;i++) {
+    #####:  314:        if (!strcmp(skipped_tests[i], (char *) id)) {
+    #####:  315:	    test_log("Skipping test %s from skipped list\n", (char *) id);
+    #####:  316:	    ret = 0;
+    #####:  317:	    nb_skipped++;
+    #####:  318:	    goto error;
+        -:  319:	}
+        -:  320:    }
+    #####:  321:    type = xmlGetProp(cur, BAD_CAST "TYPE");
+    #####:  322:    if (type == NULL) {
+    #####:  323:        test_log("test %s missing TYPE\n", (char *) id);
+    #####:  324:	goto error;
+        -:  325:    }
+    #####:  326:    uri = xmlGetProp(cur, BAD_CAST "URI");
+    #####:  327:    if (uri == NULL) {
+    #####:  328:        test_log("test %s missing URI\n", (char *) id);
+    #####:  329:	goto error;
+        -:  330:    }
+    #####:  331:    base = xmlNodeGetBase(doc, cur);
+    #####:  332:    filename = composeDir(base, uri);
+    #####:  333:    if (!checkTestFile((char *) filename)) {
+    #####:  334:        test_log("test %s missing file %s \n", id,
+        -:  335:	         (filename ? (char *)filename : "NULL"));
+    #####:  336:	goto error;
+        -:  337:    }
+        -:  338:
+    #####:  339:    version = xmlGetProp(cur, BAD_CAST "VERSION");
+        -:  340:
+    #####:  341:    entities = xmlGetProp(cur, BAD_CAST "ENTITIES");
+    #####:  342:    if (!xmlStrEqual(entities, BAD_CAST "none")) {
+    #####:  343:        options |= XML_PARSE_DTDLOAD;
+    #####:  344:        options |= XML_PARSE_NOENT;
+        -:  345:    }
+    #####:  346:    rec = xmlGetProp(cur, BAD_CAST "RECOMMENDATION");
+    #####:  347:    if ((rec == NULL) ||
+    #####:  348:        (xmlStrEqual(rec, BAD_CAST "XML1.0")) ||
+    #####:  349:	(xmlStrEqual(rec, BAD_CAST "XML1.0-errata2e")) ||
+    #####:  350:	(xmlStrEqual(rec, BAD_CAST "XML1.0-errata3e")) ||
+    #####:  351:	(xmlStrEqual(rec, BAD_CAST "XML1.0-errata4e"))) {
+    #####:  352:	if ((version != NULL) && (!xmlStrEqual(version, BAD_CAST "1.0"))) {
+    #####:  353:	    test_log("Skipping test %s for %s\n", (char *) id,
+        -:  354:	             (char *) version);
+    #####:  355:	    ret = 0;
+    #####:  356:	    nb_skipped++;
+    #####:  357:	    goto error;
+        -:  358:	}
+    #####:  359:	ret = 1;
+    #####:  360:    } else if ((xmlStrEqual(rec, BAD_CAST "NS1.0")) ||
+    #####:  361:	       (xmlStrEqual(rec, BAD_CAST "NS1.0-errata1e"))) {
+    #####:  362:	ret = 1;
+    #####:  363:	nstest = 1;
+        -:  364:    } else {
+    #####:  365:        test_log("Skipping test %s for REC %s\n", (char *) id, (char *) rec);
+    #####:  366:	ret = 0;
+    #####:  367:	nb_skipped++;
+    #####:  368:	goto error;
+        -:  369:    }
+    #####:  370:    edition = xmlGetProp(cur, BAD_CAST "EDITION");
+    #####:  371:    if ((edition != NULL) && (xmlStrchr(edition, '5') == NULL)) {
+        -:  372:        /* test limited to all versions before 5th */
+    #####:  373:	options |= XML_PARSE_OLD10;
+        -:  374:    }
+        -:  375:
+        -:  376:    /*
+        -:  377:     * Reset errors and check memory usage before the test
+        -:  378:     */
+    #####:  379:    xmlResetLastError();
+    #####:  380:    testErrorsSize = 0; testErrors[0] = 0;
+    #####:  381:    mem = xmlMemUsed();
+        -:  382:
+    #####:  383:    if (xmlStrEqual(type, BAD_CAST "not-wf")) {
+    #####:  384:        if (nstest == 0)
+    #####:  385:	    xmlconfTestNotWF((char *) id, (char *) filename, options);
+        -:  386:        else
+    #####:  387:	    xmlconfTestNotNSWF((char *) id, (char *) filename, options);
+    #####:  388:    } else if (xmlStrEqual(type, BAD_CAST "valid")) {
+    #####:  389:        options |= XML_PARSE_DTDVALID;
+    #####:  390:	xmlconfTestValid((char *) id, (char *) filename, options);
+    #####:  391:    } else if (xmlStrEqual(type, BAD_CAST "invalid")) {
+    #####:  392:        options |= XML_PARSE_DTDVALID;
+    #####:  393:	xmlconfTestInvalid((char *) id, (char *) filename, options);
+    #####:  394:    } else if (xmlStrEqual(type, BAD_CAST "error")) {
+    #####:  395:        test_log("Skipping error test %s \n", (char *) id);
+    #####:  396:	ret = 0;
+    #####:  397:	nb_skipped++;
+    #####:  398:	goto error;
+        -:  399:    } else {
+    #####:  400:        test_log("test %s unknown TYPE value %s\n", (char *) id, (char *)type);
+    #####:  401:	ret = -1;
+    #####:  402:	goto error;
+        -:  403:    }
+        -:  404:
+        -:  405:    /*
+        -:  406:     * Reset errors and check memory usage after the test
+        -:  407:     */
+    #####:  408:    xmlResetLastError();
+    #####:  409:    final = xmlMemUsed();
+    #####:  410:    if (final > mem) {
+    #####:  411:        test_log("test %s : %s leaked %d bytes\n",
+        -:  412:	         id, filename, final - mem);
+    #####:  413:        nb_leaks++;
+    #####:  414:	xmlMemDisplayLast(logfile, final - mem);
+        -:  415:    }
+    #####:  416:    nb_tests++;
+        -:  417:
+    #####:  418:error:
+    #####:  419:    if (type != NULL)
+    #####:  420:        xmlFree(type);
+    #####:  421:    if (entities != NULL)
+    #####:  422:        xmlFree(entities);
+    #####:  423:    if (edition != NULL)
+    #####:  424:        xmlFree(edition);
+    #####:  425:    if (version != NULL)
+    #####:  426:        xmlFree(version);
+    #####:  427:    if (filename != NULL)
+    #####:  428:        xmlFree(filename);
+    #####:  429:    if (uri != NULL)
+    #####:  430:        xmlFree(uri);
+    #####:  431:    if (base != NULL)
+    #####:  432:        xmlFree(base);
+    #####:  433:    if (id != NULL)
+    #####:  434:        xmlFree(id);
+    #####:  435:    if (rec != NULL)
+    #####:  436:        xmlFree(rec);
+    #####:  437:    return(ret);
+        -:  438:}
+        -:  439:
+        -:  440:static int
+    #####:  441:xmlconfTestCases(xmlDocPtr doc, xmlNodePtr cur, int level) {
+        -:  442:    xmlChar *profile;
+    #####:  443:    int ret = 0;
+    #####:  444:    int tests = 0;
+    #####:  445:    int output = 0;
+        -:  446:
+    #####:  447:    if (level == 1) {
+    #####:  448:	profile = xmlGetProp(cur, BAD_CAST "PROFILE");
+    #####:  449:	if (profile != NULL) {
+    #####:  450:	    output = 1;
+    #####:  451:	    level++;
+    #####:  452:	    printf("Test cases: %s\n", (char *) profile);
+    #####:  453:	    xmlFree(profile);
+        -:  454:	}
+        -:  455:    }
+    #####:  456:    cur = cur->children;
+    #####:  457:    while (cur != NULL) {
+        -:  458:        /* look only at elements we ignore everything else */
+    #####:  459:        if (cur->type == XML_ELEMENT_NODE) {
+    #####:  460:	    if (xmlStrEqual(cur->name, BAD_CAST "TESTCASES")) {
+    #####:  461:	        ret += xmlconfTestCases(doc, cur, level);
+    #####:  462:	    } else if (xmlStrEqual(cur->name, BAD_CAST "TEST")) {
+    #####:  463:	        if (xmlconfTestItem(doc, cur) >= 0)
+    #####:  464:		    ret++;
+    #####:  465:		tests++;
+        -:  466:	    } else {
+    #####:  467:	        fprintf(stderr, "Unhandled element %s\n", (char *)cur->name);
+        -:  468:	    }
+        -:  469:	}
+    #####:  470:        cur = cur->next;
+        -:  471:    }
+    #####:  472:    if (output == 1) {
+    #####:  473:	if (tests > 0)
+    #####:  474:	    printf("Test cases: %d tests\n", tests);
+        -:  475:    }
+    #####:  476:    return(ret);
+        -:  477:}
+        -:  478:
+        -:  479:static int
+    #####:  480:xmlconfTestSuite(xmlDocPtr doc, xmlNodePtr cur) {
+        -:  481:    xmlChar *profile;
+    #####:  482:    int ret = 0;
+        -:  483:
+    #####:  484:    profile = xmlGetProp(cur, BAD_CAST "PROFILE");
+    #####:  485:    if (profile != NULL) {
+    #####:  486:        printf("Test suite: %s\n", (char *) profile);
+    #####:  487:	xmlFree(profile);
+        -:  488:    } else
+    #####:  489:        printf("Test suite\n");
+    #####:  490:    cur = cur->children;
+    #####:  491:    while (cur != NULL) {
+        -:  492:        /* look only at elements we ignore everything else */
+    #####:  493:        if (cur->type == XML_ELEMENT_NODE) {
+    #####:  494:	    if (xmlStrEqual(cur->name, BAD_CAST "TESTCASES")) {
+    #####:  495:	        ret += xmlconfTestCases(doc, cur, 1);
+        -:  496:	    } else {
+    #####:  497:	        fprintf(stderr, "Unhandled element %s\n", (char *)cur->name);
+        -:  498:	    }
+        -:  499:	}
+    #####:  500:        cur = cur->next;
+        -:  501:    }
+    #####:  502:    return(ret);
+        -:  503:}
+        -:  504:
+        -:  505:static void
+    #####:  506:xmlconfInfo(void) {
+    #####:  507:    fprintf(stderr, "  you need to fetch and extract the\n");
+    #####:  508:    fprintf(stderr, "  latest XML Conformance Test Suites\n");
+    #####:  509:    fprintf(stderr, "  http://www.w3.org/XML/Test/xmlts20080827.tar.gz\n");
+    #####:  510:    fprintf(stderr, "  see http://www.w3.org/XML/Test/ for informations\n");
+    #####:  511:}
+        -:  512:
+        -:  513:static int
+    #####:  514:xmlconfTest(void) {
+    #####:  515:    const char *confxml = "xmlconf/xmlconf.xml";
+        -:  516:    xmlDocPtr doc;
+        -:  517:    xmlNodePtr cur;
+    #####:  518:    int ret = 0;
+        -:  519:
+    #####:  520:    if (!checkTestFile(confxml)) {
+    #####:  521:        fprintf(stderr, "%s is missing \n", confxml);
+    #####:  522:	xmlconfInfo();
+    #####:  523:	return(-1);
+        -:  524:    }
+    #####:  525:    doc = xmlReadFile(confxml, NULL, XML_PARSE_NOENT);
+    #####:  526:    if (doc == NULL) {
+    #####:  527:        fprintf(stderr, "%s is corrupted \n", confxml);
+    #####:  528:	xmlconfInfo();
+    #####:  529:	return(-1);
+        -:  530:    }
+        -:  531:
+    #####:  532:    cur = xmlDocGetRootElement(doc);
+    #####:  533:    if ((cur == NULL) || (!xmlStrEqual(cur->name, BAD_CAST "TESTSUITE"))) {
+    #####:  534:        fprintf(stderr, "Unexpected format %s\n", confxml);
+    #####:  535:	xmlconfInfo();
+    #####:  536:	ret = -1;
+        -:  537:    } else {
+    #####:  538:        ret = xmlconfTestSuite(doc, cur);
+        -:  539:    }
+    #####:  540:    xmlFreeDoc(doc);
+    #####:  541:    return(ret);
+        -:  542:}
+        -:  543:
+        -:  544:/************************************************************************
+        -:  545: *									*
+        -:  546: *		The driver for the tests				*
+        -:  547: *									*
+        -:  548: ************************************************************************/
+        -:  549:
+        -:  550:int
+    #####:  551:main(int argc ATTRIBUTE_UNUSED, char **argv ATTRIBUTE_UNUSED) {
+    #####:  552:    int ret = 0;
+        -:  553:    int old_errors, old_tests, old_leaks;
+        -:  554:
+    #####:  555:    logfile = fopen(LOGFILE, "w");
+    #####:  556:    if (logfile == NULL) {
+    #####:  557:        fprintf(stderr,
+        -:  558:	        "Could not open the log file, running in verbose mode\n");
+    #####:  559:	verbose = 1;
+        -:  560:    }
+    #####:  561:    initializeLibxml2();
+        -:  562:
+    #####:  563:    if ((argc >= 2) && (!strcmp(argv[1], "-v")))
+    #####:  564:        verbose = 1;
+        -:  565:
+        -:  566:
+    #####:  567:    old_errors = nb_errors;
+    #####:  568:    old_tests = nb_tests;
+    #####:  569:    old_leaks = nb_leaks;
+    #####:  570:    xmlconfTest();
+    #####:  571:    if ((nb_errors == old_errors) && (nb_leaks == old_leaks))
+    #####:  572:	printf("Ran %d tests, no errors\n", nb_tests - old_tests);
+        -:  573:    else
+    #####:  574:	printf("Ran %d tests, %d errors, %d leaks\n",
+        -:  575:	       nb_tests - old_tests,
+        -:  576:	       nb_errors - old_errors,
+        -:  577:	       nb_leaks - old_leaks);
+    #####:  578:    if ((nb_errors == 0) && (nb_leaks == 0)) {
+    #####:  579:        ret = 0;
+    #####:  580:	printf("Total %d tests, no errors\n",
+        -:  581:	       nb_tests);
+        -:  582:    } else {
+    #####:  583:	ret = 1;
+    #####:  584:	printf("Total %d tests, %d errors, %d leaks\n",
+        -:  585:	       nb_tests, nb_errors, nb_leaks);
+    #####:  586:	printf("See %s for detailed output\n", LOGFILE);
+    #####:  587:	if ((nb_leaks == 0) && (nb_errors == NB_EXPECTED_ERRORS)) {
+    #####:  588:	    printf("%d errors were expected\n", nb_errors);
+    #####:  589:	    ret = 0;
+        -:  590:	}
+        -:  591:    }
+    #####:  592:    xmlXPathFreeContext(ctxtXPath);
+    #####:  593:    xmlCleanupParser();
+    #####:  594:    xmlMemoryDump();
+        -:  595:
+    #####:  596:    if (logfile != NULL)
+    #####:  597:        fclose(logfile);
+    #####:  598:    return(ret);
+        -:  599:}
+        -:  600:
+        -:  601:#else /* ! LIBXML_XPATH_ENABLED */
+        -:  602:#include <stdio.h>
+        -:  603:int
+        -:  604:main(int argc, char **argv) {
+        -:  605:    fprintf(stderr, "%s need XPath support\n", argv[0]);
+        -:  606:}
+        -:  607:#endif

@@ -1,0 +1,5 @@
+<p tsg="a&amp;b" tst2="a&ÿÿÿst3="a & b">
+a#amp;b
+a&b
+a & b
+</p>

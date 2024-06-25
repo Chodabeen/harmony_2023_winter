@@ -1,0 +1,6 @@
+# environment variables:
+AFL_CUSTOM_INFO_PROGRAM=./update_cell
+AFL_CUSTOM_INFO_PROGRAM_ARGV=@@
+AFL_CUSTOM_INFO_OUT=outputs/uc/default
+# command line:
+'../../../AFLplusplus/afl-fuzz' '-i' 'inputs/update_cell' '-o' 'outputs/uc' './update_cell' '@@'

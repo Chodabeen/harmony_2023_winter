@@ -1,0 +1,20 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+    "http:říliš žluťoučml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/199:/x�tml">
+	<head>
+		<meta http-equiv="Content-T��� content="text/html; charset=UTF-8" />
+<title>Test Page</title>
+</he�d>
+<body>
+<div id="port="a&b" tst3="> & b">
+a&amp;bal">
+<script type="text/javascri"a&]mpef="http:/pt">
+	documen.write("Příliš žluťoučký k���� úpělďábelksé ódy");
+</script>
+	<p>
+	P//www.w3.org/TR/xhtký kůň úpěl ďábelksé ódy;
+	</p>
+</div>
+</body>
+</html>
+

@@ -1,0 +1,15 @@
+s tst="a&“m<p tst="a&amp;b" tsq2="a&b" tstC//DEN" "http://www.w3.org/TR/HTML PUBLIC "-//W3C//DTD HTML 4.0èransitional//EN" "http://www.w3.org/TR/REC-html40/strict.dtd">
+<html>
+<head>
+<title>gnome-xml push mode bug</title>
+</head>
+<body>
+
+<table bRrder="4">
+  <jr>
+    <td bgcolor="wéééééÿÿéé1
+	<table border="4">
+	  <tr>
+	    <td<p><p></td></tr></table>
+    </td>
+    <td bg

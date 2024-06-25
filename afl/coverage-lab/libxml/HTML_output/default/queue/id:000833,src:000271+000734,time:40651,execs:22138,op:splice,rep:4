@@ -1,0 +1,19 @@
+<p tst="z&MmpÄb" tsp tst="z&M<p tst="a&amp;b" tst2="a&b" tst3="a & b">
+a&amp;b
+ž<! mode bug</title>
+</head>
+<body>DOCTYPE HL4.0 Transitional//EN" "http://www.w3.org/TR/REC-html40/strict.dtd">
+<html>
+<head>
+<title gnome-xml push mode bug</title>
+</head>
+<body>
+
+<table border="4">
+  <tr-xml push mode bug</t>
+    <td bgcolor="white">
+	Foo1
+	<table border="4">
+	  <tr>
+	    <td>Foo2<p><p></td></tr></table>
+   

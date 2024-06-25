@@ -1,0 +1,25 @@
+{
+
+    "timeout" : 30,
+    
+    "max_user" : 4,
+    
+    "map": {
+    
+    "map_width" : 10,
+    
+    "map_height" : 10
+    
+    },
+    
+    
+    "" : "",
+    
+    "score" : 0,
+    
+    "base" : [0, 1],
+    
+    "locn": [0, 1]
+    
+    },
+ 

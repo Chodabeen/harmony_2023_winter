@@ -1,0 +1,3803 @@
+        -:    0:Source:xmllint.c
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * xmllint.c : a small tester program for XML input.
+        -:    3: *
+        -:    4: * See Copyright for the status of this software.
+        -:    5: *
+        -:    6: * daniel@veillard.com
+        -:    7: */
+        -:    8:
+        -:    9:#include "libxml.h"
+        -:   10:
+        -:   11:#include <string.h>
+        -:   12:#include <stdarg.h>
+        -:   13:#include <assert.h>
+        -:   14:
+        -:   15:#if defined (_WIN32) && !defined(__CYGWIN__)
+        -:   16:#if defined (_MSC_VER) || defined(__BORLANDC__)
+        -:   17:#include <winsock2.h>
+        -:   18:#pragma comment(lib, "ws2_32.lib")
+        -:   19:#define gettimeofday(p1,p2)
+        -:   20:#endif /* _MSC_VER */
+        -:   21:#endif /* _WIN32 */
+        -:   22:
+        -:   23:#ifdef HAVE_SYS_TIME_H
+        -:   24:#include <sys/time.h>
+        -:   25:#endif
+        -:   26:#ifdef HAVE_TIME_H
+        -:   27:#include <time.h>
+        -:   28:#endif
+        -:   29:
+        -:   30:#ifdef __MINGW32__
+        -:   31:#define _WINSOCKAPI_
+        -:   32:#include <wsockcompat.h>
+        -:   33:#include <winsock2.h>
+        -:   34:#undef XML_SOCKLEN_T
+        -:   35:#define XML_SOCKLEN_T unsigned int
+        -:   36:#endif
+        -:   37:
+        -:   38:#ifdef HAVE_SYS_TIMEB_H
+        -:   39:#include <sys/timeb.h>
+        -:   40:#endif
+        -:   41:
+        -:   42:#ifdef HAVE_SYS_TYPES_H
+        -:   43:#include <sys/types.h>
+        -:   44:#endif
+        -:   45:#ifdef HAVE_SYS_STAT_H
+        -:   46:#include <sys/stat.h>
+        -:   47:#endif
+        -:   48:#ifdef HAVE_FCNTL_H
+        -:   49:#include <fcntl.h>
+        -:   50:#endif
+        -:   51:#ifdef HAVE_UNISTD_H
+        -:   52:#include <unistd.h>
+        -:   53:#endif
+        -:   54:#ifdef HAVE_SYS_MMAN_H
+        -:   55:#include <sys/mman.h>
+        -:   56:/* seems needed for Solaris */
+        -:   57:#ifndef MAP_FAILED
+        -:   58:#define MAP_FAILED ((void *) -1)
+        -:   59:#endif
+        -:   60:#endif
+        -:   61:#ifdef HAVE_STDLIB_H
+        -:   62:#include <stdlib.h>
+        -:   63:#endif
+        -:   64:#ifdef HAVE_LIBREADLINE
+        -:   65:#include <readline/readline.h>
+        -:   66:#ifdef HAVE_LIBHISTORY
+        -:   67:#include <readline/history.h>
+        -:   68:#endif
+        -:   69:#endif
+        -:   70:
+        -:   71:#include <libxml/xmlmemory.h>
+        -:   72:#include <libxml/parser.h>
+        -:   73:#include <libxml/parserInternals.h>
+        -:   74:#include <libxml/HTMLparser.h>
+        -:   75:#include <libxml/HTMLtree.h>
+        -:   76:#include <libxml/tree.h>
+        -:   77:#include <libxml/xpath.h>
+        -:   78:#include <libxml/debugXML.h>
+        -:   79:#include <libxml/xmlerror.h>
+        -:   80:#ifdef LIBXML_XINCLUDE_ENABLED
+        -:   81:#include <libxml/xinclude.h>
+        -:   82:#endif
+        -:   83:#ifdef LIBXML_CATALOG_ENABLED
+        -:   84:#include <libxml/catalog.h>
+        -:   85:#endif
+        -:   86:#include <libxml/globals.h>
+        -:   87:#include <libxml/xmlreader.h>
+        -:   88:#ifdef LIBXML_SCHEMATRON_ENABLED
+        -:   89:#include <libxml/schematron.h>
+        -:   90:#endif
+        -:   91:#ifdef LIBXML_SCHEMAS_ENABLED
+        -:   92:#include <libxml/relaxng.h>
+        -:   93:#include <libxml/xmlschemas.h>
+        -:   94:#endif
+        -:   95:#ifdef LIBXML_PATTERN_ENABLED
+        -:   96:#include <libxml/pattern.h>
+        -:   97:#endif
+        -:   98:#ifdef LIBXML_C14N_ENABLED
+        -:   99:#include <libxml/c14n.h>
+        -:  100:#endif
+        -:  101:#ifdef LIBXML_OUTPUT_ENABLED
+        -:  102:#include <libxml/xmlsave.h>
+        -:  103:#endif
+        -:  104:
+        -:  105:#ifndef XML_XML_DEFAULT_CATALOG
+        -:  106:#define XML_XML_DEFAULT_CATALOG "file:///etc/xml/catalog"
+        -:  107:#endif
+        -:  108:
+        -:  109:typedef enum {
+        -:  110:    XMLLINT_RETURN_OK = 0,	/* No error */
+        -:  111:    XMLLINT_ERR_UNCLASS = 1,	/* Unclassified */
+        -:  112:    XMLLINT_ERR_DTD = 2,	/* Error in DTD */
+        -:  113:    XMLLINT_ERR_VALID = 3,	/* Validation error */
+        -:  114:    XMLLINT_ERR_RDFILE = 4,	/* CtxtReadFile error */
+        -:  115:    XMLLINT_ERR_SCHEMACOMP = 5,	/* Schema compilation */
+        -:  116:    XMLLINT_ERR_OUT = 6,	/* Error writing output */
+        -:  117:    XMLLINT_ERR_SCHEMAPAT = 7,	/* Error in schema pattern */
+        -:  118:    XMLLINT_ERR_RDREGIS = 8,	/* Error in Reader registration */
+        -:  119:    XMLLINT_ERR_MEM = 9,	/* Out of memory error */
+        -:  120:    XMLLINT_ERR_XPATH = 10	/* XPath evaluation error */
+        -:  121:} xmllintReturnCode;
+        -:  122:#ifdef LIBXML_DEBUG_ENABLED
+        -:  123:static int shell = 0;
+        -:  124:static int debugent = 0;
+        -:  125:#endif
+        -:  126:static int debug = 0;
+        -:  127:static int maxmem = 0;
+        -:  128:#ifdef LIBXML_TREE_ENABLED
+        -:  129:static int copy = 0;
+        -:  130:#endif /* LIBXML_TREE_ENABLED */
+        -:  131:static int recovery = 0;
+        -:  132:static int noent = 0;
+        -:  133:static int noenc = 0;
+        -:  134:static int noblanks = 0;
+        -:  135:static int noout = 0;
+        -:  136:static int nowrap = 0;
+        -:  137:#ifdef LIBXML_OUTPUT_ENABLED
+        -:  138:static int format = 0;
+        -:  139:static const char *output = NULL;
+        -:  140:static int compress = 0;
+        -:  141:static int oldout = 0;
+        -:  142:#endif /* LIBXML_OUTPUT_ENABLED */
+        -:  143:#ifdef LIBXML_VALID_ENABLED
+        -:  144:static int valid = 0;
+        -:  145:static int postvalid = 0;
+        -:  146:static char * dtdvalid = NULL;
+        -:  147:static char * dtdvalidfpi = NULL;
+        -:  148:#endif
+        -:  149:#ifdef LIBXML_SCHEMAS_ENABLED
+        -:  150:static char * relaxng = NULL;
+        -:  151:static xmlRelaxNGPtr relaxngschemas = NULL;
+        -:  152:static char * schema = NULL;
+        -:  153:static xmlSchemaPtr wxschemas = NULL;
+        -:  154:#endif
+        -:  155:#ifdef LIBXML_SCHEMATRON_ENABLED
+        -:  156:static char * schematron = NULL;
+        -:  157:static xmlSchematronPtr wxschematron = NULL;
+        -:  158:#endif
+        -:  159:static int repeat = 0;
+        -:  160:static int insert = 0;
+        -:  161:#if defined(LIBXML_HTML_ENABLED) || defined(LIBXML_VALID_ENABLED)
+        -:  162:static int html = 0;
+        -:  163:static int xmlout = 0;
+        -:  164:#endif
+        -:  165:static int htmlout = 0;
+        -:  166:#if defined(LIBXML_HTML_ENABLED)
+        -:  167:static int nodefdtd = 0;
+        -:  168:#endif
+        -:  169:#ifdef LIBXML_PUSH_ENABLED
+        -:  170:static int push = 0;
+        -:  171:static int pushsize = 4096;
+        -:  172:#endif /* LIBXML_PUSH_ENABLED */
+        -:  173:#ifdef HAVE_MMAP
+        -:  174:static int memory = 0;
+        -:  175:#endif
+        -:  176:static int testIO = 0;
+        -:  177:static char *encoding = NULL;
+        -:  178:#ifdef LIBXML_XINCLUDE_ENABLED
+        -:  179:static int xinclude = 0;
+        -:  180:#endif
+        -:  181:static int dtdattrs = 0;
+        -:  182:static int loaddtd = 0;
+        -:  183:static xmllintReturnCode progresult = XMLLINT_RETURN_OK;
+        -:  184:static int timing = 0;
+        -:  185:static int generate = 0;
+        -:  186:static int dropdtd = 0;
+        -:  187:#ifdef LIBXML_CATALOG_ENABLED
+        -:  188:static int catalogs = 0;
+        -:  189:static int nocatalogs = 0;
+        -:  190:#endif
+        -:  191:#ifdef LIBXML_C14N_ENABLED
+        -:  192:static int canonical = 0;
+        -:  193:static int canonical_11 = 0;
+        -:  194:static int exc_canonical = 0;
+        -:  195:#endif
+        -:  196:#ifdef LIBXML_READER_ENABLED
+        -:  197:static int stream = 0;
+        -:  198:static int walker = 0;
+        -:  199:#endif /* LIBXML_READER_ENABLED */
+        -:  200:static int chkregister = 0;
+        -:  201:static int nbregister = 0;
+        -:  202:#ifdef LIBXML_SAX1_ENABLED
+        -:  203:static int sax1 = 0;
+        -:  204:#endif /* LIBXML_SAX1_ENABLED */
+        -:  205:#ifdef LIBXML_PATTERN_ENABLED
+        -:  206:static const char *pattern = NULL;
+        -:  207:static xmlPatternPtr patternc = NULL;
+        -:  208:static xmlStreamCtxtPtr patstream = NULL;
+        -:  209:#endif
+        -:  210:#ifdef LIBXML_XPATH_ENABLED
+        -:  211:static const char *xpathquery = NULL;
+        -:  212:#endif
+        -:  213:static int options = XML_PARSE_COMPACT | XML_PARSE_BIG_LINES;
+        -:  214:static int sax = 0;
+        -:  215:static int oldxml10 = 0;
+        -:  216:
+        -:  217:/************************************************************************
+        -:  218: *									*
+        -:  219: *		 Entity loading control and customization.		*
+        -:  220: *									*
+        -:  221: ************************************************************************/
+        -:  222:#define MAX_PATHS 64
+        -:  223:#ifdef _WIN32
+        -:  224:# define PATH_SEPARATOR ';'
+        -:  225:#else
+        -:  226:# define PATH_SEPARATOR ':'
+        -:  227:#endif
+        -:  228:static xmlChar *paths[MAX_PATHS + 1];
+        -:  229:static int nbpaths = 0;
+        -:  230:static int load_trace = 0;
+        -:  231:
+        -:  232:static
+    #####:  233:void parsePath(const xmlChar *path) {
+        -:  234:    const xmlChar *cur;
+        -:  235:
+    #####:  236:    if (path == NULL)
+    #####:  237:	return;
+    #####:  238:    while (*path != 0) {
+    #####:  239:	if (nbpaths >= MAX_PATHS) {
+    #####:  240:	    fprintf(stderr, "MAX_PATHS reached: too many paths\n");
+    #####:  241:	    return;
+        -:  242:	}
+    #####:  243:	cur = path;
+    #####:  244:	while ((*cur == ' ') || (*cur == PATH_SEPARATOR))
+    #####:  245:	    cur++;
+    #####:  246:	path = cur;
+    #####:  247:	while ((*cur != 0) && (*cur != ' ') && (*cur != PATH_SEPARATOR))
+    #####:  248:	    cur++;
+    #####:  249:	if (cur != path) {
+    #####:  250:	    paths[nbpaths] = xmlStrndup(path, cur - path);
+    #####:  251:	    if (paths[nbpaths] != NULL)
+    #####:  252:		nbpaths++;
+    #####:  253:	    path = cur;
+        -:  254:	}
+        -:  255:    }
+        -:  256:}
+        -:  257:
+        -:  258:static xmlExternalEntityLoader defaultEntityLoader = NULL;
+        -:  259:
+        -:  260:static xmlParserInputPtr
+    #####:  261:xmllintExternalEntityLoader(const char *URL, const char *ID,
+        -:  262:			     xmlParserCtxtPtr ctxt) {
+        -:  263:    xmlParserInputPtr ret;
+    #####:  264:    warningSAXFunc warning = NULL;
+    #####:  265:    errorSAXFunc err = NULL;
+        -:  266:
+        -:  267:    int i;
+    #####:  268:    const char *lastsegment = URL;
+    #####:  269:    const char *iter = URL;
+        -:  270:
+    #####:  271:    if ((nbpaths > 0) && (iter != NULL)) {
+    #####:  272:	while (*iter != 0) {
+    #####:  273:	    if (*iter == '/')
+    #####:  274:		lastsegment = iter + 1;
+    #####:  275:	    iter++;
+        -:  276:	}
+        -:  277:    }
+        -:  278:
+    #####:  279:    if ((ctxt != NULL) && (ctxt->sax != NULL)) {
+    #####:  280:	warning = ctxt->sax->warning;
+    #####:  281:	err = ctxt->sax->error;
+    #####:  282:	ctxt->sax->warning = NULL;
+    #####:  283:	ctxt->sax->error = NULL;
+        -:  284:    }
+        -:  285:
+    #####:  286:    if (defaultEntityLoader != NULL) {
+    #####:  287:	ret = defaultEntityLoader(URL, ID, ctxt);
+    #####:  288:	if (ret != NULL) {
+    #####:  289:	    if (warning != NULL)
+    #####:  290:		ctxt->sax->warning = warning;
+    #####:  291:	    if (err != NULL)
+    #####:  292:		ctxt->sax->error = err;
+    #####:  293:	    if (load_trace) {
+    #####:  294:		fprintf \
+        -:  295:			(stderr,
+        -:  296:			 "Loaded URL=\"%s\" ID=\"%s\"\n",
+        -:  297:			 URL ? URL : "(null)",
+        -:  298:			 ID ? ID : "(null)");
+        -:  299:	    }
+    #####:  300:	    return(ret);
+        -:  301:	}
+        -:  302:    }
+    #####:  303:    for (i = 0;i < nbpaths;i++) {
+        -:  304:	xmlChar *newURL;
+        -:  305:
+    #####:  306:	newURL = xmlStrdup((const xmlChar *) paths[i]);
+    #####:  307:	newURL = xmlStrcat(newURL, (const xmlChar *) "/");
+    #####:  308:	newURL = xmlStrcat(newURL, (const xmlChar *) lastsegment);
+    #####:  309:	if (newURL != NULL) {
+    #####:  310:	    ret = defaultEntityLoader((const char *)newURL, ID, ctxt);
+    #####:  311:	    if (ret != NULL) {
+    #####:  312:		if (warning != NULL)
+    #####:  313:		    ctxt->sax->warning = warning;
+    #####:  314:		if (err != NULL)
+    #####:  315:		    ctxt->sax->error = err;
+    #####:  316:		if (load_trace) {
+    #####:  317:		    fprintf \
+        -:  318:			(stderr,
+        -:  319:			 "Loaded URL=\"%s\" ID=\"%s\"\n",
+        -:  320:			 newURL,
+        -:  321:			 ID ? ID : "(null)");
+        -:  322:		}
+    #####:  323:		xmlFree(newURL);
+    #####:  324:		return(ret);
+        -:  325:	    }
+    #####:  326:	    xmlFree(newURL);
+        -:  327:	}
+        -:  328:    }
+    #####:  329:    if (err != NULL)
+    #####:  330:        ctxt->sax->error = err;
+    #####:  331:    if (warning != NULL) {
+    #####:  332:	ctxt->sax->warning = warning;
+    #####:  333:	if (URL != NULL)
+    #####:  334:	    warning(ctxt, "failed to load external entity \"%s\"\n", URL);
+    #####:  335:	else if (ID != NULL)
+    #####:  336:	    warning(ctxt, "failed to load external entity \"%s\"\n", ID);
+        -:  337:    }
+    #####:  338:    return(NULL);
+        -:  339:}
+        -:  340:/************************************************************************
+        -:  341: *									*
+        -:  342: * Memory allocation consumption debugging				*
+        -:  343: *									*
+        -:  344: ************************************************************************/
+        -:  345:
+        -:  346:static void
+    #####:  347:OOM(void)
+        -:  348:{
+    #####:  349:    fprintf(stderr, "Ran out of memory needs > %d bytes\n", maxmem);
+    #####:  350:    progresult = XMLLINT_ERR_MEM;
+    #####:  351:}
+        -:  352:
+        -:  353:static void
+    #####:  354:myFreeFunc(void *mem)
+        -:  355:{
+    #####:  356:    xmlMemFree(mem);
+    #####:  357:}
+        -:  358:static void *
+    #####:  359:myMallocFunc(size_t size)
+        -:  360:{
+        -:  361:    void *ret;
+        -:  362:
+    #####:  363:    ret = xmlMemMalloc(size);
+    #####:  364:    if (ret != NULL) {
+    #####:  365:        if (xmlMemUsed() > maxmem) {
+    #####:  366:            OOM();
+    #####:  367:            xmlMemFree(ret);
+    #####:  368:            return (NULL);
+        -:  369:        }
+        -:  370:    }
+    #####:  371:    return (ret);
+        -:  372:}
+        -:  373:static void *
+    #####:  374:myReallocFunc(void *mem, size_t size)
+        -:  375:{
+        -:  376:    void *ret;
+        -:  377:
+    #####:  378:    ret = xmlMemRealloc(mem, size);
+    #####:  379:    if (ret != NULL) {
+    #####:  380:        if (xmlMemUsed() > maxmem) {
+    #####:  381:            OOM();
+    #####:  382:            xmlMemFree(ret);
+    #####:  383:            return (NULL);
+        -:  384:        }
+        -:  385:    }
+    #####:  386:    return (ret);
+        -:  387:}
+        -:  388:static char *
+    #####:  389:myStrdupFunc(const char *str)
+        -:  390:{
+        -:  391:    char *ret;
+        -:  392:
+    #####:  393:    ret = xmlMemoryStrdup(str);
+    #####:  394:    if (ret != NULL) {
+    #####:  395:        if (xmlMemUsed() > maxmem) {
+    #####:  396:            OOM();
+    #####:  397:            xmlFree(ret);
+    #####:  398:            return (NULL);
+        -:  399:        }
+        -:  400:    }
+    #####:  401:    return (ret);
+        -:  402:}
+        -:  403:/************************************************************************
+        -:  404: *									*
+        -:  405: * Internal timing routines to remove the necessity to have		*
+        -:  406: * unix-specific function calls.					*
+        -:  407: *									*
+        -:  408: ************************************************************************/
+        -:  409:
+        -:  410:#ifndef HAVE_GETTIMEOFDAY
+        -:  411:#ifdef HAVE_SYS_TIMEB_H
+        -:  412:#ifdef HAVE_SYS_TIME_H
+        -:  413:#ifdef HAVE_FTIME
+        -:  414:
+        -:  415:static int
+        -:  416:my_gettimeofday(struct timeval *tvp, void *tzp)
+        -:  417:{
+        -:  418:	struct timeb timebuffer;
+        -:  419:
+        -:  420:	ftime(&timebuffer);
+        -:  421:	if (tvp) {
+        -:  422:		tvp->tv_sec = timebuffer.time;
+        -:  423:		tvp->tv_usec = timebuffer.millitm * 1000L;
+        -:  424:	}
+        -:  425:	return (0);
+        -:  426:}
+        -:  427:#define HAVE_GETTIMEOFDAY 1
+        -:  428:#define gettimeofday my_gettimeofday
+        -:  429:
+        -:  430:#endif /* HAVE_FTIME */
+        -:  431:#endif /* HAVE_SYS_TIME_H */
+        -:  432:#endif /* HAVE_SYS_TIMEB_H */
+        -:  433:#endif /* !HAVE_GETTIMEOFDAY */
+        -:  434:
+        -:  435:#if defined(HAVE_GETTIMEOFDAY)
+        -:  436:static struct timeval begin, end;
+        -:  437:
+        -:  438:/*
+        -:  439: * startTimer: call where you want to start timing
+        -:  440: */
+        -:  441:static void
+    #####:  442:startTimer(void)
+        -:  443:{
+    #####:  444:    gettimeofday(&begin, NULL);
+    #####:  445:}
+        -:  446:
+        -:  447:/*
+        -:  448: * endTimer: call where you want to stop timing and to print out a
+        -:  449: *           message about the timing performed; format is a printf
+        -:  450: *           type argument
+        -:  451: */
+        -:  452:static void XMLCDECL
+    #####:  453:endTimer(const char *fmt, ...)
+        -:  454:{
+        -:  455:    long msec;
+        -:  456:    va_list ap;
+        -:  457:
+    #####:  458:    gettimeofday(&end, NULL);
+    #####:  459:    msec = end.tv_sec - begin.tv_sec;
+    #####:  460:    msec *= 1000;
+    #####:  461:    msec += (end.tv_usec - begin.tv_usec) / 1000;
+        -:  462:
+        -:  463:#ifndef HAVE_STDARG_H
+        -:  464:#error "endTimer required stdarg functions"
+        -:  465:#endif
+    #####:  466:    va_start(ap, fmt);
+    #####:  467:    vfprintf(stderr, fmt, ap);
+    #####:  468:    va_end(ap);
+        -:  469:
+    #####:  470:    fprintf(stderr, " took %ld ms\n", msec);
+    #####:  471:}
+        -:  472:#elif defined(HAVE_TIME_H)
+        -:  473:/*
+        -:  474: * No gettimeofday function, so we have to make do with calling clock.
+        -:  475: * This is obviously less accurate, but there's little we can do about
+        -:  476: * that.
+        -:  477: */
+        -:  478:#ifndef CLOCKS_PER_SEC
+        -:  479:#define CLOCKS_PER_SEC 100
+        -:  480:#endif
+        -:  481:
+        -:  482:static clock_t begin, end;
+        -:  483:static void
+        -:  484:startTimer(void)
+        -:  485:{
+        -:  486:    begin = clock();
+        -:  487:}
+        -:  488:static void XMLCDECL
+        -:  489:endTimer(const char *fmt, ...)
+        -:  490:{
+        -:  491:    long msec;
+        -:  492:    va_list ap;
+        -:  493:
+        -:  494:    end = clock();
+        -:  495:    msec = ((end - begin) * 1000) / CLOCKS_PER_SEC;
+        -:  496:
+        -:  497:#ifndef HAVE_STDARG_H
+        -:  498:#error "endTimer required stdarg functions"
+        -:  499:#endif
+        -:  500:    va_start(ap, fmt);
+        -:  501:    vfprintf(stderr, fmt, ap);
+        -:  502:    va_end(ap);
+        -:  503:    fprintf(stderr, " took %ld ms\n", msec);
+        -:  504:}
+        -:  505:#else
+        -:  506:
+        -:  507:/*
+        -:  508: * We don't have a gettimeofday or time.h, so we just don't do timing
+        -:  509: */
+        -:  510:static void
+        -:  511:startTimer(void)
+        -:  512:{
+        -:  513:    /*
+        -:  514:     * Do nothing
+        -:  515:     */
+        -:  516:}
+        -:  517:static void XMLCDECL
+        -:  518:endTimer(char *format, ...)
+        -:  519:{
+        -:  520:    /*
+        -:  521:     * We cannot do anything because we don't have a timing function
+        -:  522:     */
+        -:  523:#ifdef HAVE_STDARG_H
+        -:  524:    va_list ap;
+        -:  525:    va_start(ap, format);
+        -:  526:    vfprintf(stderr, format, ap);
+        -:  527:    va_end(ap);
+        -:  528:    fprintf(stderr, " was not timed\n");
+        -:  529:#else
+        -:  530:    /* We don't have gettimeofday, time or stdarg.h, what crazy world is
+        -:  531:     * this ?!
+        -:  532:     */
+        -:  533:#endif
+        -:  534:}
+        -:  535:#endif
+        -:  536:/************************************************************************
+        -:  537: *									*
+        -:  538: *			HTML ouput					*
+        -:  539: *									*
+        -:  540: ************************************************************************/
+        -:  541:static char buffer[50000];
+        -:  542:
+        -:  543:static void
+    #####:  544:xmlHTMLEncodeSend(void) {
+        -:  545:    char *result;
+        -:  546:
+    #####:  547:    result = (char *) xmlEncodeEntitiesReentrant(NULL, BAD_CAST buffer);
+    #####:  548:    if (result) {
+    #####:  549:	xmlGenericError(xmlGenericErrorContext, "%s", result);
+    #####:  550:	xmlFree(result);
+        -:  551:    }
+    #####:  552:    buffer[0] = 0;
+    #####:  553:}
+        -:  554:
+        -:  555:/**
+        -:  556: * xmlHTMLPrintFileInfo:
+        -:  557: * @input:  an xmlParserInputPtr input
+        -:  558: *
+        -:  559: * Displays the associated file and line informations for the current input
+        -:  560: */
+        -:  561:
+        -:  562:static void
+    #####:  563:xmlHTMLPrintFileInfo(xmlParserInputPtr input) {
+        -:  564:    int len;
+    #####:  565:    xmlGenericError(xmlGenericErrorContext, "<p>");
+        -:  566:
+    #####:  567:    len = strlen(buffer);
+    #####:  568:    if (input != NULL) {
+    #####:  569:	if (input->filename) {
+    #####:  570:	    snprintf(&buffer[len], sizeof(buffer) - len, "%s:%d: ", input->filename,
+        -:  571:		    input->line);
+        -:  572:	} else {
+    #####:  573:	    snprintf(&buffer[len], sizeof(buffer) - len, "Entity: line %d: ", input->line);
+        -:  574:	}
+        -:  575:    }
+    #####:  576:    xmlHTMLEncodeSend();
+    #####:  577:}
+        -:  578:
+        -:  579:/**
+        -:  580: * xmlHTMLPrintFileContext:
+        -:  581: * @input:  an xmlParserInputPtr input
+        -:  582: *
+        -:  583: * Displays current context within the input content for error tracking
+        -:  584: */
+        -:  585:
+        -:  586:static void
+    #####:  587:xmlHTMLPrintFileContext(xmlParserInputPtr input) {
+        -:  588:    const xmlChar *cur, *base;
+        -:  589:    int len;
+        -:  590:    int n;
+        -:  591:
+    #####:  592:    if (input == NULL) return;
+    #####:  593:    xmlGenericError(xmlGenericErrorContext, "<pre>\n");
+    #####:  594:    cur = input->cur;
+    #####:  595:    base = input->base;
+    #####:  596:    while ((cur > base) && ((*cur == '\n') || (*cur == '\r'))) {
+    #####:  597:	cur--;
+        -:  598:    }
+    #####:  599:    n = 0;
+    #####:  600:    while ((n++ < 80) && (cur > base) && (*cur != '\n') && (*cur != '\r'))
+    #####:  601:        cur--;
+    #####:  602:    if ((*cur == '\n') || (*cur == '\r')) cur++;
+    #####:  603:    base = cur;
+    #####:  604:    n = 0;
+    #####:  605:    while ((*cur != 0) && (*cur != '\n') && (*cur != '\r') && (n < 79)) {
+    #####:  606:	len = strlen(buffer);
+    #####:  607:        snprintf(&buffer[len], sizeof(buffer) - len, "%c",
+    #####:  608:		    (unsigned char) *cur++);
+    #####:  609:	n++;
+        -:  610:    }
+    #####:  611:    len = strlen(buffer);
+    #####:  612:    snprintf(&buffer[len], sizeof(buffer) - len, "\n");
+    #####:  613:    cur = input->cur;
+    #####:  614:    while ((*cur == '\n') || (*cur == '\r'))
+    #####:  615:	cur--;
+    #####:  616:    n = 0;
+    #####:  617:    while ((cur != base) && (n++ < 80)) {
+    #####:  618:	len = strlen(buffer);
+    #####:  619:        snprintf(&buffer[len], sizeof(buffer) - len, " ");
+    #####:  620:        base++;
+        -:  621:    }
+    #####:  622:    len = strlen(buffer);
+    #####:  623:    snprintf(&buffer[len], sizeof(buffer) - len, "^\n");
+    #####:  624:    xmlHTMLEncodeSend();
+    #####:  625:    xmlGenericError(xmlGenericErrorContext, "</pre>");
+        -:  626:}
+        -:  627:
+        -:  628:/**
+        -:  629: * xmlHTMLError:
+        -:  630: * @ctx:  an XML parser context
+        -:  631: * @msg:  the message to display/transmit
+        -:  632: * @...:  extra parameters for the message display
+        -:  633: *
+        -:  634: * Display and format an error messages, gives file, line, position and
+        -:  635: * extra parameters.
+        -:  636: */
+        -:  637:static void XMLCDECL
+    #####:  638:xmlHTMLError(void *ctx, const char *msg, ...)
+        -:  639:{
+    #####:  640:    xmlParserCtxtPtr ctxt = (xmlParserCtxtPtr) ctx;
+        -:  641:    xmlParserInputPtr input;
+        -:  642:    va_list args;
+        -:  643:    int len;
+        -:  644:
+    #####:  645:    buffer[0] = 0;
+    #####:  646:    input = ctxt->input;
+    #####:  647:    if ((input != NULL) && (input->filename == NULL) && (ctxt->inputNr > 1)) {
+    #####:  648:        input = ctxt->inputTab[ctxt->inputNr - 2];
+        -:  649:    }
+        -:  650:
+    #####:  651:    xmlHTMLPrintFileInfo(input);
+        -:  652:
+    #####:  653:    xmlGenericError(xmlGenericErrorContext, "<b>error</b>: ");
+    #####:  654:    va_start(args, msg);
+    #####:  655:    len = strlen(buffer);
+    #####:  656:    vsnprintf(&buffer[len],  sizeof(buffer) - len, msg, args);
+    #####:  657:    va_end(args);
+    #####:  658:    xmlHTMLEncodeSend();
+    #####:  659:    xmlGenericError(xmlGenericErrorContext, "</p>\n");
+        -:  660:
+    #####:  661:    xmlHTMLPrintFileContext(input);
+    #####:  662:    xmlHTMLEncodeSend();
+    #####:  663:}
+        -:  664:
+        -:  665:/**
+        -:  666: * xmlHTMLWarning:
+        -:  667: * @ctx:  an XML parser context
+        -:  668: * @msg:  the message to display/transmit
+        -:  669: * @...:  extra parameters for the message display
+        -:  670: *
+        -:  671: * Display and format a warning messages, gives file, line, position and
+        -:  672: * extra parameters.
+        -:  673: */
+        -:  674:static void XMLCDECL
+    #####:  675:xmlHTMLWarning(void *ctx, const char *msg, ...)
+        -:  676:{
+    #####:  677:    xmlParserCtxtPtr ctxt = (xmlParserCtxtPtr) ctx;
+        -:  678:    xmlParserInputPtr input;
+        -:  679:    va_list args;
+        -:  680:    int len;
+        -:  681:
+    #####:  682:    buffer[0] = 0;
+    #####:  683:    input = ctxt->input;
+    #####:  684:    if ((input != NULL) && (input->filename == NULL) && (ctxt->inputNr > 1)) {
+    #####:  685:        input = ctxt->inputTab[ctxt->inputNr - 2];
+        -:  686:    }
+        -:  687:
+        -:  688:
+    #####:  689:    xmlHTMLPrintFileInfo(input);
+        -:  690:
+    #####:  691:    xmlGenericError(xmlGenericErrorContext, "<b>warning</b>: ");
+    #####:  692:    va_start(args, msg);
+    #####:  693:    len = strlen(buffer);
+    #####:  694:    vsnprintf(&buffer[len],  sizeof(buffer) - len, msg, args);
+    #####:  695:    va_end(args);
+    #####:  696:    xmlHTMLEncodeSend();
+    #####:  697:    xmlGenericError(xmlGenericErrorContext, "</p>\n");
+        -:  698:
+    #####:  699:    xmlHTMLPrintFileContext(input);
+    #####:  700:    xmlHTMLEncodeSend();
+    #####:  701:}
+        -:  702:
+        -:  703:/**
+        -:  704: * xmlHTMLValidityError:
+        -:  705: * @ctx:  an XML parser context
+        -:  706: * @msg:  the message to display/transmit
+        -:  707: * @...:  extra parameters for the message display
+        -:  708: *
+        -:  709: * Display and format an validity error messages, gives file,
+        -:  710: * line, position and extra parameters.
+        -:  711: */
+        -:  712:static void XMLCDECL
+    #####:  713:xmlHTMLValidityError(void *ctx, const char *msg, ...)
+        -:  714:{
+    #####:  715:    xmlParserCtxtPtr ctxt = (xmlParserCtxtPtr) ctx;
+        -:  716:    xmlParserInputPtr input;
+        -:  717:    va_list args;
+        -:  718:    int len;
+        -:  719:
+    #####:  720:    buffer[0] = 0;
+    #####:  721:    input = ctxt->input;
+    #####:  722:    if ((input->filename == NULL) && (ctxt->inputNr > 1))
+    #####:  723:        input = ctxt->inputTab[ctxt->inputNr - 2];
+        -:  724:
+    #####:  725:    xmlHTMLPrintFileInfo(input);
+        -:  726:
+    #####:  727:    xmlGenericError(xmlGenericErrorContext, "<b>validity error</b>: ");
+    #####:  728:    len = strlen(buffer);
+    #####:  729:    va_start(args, msg);
+    #####:  730:    vsnprintf(&buffer[len],  sizeof(buffer) - len, msg, args);
+    #####:  731:    va_end(args);
+    #####:  732:    xmlHTMLEncodeSend();
+    #####:  733:    xmlGenericError(xmlGenericErrorContext, "</p>\n");
+        -:  734:
+    #####:  735:    xmlHTMLPrintFileContext(input);
+    #####:  736:    xmlHTMLEncodeSend();
+    #####:  737:    progresult = XMLLINT_ERR_VALID;
+    #####:  738:}
+        -:  739:
+        -:  740:/**
+        -:  741: * xmlHTMLValidityWarning:
+        -:  742: * @ctx:  an XML parser context
+        -:  743: * @msg:  the message to display/transmit
+        -:  744: * @...:  extra parameters for the message display
+        -:  745: *
+        -:  746: * Display and format a validity warning messages, gives file, line,
+        -:  747: * position and extra parameters.
+        -:  748: */
+        -:  749:static void XMLCDECL
+    #####:  750:xmlHTMLValidityWarning(void *ctx, const char *msg, ...)
+        -:  751:{
+    #####:  752:    xmlParserCtxtPtr ctxt = (xmlParserCtxtPtr) ctx;
+        -:  753:    xmlParserInputPtr input;
+        -:  754:    va_list args;
+        -:  755:    int len;
+        -:  756:
+    #####:  757:    buffer[0] = 0;
+    #####:  758:    input = ctxt->input;
+    #####:  759:    if ((input->filename == NULL) && (ctxt->inputNr > 1))
+    #####:  760:        input = ctxt->inputTab[ctxt->inputNr - 2];
+        -:  761:
+    #####:  762:    xmlHTMLPrintFileInfo(input);
+        -:  763:
+    #####:  764:    xmlGenericError(xmlGenericErrorContext, "<b>validity warning</b>: ");
+    #####:  765:    va_start(args, msg);
+    #####:  766:    len = strlen(buffer);
+    #####:  767:    vsnprintf(&buffer[len],  sizeof(buffer) - len, msg, args);
+    #####:  768:    va_end(args);
+    #####:  769:    xmlHTMLEncodeSend();
+    #####:  770:    xmlGenericError(xmlGenericErrorContext, "</p>\n");
+        -:  771:
+    #####:  772:    xmlHTMLPrintFileContext(input);
+    #####:  773:    xmlHTMLEncodeSend();
+    #####:  774:}
+        -:  775:
+        -:  776:/************************************************************************
+        -:  777: *									*
+        -:  778: *			Shell Interface					*
+        -:  779: *									*
+        -:  780: ************************************************************************/
+        -:  781:#ifdef LIBXML_DEBUG_ENABLED
+        -:  782:#ifdef LIBXML_XPATH_ENABLED
+        -:  783:/**
+        -:  784: * xmlShellReadline:
+        -:  785: * @prompt:  the prompt value
+        -:  786: *
+        -:  787: * Read a string
+        -:  788: *
+        -:  789: * Returns a pointer to it or NULL on EOF the caller is expected to
+        -:  790: *     free the returned string.
+        -:  791: */
+        -:  792:static char *
+    #####:  793:xmlShellReadline(char *prompt) {
+        -:  794:#ifdef HAVE_LIBREADLINE
+        -:  795:    char *line_read;
+        -:  796:
+        -:  797:    /* Get a line from the user. */
+        -:  798:    line_read = readline (prompt);
+        -:  799:
+        -:  800:    /* If the line has any text in it, save it on the history. */
+        -:  801:    if (line_read && *line_read)
+        -:  802:	add_history (line_read);
+        -:  803:
+        -:  804:    return (line_read);
+        -:  805:#else
+        -:  806:    char line_read[501];
+        -:  807:    char *ret;
+        -:  808:    int len;
+        -:  809:
+    #####:  810:    if (prompt != NULL)
+    #####:  811:	fprintf(stdout, "%s", prompt);
+    #####:  812:    if (!fgets(line_read, 500, stdin))
+    #####:  813:        return(NULL);
+    #####:  814:    line_read[500] = 0;
+    #####:  815:    len = strlen(line_read);
+    #####:  816:    ret = (char *) malloc(len + 1);
+    #####:  817:    if (ret != NULL) {
+    #####:  818:	memcpy (ret, line_read, len + 1);
+        -:  819:    }
+    #####:  820:    return(ret);
+        -:  821:#endif
+        -:  822:}
+        -:  823:#endif /* LIBXML_XPATH_ENABLED */
+        -:  824:#endif /* LIBXML_DEBUG_ENABLED */
+        -:  825:
+        -:  826:/************************************************************************
+        -:  827: *									*
+        -:  828: *			I/O Interfaces					*
+        -:  829: *									*
+        -:  830: ************************************************************************/
+        -:  831:
+    #####:  832:static int myRead(FILE *f, char * buf, int len) {
+    #####:  833:    return(fread(buf, 1, len, f));
+        -:  834:}
+    #####:  835:static void myClose(FILE *f) {
+    #####:  836:  if (f != stdin) {
+    #####:  837:    fclose(f);
+        -:  838:  }
+    #####:  839:}
+        -:  840:
+        -:  841:/************************************************************************
+        -:  842: *									*
+        -:  843: *			SAX based tests					*
+        -:  844: *									*
+        -:  845: ************************************************************************/
+        -:  846:
+        -:  847:/*
+        -:  848: * empty SAX block
+        -:  849: */
+        -:  850:static xmlSAXHandler emptySAXHandlerStruct = {
+        -:  851:    NULL, /* internalSubset */
+        -:  852:    NULL, /* isStandalone */
+        -:  853:    NULL, /* hasInternalSubset */
+        -:  854:    NULL, /* hasExternalSubset */
+        -:  855:    NULL, /* resolveEntity */
+        -:  856:    NULL, /* getEntity */
+        -:  857:    NULL, /* entityDecl */
+        -:  858:    NULL, /* notationDecl */
+        -:  859:    NULL, /* attributeDecl */
+        -:  860:    NULL, /* elementDecl */
+        -:  861:    NULL, /* unparsedEntityDecl */
+        -:  862:    NULL, /* setDocumentLocator */
+        -:  863:    NULL, /* startDocument */
+        -:  864:    NULL, /* endDocument */
+        -:  865:    NULL, /* startElement */
+        -:  866:    NULL, /* endElement */
+        -:  867:    NULL, /* reference */
+        -:  868:    NULL, /* characters */
+        -:  869:    NULL, /* ignorableWhitespace */
+        -:  870:    NULL, /* processingInstruction */
+        -:  871:    NULL, /* comment */
+        -:  872:    NULL, /* xmlParserWarning */
+        -:  873:    NULL, /* xmlParserError */
+        -:  874:    NULL, /* xmlParserError */
+        -:  875:    NULL, /* getParameterEntity */
+        -:  876:    NULL, /* cdataBlock; */
+        -:  877:    NULL, /* externalSubset; */
+        -:  878:    XML_SAX2_MAGIC,
+        -:  879:    NULL,
+        -:  880:    NULL, /* startElementNs */
+        -:  881:    NULL, /* endElementNs */
+        -:  882:    NULL  /* xmlStructuredErrorFunc */
+        -:  883:};
+        -:  884:
+        -:  885:static xmlSAXHandlerPtr emptySAXHandler = &emptySAXHandlerStruct;
+        -:  886:extern xmlSAXHandlerPtr debugSAXHandler;
+        -:  887:static int callbacks;
+        -:  888:
+        -:  889:/**
+        -:  890: * isStandaloneDebug:
+        -:  891: * @ctxt:  An XML parser context
+        -:  892: *
+        -:  893: * Is this document tagged standalone ?
+        -:  894: *
+        -:  895: * Returns 1 if true
+        -:  896: */
+        -:  897:static int
+    #####:  898:isStandaloneDebug(void *ctx ATTRIBUTE_UNUSED)
+        -:  899:{
+    #####:  900:    callbacks++;
+    #####:  901:    if (noout)
+    #####:  902:	return(0);
+    #####:  903:    fprintf(stdout, "SAX.isStandalone()\n");
+    #####:  904:    return(0);
+        -:  905:}
+        -:  906:
+        -:  907:/**
+        -:  908: * hasInternalSubsetDebug:
+        -:  909: * @ctxt:  An XML parser context
+        -:  910: *
+        -:  911: * Does this document has an internal subset
+        -:  912: *
+        -:  913: * Returns 1 if true
+        -:  914: */
+        -:  915:static int
+    #####:  916:hasInternalSubsetDebug(void *ctx ATTRIBUTE_UNUSED)
+        -:  917:{
+    #####:  918:    callbacks++;
+    #####:  919:    if (noout)
+    #####:  920:	return(0);
+    #####:  921:    fprintf(stdout, "SAX.hasInternalSubset()\n");
+    #####:  922:    return(0);
+        -:  923:}
+        -:  924:
+        -:  925:/**
+        -:  926: * hasExternalSubsetDebug:
+        -:  927: * @ctxt:  An XML parser context
+        -:  928: *
+        -:  929: * Does this document has an external subset
+        -:  930: *
+        -:  931: * Returns 1 if true
+        -:  932: */
+        -:  933:static int
+    #####:  934:hasExternalSubsetDebug(void *ctx ATTRIBUTE_UNUSED)
+        -:  935:{
+    #####:  936:    callbacks++;
+    #####:  937:    if (noout)
+    #####:  938:	return(0);
+    #####:  939:    fprintf(stdout, "SAX.hasExternalSubset()\n");
+    #####:  940:    return(0);
+        -:  941:}
+        -:  942:
+        -:  943:/**
+        -:  944: * internalSubsetDebug:
+        -:  945: * @ctxt:  An XML parser context
+        -:  946: *
+        -:  947: * Does this document has an internal subset
+        -:  948: */
+        -:  949:static void
+    #####:  950:internalSubsetDebug(void *ctx ATTRIBUTE_UNUSED, const xmlChar *name,
+        -:  951:	       const xmlChar *ExternalID, const xmlChar *SystemID)
+        -:  952:{
+    #####:  953:    callbacks++;
+    #####:  954:    if (noout)
+    #####:  955:	return;
+    #####:  956:    fprintf(stdout, "SAX.internalSubset(%s,", name);
+    #####:  957:    if (ExternalID == NULL)
+    #####:  958:	fprintf(stdout, " ,");
+        -:  959:    else
+    #####:  960:	fprintf(stdout, " %s,", ExternalID);
+    #####:  961:    if (SystemID == NULL)
+    #####:  962:	fprintf(stdout, " )\n");
+        -:  963:    else
+    #####:  964:	fprintf(stdout, " %s)\n", SystemID);
+        -:  965:}
+        -:  966:
+        -:  967:/**
+        -:  968: * externalSubsetDebug:
+        -:  969: * @ctxt:  An XML parser context
+        -:  970: *
+        -:  971: * Does this document has an external subset
+        -:  972: */
+        -:  973:static void
+    #####:  974:externalSubsetDebug(void *ctx ATTRIBUTE_UNUSED, const xmlChar *name,
+        -:  975:	       const xmlChar *ExternalID, const xmlChar *SystemID)
+        -:  976:{
+    #####:  977:    callbacks++;
+    #####:  978:    if (noout)
+    #####:  979:	return;
+    #####:  980:    fprintf(stdout, "SAX.externalSubset(%s,", name);
+    #####:  981:    if (ExternalID == NULL)
+    #####:  982:	fprintf(stdout, " ,");
+        -:  983:    else
+    #####:  984:	fprintf(stdout, " %s,", ExternalID);
+    #####:  985:    if (SystemID == NULL)
+    #####:  986:	fprintf(stdout, " )\n");
+        -:  987:    else
+    #####:  988:	fprintf(stdout, " %s)\n", SystemID);
+        -:  989:}
+        -:  990:
+        -:  991:/**
+        -:  992: * resolveEntityDebug:
+        -:  993: * @ctxt:  An XML parser context
+        -:  994: * @publicId: The public ID of the entity
+        -:  995: * @systemId: The system ID of the entity
+        -:  996: *
+        -:  997: * Special entity resolver, better left to the parser, it has
+        -:  998: * more context than the application layer.
+        -:  999: * The default behaviour is to NOT resolve the entities, in that case
+        -: 1000: * the ENTITY_REF nodes are built in the structure (and the parameter
+        -: 1001: * values).
+        -: 1002: *
+        -: 1003: * Returns the xmlParserInputPtr if inlined or NULL for DOM behaviour.
+        -: 1004: */
+        -: 1005:static xmlParserInputPtr
+    #####: 1006:resolveEntityDebug(void *ctx ATTRIBUTE_UNUSED, const xmlChar *publicId, const xmlChar *systemId)
+        -: 1007:{
+    #####: 1008:    callbacks++;
+    #####: 1009:    if (noout)
+    #####: 1010:	return(NULL);
+        -: 1011:    /* xmlParserCtxtPtr ctxt = (xmlParserCtxtPtr) ctx; */
+        -: 1012:
+        -: 1013:
+    #####: 1014:    fprintf(stdout, "SAX.resolveEntity(");
+    #####: 1015:    if (publicId != NULL)
+    #####: 1016:	fprintf(stdout, "%s", (char *)publicId);
+        -: 1017:    else
+    #####: 1018:	fprintf(stdout, " ");
+    #####: 1019:    if (systemId != NULL)
+    #####: 1020:	fprintf(stdout, ", %s)\n", (char *)systemId);
+        -: 1021:    else
+    #####: 1022:	fprintf(stdout, ", )\n");
+    #####: 1023:    return(NULL);
+        -: 1024:}
+        -: 1025:
+        -: 1026:/**
+        -: 1027: * getEntityDebug:
+        -: 1028: * @ctxt:  An XML parser context
+        -: 1029: * @name: The entity name
+        -: 1030: *
+        -: 1031: * Get an entity by name
+        -: 1032: *
+        -: 1033: * Returns the xmlParserInputPtr if inlined or NULL for DOM behaviour.
+        -: 1034: */
+        -: 1035:static xmlEntityPtr
+    #####: 1036:getEntityDebug(void *ctx ATTRIBUTE_UNUSED, const xmlChar *name)
+        -: 1037:{
+    #####: 1038:    callbacks++;
+    #####: 1039:    if (noout)
+    #####: 1040:	return(NULL);
+    #####: 1041:    fprintf(stdout, "SAX.getEntity(%s)\n", name);
+    #####: 1042:    return(NULL);
+        -: 1043:}
+        -: 1044:
+        -: 1045:/**
+        -: 1046: * getParameterEntityDebug:
+        -: 1047: * @ctxt:  An XML parser context
+        -: 1048: * @name: The entity name
+        -: 1049: *
+        -: 1050: * Get a parameter entity by name
+        -: 1051: *
+        -: 1052: * Returns the xmlParserInputPtr
+        -: 1053: */
+        -: 1054:static xmlEntityPtr
+    #####: 1055:getParameterEntityDebug(void *ctx ATTRIBUTE_UNUSED, const xmlChar *name)
+        -: 1056:{
+    #####: 1057:    callbacks++;
+    #####: 1058:    if (noout)
+    #####: 1059:	return(NULL);
+    #####: 1060:    fprintf(stdout, "SAX.getParameterEntity(%s)\n", name);
+    #####: 1061:    return(NULL);
+        -: 1062:}
+        -: 1063:
+        -: 1064:
+        -: 1065:/**
+        -: 1066: * entityDeclDebug:
+        -: 1067: * @ctxt:  An XML parser context
+        -: 1068: * @name:  the entity name
+        -: 1069: * @type:  the entity type
+        -: 1070: * @publicId: The public ID of the entity
+        -: 1071: * @systemId: The system ID of the entity
+        -: 1072: * @content: the entity value (without processing).
+        -: 1073: *
+        -: 1074: * An entity definition has been parsed
+        -: 1075: */
+        -: 1076:static void
+    #####: 1077:entityDeclDebug(void *ctx ATTRIBUTE_UNUSED, const xmlChar *name, int type,
+        -: 1078:          const xmlChar *publicId, const xmlChar *systemId, xmlChar *content)
+        -: 1079:{
+    #####: 1080:const xmlChar *nullstr = BAD_CAST "(null)";
+        -: 1081:    /* not all libraries handle printing null pointers nicely */
+    #####: 1082:    if (publicId == NULL)
+    #####: 1083:        publicId = nullstr;
+    #####: 1084:    if (systemId == NULL)
+    #####: 1085:        systemId = nullstr;
+    #####: 1086:    if (content == NULL)
+    #####: 1087:        content = (xmlChar *)nullstr;
+    #####: 1088:    callbacks++;
+    #####: 1089:    if (noout)
+    #####: 1090:	return;
+    #####: 1091:    fprintf(stdout, "SAX.entityDecl(%s, %d, %s, %s, %s)\n",
+        -: 1092:            name, type, publicId, systemId, content);
+        -: 1093:}
+        -: 1094:
+        -: 1095:/**
+        -: 1096: * attributeDeclDebug:
+        -: 1097: * @ctxt:  An XML parser context
+        -: 1098: * @name:  the attribute name
+        -: 1099: * @type:  the attribute type
+        -: 1100: *
+        -: 1101: * An attribute definition has been parsed
+        -: 1102: */
+        -: 1103:static void
+    #####: 1104:attributeDeclDebug(void *ctx ATTRIBUTE_UNUSED, const xmlChar * elem,
+        -: 1105:                   const xmlChar * name, int type, int def,
+        -: 1106:                   const xmlChar * defaultValue, xmlEnumerationPtr tree)
+        -: 1107:{
+    #####: 1108:    callbacks++;
+    #####: 1109:    if (noout)
+    #####: 1110:        return;
+    #####: 1111:    if (defaultValue == NULL)
+    #####: 1112:        fprintf(stdout, "SAX.attributeDecl(%s, %s, %d, %d, NULL, ...)\n",
+        -: 1113:                elem, name, type, def);
+        -: 1114:    else
+    #####: 1115:        fprintf(stdout, "SAX.attributeDecl(%s, %s, %d, %d, %s, ...)\n",
+        -: 1116:                elem, name, type, def, defaultValue);
+    #####: 1117:    xmlFreeEnumeration(tree);
+        -: 1118:}
+        -: 1119:
+        -: 1120:/**
+        -: 1121: * elementDeclDebug:
+        -: 1122: * @ctxt:  An XML parser context
+        -: 1123: * @name:  the element name
+        -: 1124: * @type:  the element type
+        -: 1125: * @content: the element value (without processing).
+        -: 1126: *
+        -: 1127: * An element definition has been parsed
+        -: 1128: */
+        -: 1129:static void
+    #####: 1130:elementDeclDebug(void *ctx ATTRIBUTE_UNUSED, const xmlChar *name, int type,
+        -: 1131:	    xmlElementContentPtr content ATTRIBUTE_UNUSED)
+        -: 1132:{
+    #####: 1133:    callbacks++;
+    #####: 1134:    if (noout)
+    #####: 1135:	return;
+    #####: 1136:    fprintf(stdout, "SAX.elementDecl(%s, %d, ...)\n",
+        -: 1137:            name, type);
+        -: 1138:}
+        -: 1139:
+        -: 1140:/**
+        -: 1141: * notationDeclDebug:
+        -: 1142: * @ctxt:  An XML parser context
+        -: 1143: * @name: The name of the notation
+        -: 1144: * @publicId: The public ID of the entity
+        -: 1145: * @systemId: The system ID of the entity
+        -: 1146: *
+        -: 1147: * What to do when a notation declaration has been parsed.
+        -: 1148: */
+        -: 1149:static void
+    #####: 1150:notationDeclDebug(void *ctx ATTRIBUTE_UNUSED, const xmlChar *name,
+        -: 1151:	     const xmlChar *publicId, const xmlChar *systemId)
+        -: 1152:{
+    #####: 1153:    callbacks++;
+    #####: 1154:    if (noout)
+    #####: 1155:	return;
+    #####: 1156:    fprintf(stdout, "SAX.notationDecl(%s, %s, %s)\n",
+        -: 1157:            (char *) name, (char *) publicId, (char *) systemId);
+        -: 1158:}
+        -: 1159:
+        -: 1160:/**
+        -: 1161: * unparsedEntityDeclDebug:
+        -: 1162: * @ctxt:  An XML parser context
+        -: 1163: * @name: The name of the entity
+        -: 1164: * @publicId: The public ID of the entity
+        -: 1165: * @systemId: The system ID of the entity
+        -: 1166: * @notationName: the name of the notation
+        -: 1167: *
+        -: 1168: * What to do when an unparsed entity declaration is parsed
+        -: 1169: */
+        -: 1170:static void
+    #####: 1171:unparsedEntityDeclDebug(void *ctx ATTRIBUTE_UNUSED, const xmlChar *name,
+        -: 1172:		   const xmlChar *publicId, const xmlChar *systemId,
+        -: 1173:		   const xmlChar *notationName)
+        -: 1174:{
+    #####: 1175:const xmlChar *nullstr = BAD_CAST "(null)";
+        -: 1176:
+    #####: 1177:    if (publicId == NULL)
+    #####: 1178:        publicId = nullstr;
+    #####: 1179:    if (systemId == NULL)
+    #####: 1180:        systemId = nullstr;
+    #####: 1181:    if (notationName == NULL)
+    #####: 1182:        notationName = nullstr;
+    #####: 1183:    callbacks++;
+    #####: 1184:    if (noout)
+    #####: 1185:	return;
+    #####: 1186:    fprintf(stdout, "SAX.unparsedEntityDecl(%s, %s, %s, %s)\n",
+        -: 1187:            (char *) name, (char *) publicId, (char *) systemId,
+        -: 1188:	    (char *) notationName);
+        -: 1189:}
+        -: 1190:
+        -: 1191:/**
+        -: 1192: * setDocumentLocatorDebug:
+        -: 1193: * @ctxt:  An XML parser context
+        -: 1194: * @loc: A SAX Locator
+        -: 1195: *
+        -: 1196: * Receive the document locator at startup, actually xmlDefaultSAXLocator
+        -: 1197: * Everything is available on the context, so this is useless in our case.
+        -: 1198: */
+        -: 1199:static void
+    #####: 1200:setDocumentLocatorDebug(void *ctx ATTRIBUTE_UNUSED, xmlSAXLocatorPtr loc ATTRIBUTE_UNUSED)
+        -: 1201:{
+    #####: 1202:    callbacks++;
+    #####: 1203:    if (noout)
+    #####: 1204:	return;
+    #####: 1205:    fprintf(stdout, "SAX.setDocumentLocator()\n");
+        -: 1206:}
+        -: 1207:
+        -: 1208:/**
+        -: 1209: * startDocumentDebug:
+        -: 1210: * @ctxt:  An XML parser context
+        -: 1211: *
+        -: 1212: * called when the document start being processed.
+        -: 1213: */
+        -: 1214:static void
+    #####: 1215:startDocumentDebug(void *ctx ATTRIBUTE_UNUSED)
+        -: 1216:{
+    #####: 1217:    callbacks++;
+    #####: 1218:    if (noout)
+    #####: 1219:	return;
+    #####: 1220:    fprintf(stdout, "SAX.startDocument()\n");
+        -: 1221:}
+        -: 1222:
+        -: 1223:/**
+        -: 1224: * endDocumentDebug:
+        -: 1225: * @ctxt:  An XML parser context
+        -: 1226: *
+        -: 1227: * called when the document end has been detected.
+        -: 1228: */
+        -: 1229:static void
+    #####: 1230:endDocumentDebug(void *ctx ATTRIBUTE_UNUSED)
+        -: 1231:{
+    #####: 1232:    callbacks++;
+    #####: 1233:    if (noout)
+    #####: 1234:	return;
+    #####: 1235:    fprintf(stdout, "SAX.endDocument()\n");
+        -: 1236:}
+        -: 1237:
+        -: 1238:/**
+        -: 1239: * startElementDebug:
+        -: 1240: * @ctxt:  An XML parser context
+        -: 1241: * @name:  The element name
+        -: 1242: *
+        -: 1243: * called when an opening tag has been processed.
+        -: 1244: */
+        -: 1245:static void
+    #####: 1246:startElementDebug(void *ctx ATTRIBUTE_UNUSED, const xmlChar *name, const xmlChar **atts)
+        -: 1247:{
+        -: 1248:    int i;
+        -: 1249:
+    #####: 1250:    callbacks++;
+    #####: 1251:    if (noout)
+    #####: 1252:	return;
+    #####: 1253:    fprintf(stdout, "SAX.startElement(%s", (char *) name);
+    #####: 1254:    if (atts != NULL) {
+    #####: 1255:        for (i = 0;(atts[i] != NULL);i++) {
+    #####: 1256:	    fprintf(stdout, ", %s='", atts[i++]);
+    #####: 1257:	    if (atts[i] != NULL)
+    #####: 1258:	        fprintf(stdout, "%s'", atts[i]);
+        -: 1259:	}
+        -: 1260:    }
+    #####: 1261:    fprintf(stdout, ")\n");
+        -: 1262:}
+        -: 1263:
+        -: 1264:/**
+        -: 1265: * endElementDebug:
+        -: 1266: * @ctxt:  An XML parser context
+        -: 1267: * @name:  The element name
+        -: 1268: *
+        -: 1269: * called when the end of an element has been detected.
+        -: 1270: */
+        -: 1271:static void
+    #####: 1272:endElementDebug(void *ctx ATTRIBUTE_UNUSED, const xmlChar *name)
+        -: 1273:{
+    #####: 1274:    callbacks++;
+    #####: 1275:    if (noout)
+    #####: 1276:	return;
+    #####: 1277:    fprintf(stdout, "SAX.endElement(%s)\n", (char *) name);
+        -: 1278:}
+        -: 1279:
+        -: 1280:/**
+        -: 1281: * charactersDebug:
+        -: 1282: * @ctxt:  An XML parser context
+        -: 1283: * @ch:  a xmlChar string
+        -: 1284: * @len: the number of xmlChar
+        -: 1285: *
+        -: 1286: * receiving some chars from the parser.
+        -: 1287: * Question: how much at a time ???
+        -: 1288: */
+        -: 1289:static void
+    #####: 1290:charactersDebug(void *ctx ATTRIBUTE_UNUSED, const xmlChar *ch, int len)
+        -: 1291:{
+        -: 1292:    char out[40];
+        -: 1293:    int i;
+        -: 1294:
+    #####: 1295:    callbacks++;
+    #####: 1296:    if (noout)
+    #####: 1297:	return;
+    #####: 1298:    for (i = 0;(i<len) && (i < 30);i++)
+    #####: 1299:	out[i] = ch[i];
+    #####: 1300:    out[i] = 0;
+        -: 1301:
+    #####: 1302:    fprintf(stdout, "SAX.characters(%s, %d)\n", out, len);
+        -: 1303:}
+        -: 1304:
+        -: 1305:/**
+        -: 1306: * referenceDebug:
+        -: 1307: * @ctxt:  An XML parser context
+        -: 1308: * @name:  The entity name
+        -: 1309: *
+        -: 1310: * called when an entity reference is detected.
+        -: 1311: */
+        -: 1312:static void
+    #####: 1313:referenceDebug(void *ctx ATTRIBUTE_UNUSED, const xmlChar *name)
+        -: 1314:{
+    #####: 1315:    callbacks++;
+    #####: 1316:    if (noout)
+    #####: 1317:	return;
+    #####: 1318:    fprintf(stdout, "SAX.reference(%s)\n", name);
+        -: 1319:}
+        -: 1320:
+        -: 1321:/**
+        -: 1322: * ignorableWhitespaceDebug:
+        -: 1323: * @ctxt:  An XML parser context
+        -: 1324: * @ch:  a xmlChar string
+        -: 1325: * @start: the first char in the string
+        -: 1326: * @len: the number of xmlChar
+        -: 1327: *
+        -: 1328: * receiving some ignorable whitespaces from the parser.
+        -: 1329: * Question: how much at a time ???
+        -: 1330: */
+        -: 1331:static void
+    #####: 1332:ignorableWhitespaceDebug(void *ctx ATTRIBUTE_UNUSED, const xmlChar *ch, int len)
+        -: 1333:{
+        -: 1334:    char out[40];
+        -: 1335:    int i;
+        -: 1336:
+    #####: 1337:    callbacks++;
+    #####: 1338:    if (noout)
+    #####: 1339:	return;
+    #####: 1340:    for (i = 0;(i<len) && (i < 30);i++)
+    #####: 1341:	out[i] = ch[i];
+    #####: 1342:    out[i] = 0;
+    #####: 1343:    fprintf(stdout, "SAX.ignorableWhitespace(%s, %d)\n", out, len);
+        -: 1344:}
+        -: 1345:
+        -: 1346:/**
+        -: 1347: * processingInstructionDebug:
+        -: 1348: * @ctxt:  An XML parser context
+        -: 1349: * @target:  the target name
+        -: 1350: * @data: the PI data's
+        -: 1351: * @len: the number of xmlChar
+        -: 1352: *
+        -: 1353: * A processing instruction has been parsed.
+        -: 1354: */
+        -: 1355:static void
+    #####: 1356:processingInstructionDebug(void *ctx ATTRIBUTE_UNUSED, const xmlChar *target,
+        -: 1357:                      const xmlChar *data)
+        -: 1358:{
+    #####: 1359:    callbacks++;
+    #####: 1360:    if (noout)
+    #####: 1361:	return;
+    #####: 1362:    if (data != NULL)
+    #####: 1363:	fprintf(stdout, "SAX.processingInstruction(%s, %s)\n",
+        -: 1364:		(char *) target, (char *) data);
+        -: 1365:    else
+    #####: 1366:	fprintf(stdout, "SAX.processingInstruction(%s, NULL)\n",
+        -: 1367:		(char *) target);
+        -: 1368:}
+        -: 1369:
+        -: 1370:/**
+        -: 1371: * cdataBlockDebug:
+        -: 1372: * @ctx: the user data (XML parser context)
+        -: 1373: * @value:  The pcdata content
+        -: 1374: * @len:  the block length
+        -: 1375: *
+        -: 1376: * called when a pcdata block has been parsed
+        -: 1377: */
+        -: 1378:static void
+    #####: 1379:cdataBlockDebug(void *ctx ATTRIBUTE_UNUSED, const xmlChar *value, int len)
+        -: 1380:{
+    #####: 1381:    callbacks++;
+    #####: 1382:    if (noout)
+    #####: 1383:	return;
+    #####: 1384:    fprintf(stdout, "SAX.pcdata(%.20s, %d)\n",
+        -: 1385:	    (char *) value, len);
+        -: 1386:}
+        -: 1387:
+        -: 1388:/**
+        -: 1389: * commentDebug:
+        -: 1390: * @ctxt:  An XML parser context
+        -: 1391: * @value:  the comment content
+        -: 1392: *
+        -: 1393: * A comment has been parsed.
+        -: 1394: */
+        -: 1395:static void
+    #####: 1396:commentDebug(void *ctx ATTRIBUTE_UNUSED, const xmlChar *value)
+        -: 1397:{
+    #####: 1398:    callbacks++;
+    #####: 1399:    if (noout)
+    #####: 1400:	return;
+    #####: 1401:    fprintf(stdout, "SAX.comment(%s)\n", value);
+        -: 1402:}
+        -: 1403:
+        -: 1404:/**
+        -: 1405: * warningDebug:
+        -: 1406: * @ctxt:  An XML parser context
+        -: 1407: * @msg:  the message to display/transmit
+        -: 1408: * @...:  extra parameters for the message display
+        -: 1409: *
+        -: 1410: * Display and format a warning messages, gives file, line, position and
+        -: 1411: * extra parameters.
+        -: 1412: */
+        -: 1413:static void XMLCDECL
+    #####: 1414:warningDebug(void *ctx ATTRIBUTE_UNUSED, const char *msg, ...)
+        -: 1415:{
+        -: 1416:    va_list args;
+        -: 1417:
+    #####: 1418:    callbacks++;
+    #####: 1419:    if (noout)
+    #####: 1420:	return;
+    #####: 1421:    va_start(args, msg);
+    #####: 1422:    fprintf(stdout, "SAX.warning: ");
+    #####: 1423:    vfprintf(stdout, msg, args);
+    #####: 1424:    va_end(args);
+        -: 1425:}
+        -: 1426:
+        -: 1427:/**
+        -: 1428: * errorDebug:
+        -: 1429: * @ctxt:  An XML parser context
+        -: 1430: * @msg:  the message to display/transmit
+        -: 1431: * @...:  extra parameters for the message display
+        -: 1432: *
+        -: 1433: * Display and format a error messages, gives file, line, position and
+        -: 1434: * extra parameters.
+        -: 1435: */
+        -: 1436:static void XMLCDECL
+    #####: 1437:errorDebug(void *ctx ATTRIBUTE_UNUSED, const char *msg, ...)
+        -: 1438:{
+        -: 1439:    va_list args;
+        -: 1440:
+    #####: 1441:    callbacks++;
+    #####: 1442:    if (noout)
+    #####: 1443:	return;
+    #####: 1444:    va_start(args, msg);
+    #####: 1445:    fprintf(stdout, "SAX.error: ");
+    #####: 1446:    vfprintf(stdout, msg, args);
+    #####: 1447:    va_end(args);
+        -: 1448:}
+        -: 1449:
+        -: 1450:/**
+        -: 1451: * fatalErrorDebug:
+        -: 1452: * @ctxt:  An XML parser context
+        -: 1453: * @msg:  the message to display/transmit
+        -: 1454: * @...:  extra parameters for the message display
+        -: 1455: *
+        -: 1456: * Display and format a fatalError messages, gives file, line, position and
+        -: 1457: * extra parameters.
+        -: 1458: */
+        -: 1459:static void XMLCDECL
+    #####: 1460:fatalErrorDebug(void *ctx ATTRIBUTE_UNUSED, const char *msg, ...)
+        -: 1461:{
+        -: 1462:    va_list args;
+        -: 1463:
+    #####: 1464:    callbacks++;
+    #####: 1465:    if (noout)
+    #####: 1466:	return;
+    #####: 1467:    va_start(args, msg);
+    #####: 1468:    fprintf(stdout, "SAX.fatalError: ");
+    #####: 1469:    vfprintf(stdout, msg, args);
+    #####: 1470:    va_end(args);
+        -: 1471:}
+        -: 1472:
+        -: 1473:static xmlSAXHandler debugSAXHandlerStruct = {
+        -: 1474:    internalSubsetDebug,
+        -: 1475:    isStandaloneDebug,
+        -: 1476:    hasInternalSubsetDebug,
+        -: 1477:    hasExternalSubsetDebug,
+        -: 1478:    resolveEntityDebug,
+        -: 1479:    getEntityDebug,
+        -: 1480:    entityDeclDebug,
+        -: 1481:    notationDeclDebug,
+        -: 1482:    attributeDeclDebug,
+        -: 1483:    elementDeclDebug,
+        -: 1484:    unparsedEntityDeclDebug,
+        -: 1485:    setDocumentLocatorDebug,
+        -: 1486:    startDocumentDebug,
+        -: 1487:    endDocumentDebug,
+        -: 1488:    startElementDebug,
+        -: 1489:    endElementDebug,
+        -: 1490:    referenceDebug,
+        -: 1491:    charactersDebug,
+        -: 1492:    ignorableWhitespaceDebug,
+        -: 1493:    processingInstructionDebug,
+        -: 1494:    commentDebug,
+        -: 1495:    warningDebug,
+        -: 1496:    errorDebug,
+        -: 1497:    fatalErrorDebug,
+        -: 1498:    getParameterEntityDebug,
+        -: 1499:    cdataBlockDebug,
+        -: 1500:    externalSubsetDebug,
+        -: 1501:    1,
+        -: 1502:    NULL,
+        -: 1503:    NULL,
+        -: 1504:    NULL,
+        -: 1505:    NULL
+        -: 1506:};
+        -: 1507:
+        -: 1508:xmlSAXHandlerPtr debugSAXHandler = &debugSAXHandlerStruct;
+        -: 1509:
+        -: 1510:/*
+        -: 1511: * SAX2 specific callbacks
+        -: 1512: */
+        -: 1513:/**
+        -: 1514: * startElementNsDebug:
+        -: 1515: * @ctxt:  An XML parser context
+        -: 1516: * @name:  The element name
+        -: 1517: *
+        -: 1518: * called when an opening tag has been processed.
+        -: 1519: */
+        -: 1520:static void
+    #####: 1521:startElementNsDebug(void *ctx ATTRIBUTE_UNUSED,
+        -: 1522:                    const xmlChar *localname,
+        -: 1523:                    const xmlChar *prefix,
+        -: 1524:                    const xmlChar *URI,
+        -: 1525:		    int nb_namespaces,
+        -: 1526:		    const xmlChar **namespaces,
+        -: 1527:		    int nb_attributes,
+        -: 1528:		    int nb_defaulted,
+        -: 1529:		    const xmlChar **attributes)
+        -: 1530:{
+        -: 1531:    int i;
+        -: 1532:
+    #####: 1533:    callbacks++;
+    #####: 1534:    if (noout)
+    #####: 1535:	return;
+    #####: 1536:    fprintf(stdout, "SAX.startElementNs(%s", (char *) localname);
+    #####: 1537:    if (prefix == NULL)
+    #####: 1538:	fprintf(stdout, ", NULL");
+        -: 1539:    else
+    #####: 1540:	fprintf(stdout, ", %s", (char *) prefix);
+    #####: 1541:    if (URI == NULL)
+    #####: 1542:	fprintf(stdout, ", NULL");
+        -: 1543:    else
+    #####: 1544:	fprintf(stdout, ", '%s'", (char *) URI);
+    #####: 1545:    fprintf(stdout, ", %d", nb_namespaces);
+        -: 1546:
+    #####: 1547:    if (namespaces != NULL) {
+    #####: 1548:        for (i = 0;i < nb_namespaces * 2;i++) {
+    #####: 1549:	    fprintf(stdout, ", xmlns");
+    #####: 1550:	    if (namespaces[i] != NULL)
+    #####: 1551:	        fprintf(stdout, ":%s", namespaces[i]);
+    #####: 1552:	    i++;
+    #####: 1553:	    fprintf(stdout, "='%s'", namespaces[i]);
+        -: 1554:	}
+        -: 1555:    }
+    #####: 1556:    fprintf(stdout, ", %d, %d", nb_attributes, nb_defaulted);
+    #####: 1557:    if (attributes != NULL) {
+    #####: 1558:        for (i = 0;i < nb_attributes * 5;i += 5) {
+    #####: 1559:	    if (attributes[i + 1] != NULL)
+    #####: 1560:		fprintf(stdout, ", %s:%s='", attributes[i + 1], attributes[i]);
+        -: 1561:	    else
+    #####: 1562:		fprintf(stdout, ", %s='", attributes[i]);
+    #####: 1563:	    fprintf(stdout, "%.4s...', %d", attributes[i + 3],
+    #####: 1564:		    (int)(attributes[i + 4] - attributes[i + 3]));
+        -: 1565:	}
+        -: 1566:    }
+    #####: 1567:    fprintf(stdout, ")\n");
+        -: 1568:}
+        -: 1569:
+        -: 1570:/**
+        -: 1571: * endElementDebug:
+        -: 1572: * @ctxt:  An XML parser context
+        -: 1573: * @name:  The element name
+        -: 1574: *
+        -: 1575: * called when the end of an element has been detected.
+        -: 1576: */
+        -: 1577:static void
+    #####: 1578:endElementNsDebug(void *ctx ATTRIBUTE_UNUSED,
+        -: 1579:                  const xmlChar *localname,
+        -: 1580:                  const xmlChar *prefix,
+        -: 1581:                  const xmlChar *URI)
+        -: 1582:{
+    #####: 1583:    callbacks++;
+    #####: 1584:    if (noout)
+    #####: 1585:	return;
+    #####: 1586:    fprintf(stdout, "SAX.endElementNs(%s", (char *) localname);
+    #####: 1587:    if (prefix == NULL)
+    #####: 1588:	fprintf(stdout, ", NULL");
+        -: 1589:    else
+    #####: 1590:	fprintf(stdout, ", %s", (char *) prefix);
+    #####: 1591:    if (URI == NULL)
+    #####: 1592:	fprintf(stdout, ", NULL)\n");
+        -: 1593:    else
+    #####: 1594:	fprintf(stdout, ", '%s')\n", (char *) URI);
+        -: 1595:}
+        -: 1596:
+        -: 1597:static xmlSAXHandler debugSAX2HandlerStruct = {
+        -: 1598:    internalSubsetDebug,
+        -: 1599:    isStandaloneDebug,
+        -: 1600:    hasInternalSubsetDebug,
+        -: 1601:    hasExternalSubsetDebug,
+        -: 1602:    resolveEntityDebug,
+        -: 1603:    getEntityDebug,
+        -: 1604:    entityDeclDebug,
+        -: 1605:    notationDeclDebug,
+        -: 1606:    attributeDeclDebug,
+        -: 1607:    elementDeclDebug,
+        -: 1608:    unparsedEntityDeclDebug,
+        -: 1609:    setDocumentLocatorDebug,
+        -: 1610:    startDocumentDebug,
+        -: 1611:    endDocumentDebug,
+        -: 1612:    NULL,
+        -: 1613:    NULL,
+        -: 1614:    referenceDebug,
+        -: 1615:    charactersDebug,
+        -: 1616:    ignorableWhitespaceDebug,
+        -: 1617:    processingInstructionDebug,
+        -: 1618:    commentDebug,
+        -: 1619:    warningDebug,
+        -: 1620:    errorDebug,
+        -: 1621:    fatalErrorDebug,
+        -: 1622:    getParameterEntityDebug,
+        -: 1623:    cdataBlockDebug,
+        -: 1624:    externalSubsetDebug,
+        -: 1625:    XML_SAX2_MAGIC,
+        -: 1626:    NULL,
+        -: 1627:    startElementNsDebug,
+        -: 1628:    endElementNsDebug,
+        -: 1629:    NULL
+        -: 1630:};
+        -: 1631:
+        -: 1632:static xmlSAXHandlerPtr debugSAX2Handler = &debugSAX2HandlerStruct;
+        -: 1633:
+        -: 1634:static void
+    #####: 1635:testSAX(const char *filename) {
+        -: 1636:    xmlSAXHandlerPtr handler;
+    #####: 1637:    const char *user_data = "user_data"; /* mostly for debugging */
+    #####: 1638:    xmlParserInputBufferPtr buf = NULL;
+        -: 1639:    xmlParserInputPtr inputStream;
+    #####: 1640:    xmlParserCtxtPtr ctxt = NULL;
+    #####: 1641:    xmlSAXHandlerPtr old_sax = NULL;
+        -: 1642:
+    #####: 1643:    callbacks = 0;
+        -: 1644:
+    #####: 1645:    if (noout) {
+    #####: 1646:        handler = emptySAXHandler;
+        -: 1647:#ifdef LIBXML_SAX1_ENABLED
+    #####: 1648:    } else if (sax1) {
+    #####: 1649:        handler = debugSAXHandler;
+        -: 1650:#endif
+        -: 1651:    } else {
+    #####: 1652:        handler = debugSAX2Handler;
+        -: 1653:    }
+        -: 1654:
+        -: 1655:    /*
+        -: 1656:     * it's not the simplest code but the most generic in term of I/O
+        -: 1657:     */
+    #####: 1658:    buf = xmlParserInputBufferCreateFilename(filename, XML_CHAR_ENCODING_NONE);
+    #####: 1659:    if (buf == NULL) {
+    #####: 1660:        goto error;
+        -: 1661:    }
+        -: 1662:
+        -: 1663:#ifdef LIBXML_SCHEMAS_ENABLED
+    #####: 1664:    if (wxschemas != NULL) {
+        -: 1665:        int ret;
+        -: 1666:	xmlSchemaValidCtxtPtr vctxt;
+        -: 1667:
+    #####: 1668:	vctxt = xmlSchemaNewValidCtxt(wxschemas);
+    #####: 1669:	xmlSchemaSetValidErrors(vctxt,
+        -: 1670:		(xmlSchemaValidityErrorFunc) fprintf,
+        -: 1671:		(xmlSchemaValidityWarningFunc) fprintf,
+        -: 1672:		stderr);
+    #####: 1673:	xmlSchemaValidateSetFilename(vctxt, filename);
+        -: 1674:
+    #####: 1675:	ret = xmlSchemaValidateStream(vctxt, buf, 0, handler,
+        -: 1676:	                              (void *)user_data);
+    #####: 1677:	if (repeat == 0) {
+    #####: 1678:	    if (ret == 0) {
+    #####: 1679:		fprintf(stderr, "%s validates\n", filename);
+    #####: 1680:	    } else if (ret > 0) {
+    #####: 1681:		fprintf(stderr, "%s fails to validate\n", filename);
+    #####: 1682:		progresult = XMLLINT_ERR_VALID;
+        -: 1683:	    } else {
+    #####: 1684:		fprintf(stderr, "%s validation generated an internal error\n",
+        -: 1685:		       filename);
+    #####: 1686:		progresult = XMLLINT_ERR_VALID;
+        -: 1687:	    }
+        -: 1688:	}
+    #####: 1689:	xmlSchemaFreeValidCtxt(vctxt);
+        -: 1690:    } else
+        -: 1691:#endif
+        -: 1692:    {
+        -: 1693:	/*
+        -: 1694:	 * Create the parser context amd hook the input
+        -: 1695:	 */
+    #####: 1696:	ctxt = xmlNewParserCtxt();
+    #####: 1697:	if (ctxt == NULL) {
+    #####: 1698:	    xmlFreeParserInputBuffer(buf);
+    #####: 1699:	    goto error;
+        -: 1700:	}
+    #####: 1701:	old_sax = ctxt->sax;
+    #####: 1702:	ctxt->sax = handler;
+    #####: 1703:	ctxt->userData = (void *) user_data;
+    #####: 1704:	inputStream = xmlNewIOInputStream(ctxt, buf, XML_CHAR_ENCODING_NONE);
+    #####: 1705:	if (inputStream == NULL) {
+    #####: 1706:	    xmlFreeParserInputBuffer(buf);
+    #####: 1707:	    goto error;
+        -: 1708:	}
+    #####: 1709:	inputPush(ctxt, inputStream);
+        -: 1710:
+        -: 1711:	/* do the parsing */
+    #####: 1712:	xmlParseDocument(ctxt);
+        -: 1713:
+    #####: 1714:	if (ctxt->myDoc != NULL) {
+    #####: 1715:	    fprintf(stderr, "SAX generated a doc !\n");
+    #####: 1716:	    xmlFreeDoc(ctxt->myDoc);
+    #####: 1717:	    ctxt->myDoc = NULL;
+        -: 1718:	}
+        -: 1719:    }
+        -: 1720:
+    #####: 1721:error:
+    #####: 1722:    if (ctxt != NULL) {
+    #####: 1723:        ctxt->sax = old_sax;
+    #####: 1724:        xmlFreeParserCtxt(ctxt);
+        -: 1725:    }
+    #####: 1726:}
+        -: 1727:
+        -: 1728:/************************************************************************
+        -: 1729: *									*
+        -: 1730: *			Stream Test processing				*
+        -: 1731: *									*
+        -: 1732: ************************************************************************/
+        -: 1733:#ifdef LIBXML_READER_ENABLED
+    #####: 1734:static void processNode(xmlTextReaderPtr reader) {
+        -: 1735:    const xmlChar *name, *value;
+        -: 1736:    int type, empty;
+        -: 1737:
+    #####: 1738:    type = xmlTextReaderNodeType(reader);
+    #####: 1739:    empty = xmlTextReaderIsEmptyElement(reader);
+        -: 1740:
+    #####: 1741:    if (debug) {
+    #####: 1742:	name = xmlTextReaderConstName(reader);
+    #####: 1743:	if (name == NULL)
+    #####: 1744:	    name = BAD_CAST "--";
+        -: 1745:
+    #####: 1746:	value = xmlTextReaderConstValue(reader);
+        -: 1747:
+        -: 1748:
+    #####: 1749:	printf("%d %d %s %d %d",
+        -: 1750:		xmlTextReaderDepth(reader),
+        -: 1751:		type,
+        -: 1752:		name,
+        -: 1753:		empty,
+        -: 1754:		xmlTextReaderHasValue(reader));
+    #####: 1755:	if (value == NULL)
+    #####: 1756:	    printf("\n");
+        -: 1757:	else {
+    #####: 1758:	    printf(" %s\n", value);
+        -: 1759:	}
+        -: 1760:    }
+        -: 1761:#ifdef LIBXML_PATTERN_ENABLED
+    #####: 1762:    if (patternc) {
+    #####: 1763:        xmlChar *path = NULL;
+    #####: 1764:        int match = -1;
+        -: 1765:
+    #####: 1766:	if (type == XML_READER_TYPE_ELEMENT) {
+        -: 1767:	    /* do the check only on element start */
+    #####: 1768:	    match = xmlPatternMatch(patternc, xmlTextReaderCurrentNode(reader));
+        -: 1769:
+    #####: 1770:	    if (match) {
+        -: 1771:#if defined(LIBXML_TREE_ENABLED) || defined(LIBXML_DEBUG_ENABLED)
+    #####: 1772:		path = xmlGetNodePath(xmlTextReaderCurrentNode(reader));
+    #####: 1773:		printf("Node %s matches pattern %s\n", path, pattern);
+        -: 1774:#else
+        -: 1775:                printf("Node %s matches pattern %s\n",
+        -: 1776:                       xmlTextReaderConstName(reader), pattern);
+        -: 1777:#endif
+        -: 1778:	    }
+        -: 1779:	}
+    #####: 1780:	if (patstream != NULL) {
+        -: 1781:	    int ret;
+        -: 1782:
+    #####: 1783:	    if (type == XML_READER_TYPE_ELEMENT) {
+    #####: 1784:		ret = xmlStreamPush(patstream,
+        -: 1785:		                    xmlTextReaderConstLocalName(reader),
+        -: 1786:				    xmlTextReaderConstNamespaceUri(reader));
+    #####: 1787:		if (ret < 0) {
+    #####: 1788:		    fprintf(stderr, "xmlStreamPush() failure\n");
+    #####: 1789:                    xmlFreeStreamCtxt(patstream);
+    #####: 1790:		    patstream = NULL;
+    #####: 1791:		} else if (ret != match) {
+        -: 1792:#if defined(LIBXML_TREE_ENABLED) || defined(LIBXML_DEBUG_ENABLED)
+    #####: 1793:		    if (path == NULL) {
+    #####: 1794:		        path = xmlGetNodePath(
+    #####: 1795:		                       xmlTextReaderCurrentNode(reader));
+        -: 1796:		    }
+        -: 1797:#endif
+    #####: 1798:		    fprintf(stderr,
+        -: 1799:		            "xmlPatternMatch and xmlStreamPush disagree\n");
+    #####: 1800:                    if (path != NULL)
+    #####: 1801:                        fprintf(stderr, "  pattern %s node %s\n",
+        -: 1802:                                pattern, path);
+        -: 1803:                    else
+    #####: 1804:		        fprintf(stderr, "  pattern %s node %s\n",
+        -: 1805:			    pattern, xmlTextReaderConstName(reader));
+        -: 1806:		}
+        -: 1807:
+        -: 1808:	    }
+    #####: 1809:	    if ((type == XML_READER_TYPE_END_ELEMENT) ||
+    #####: 1810:	        ((type == XML_READER_TYPE_ELEMENT) && (empty))) {
+    #####: 1811:	        ret = xmlStreamPop(patstream);
+    #####: 1812:		if (ret < 0) {
+    #####: 1813:		    fprintf(stderr, "xmlStreamPop() failure\n");
+    #####: 1814:                    xmlFreeStreamCtxt(patstream);
+    #####: 1815:		    patstream = NULL;
+        -: 1816:		}
+        -: 1817:	    }
+        -: 1818:	}
+    #####: 1819:	if (path != NULL)
+    #####: 1820:	    xmlFree(path);
+        -: 1821:    }
+        -: 1822:#endif
+    #####: 1823:}
+        -: 1824:
+    #####: 1825:static void streamFile(char *filename) {
+        -: 1826:    xmlTextReaderPtr reader;
+        -: 1827:    int ret;
+        -: 1828:#ifdef HAVE_MMAP
+    #####: 1829:    int fd = -1;
+        -: 1830:    struct stat info;
+    #####: 1831:    const char *base = NULL;
+    #####: 1832:    xmlParserInputBufferPtr input = NULL;
+        -: 1833:
+    #####: 1834:    if (memory) {
+    #####: 1835:	if (stat(filename, &info) < 0)
+    #####: 1836:	    return;
+    #####: 1837:	if ((fd = open(filename, O_RDONLY)) < 0)
+    #####: 1838:	    return;
+    #####: 1839:	base = mmap(NULL, info.st_size, PROT_READ, MAP_SHARED, fd, 0) ;
+    #####: 1840:	if (base == (void *) MAP_FAILED) {
+    #####: 1841:	    close(fd);
+    #####: 1842:	    fprintf(stderr, "mmap failure for file %s\n", filename);
+    #####: 1843:	    progresult = XMLLINT_ERR_RDFILE;
+    #####: 1844:	    return;
+        -: 1845:	}
+        -: 1846:
+    #####: 1847:	reader = xmlReaderForMemory(base, info.st_size, filename,
+        -: 1848:	                            NULL, options);
+        -: 1849:    } else
+        -: 1850:#endif
+    #####: 1851:	reader = xmlReaderForFile(filename, NULL, options);
+        -: 1852:#ifdef LIBXML_PATTERN_ENABLED
+    #####: 1853:    if (pattern != NULL) {
+    #####: 1854:        patternc = xmlPatterncompile((const xmlChar *) pattern, NULL, 0, NULL);
+    #####: 1855:	if (patternc == NULL) {
+    #####: 1856:	    xmlGenericError(xmlGenericErrorContext,
+        -: 1857:		    "Pattern %s failed to compile\n", pattern);
+    #####: 1858:            progresult = XMLLINT_ERR_SCHEMAPAT;
+    #####: 1859:	    pattern = NULL;
+        -: 1860:	}
+        -: 1861:    }
+    #####: 1862:    if (patternc != NULL) {
+    #####: 1863:        patstream = xmlPatternGetStreamCtxt(patternc);
+    #####: 1864:	if (patstream != NULL) {
+    #####: 1865:	    ret = xmlStreamPush(patstream, NULL, NULL);
+    #####: 1866:	    if (ret < 0) {
+    #####: 1867:		fprintf(stderr, "xmlStreamPush() failure\n");
+    #####: 1868:		xmlFreeStreamCtxt(patstream);
+    #####: 1869:		patstream = NULL;
+        -: 1870:            }
+        -: 1871:	}
+        -: 1872:    }
+        -: 1873:#endif
+        -: 1874:
+        -: 1875:
+    #####: 1876:    if (reader != NULL) {
+        -: 1877:#ifdef LIBXML_VALID_ENABLED
+    #####: 1878:	if (valid)
+    #####: 1879:	    xmlTextReaderSetParserProp(reader, XML_PARSER_VALIDATE, 1);
+        -: 1880:	else
+        -: 1881:#endif /* LIBXML_VALID_ENABLED */
+    #####: 1882:	    if (loaddtd)
+    #####: 1883:		xmlTextReaderSetParserProp(reader, XML_PARSER_LOADDTD, 1);
+        -: 1884:#ifdef LIBXML_SCHEMAS_ENABLED
+    #####: 1885:	if (relaxng != NULL) {
+    #####: 1886:	    if ((timing) && (!repeat)) {
+    #####: 1887:		startTimer();
+        -: 1888:	    }
+    #####: 1889:	    ret = xmlTextReaderRelaxNGValidate(reader, relaxng);
+    #####: 1890:	    if (ret < 0) {
+    #####: 1891:		xmlGenericError(xmlGenericErrorContext,
+        -: 1892:			"Relax-NG schema %s failed to compile\n", relaxng);
+    #####: 1893:		progresult = XMLLINT_ERR_SCHEMACOMP;
+    #####: 1894:		relaxng = NULL;
+        -: 1895:	    }
+    #####: 1896:	    if ((timing) && (!repeat)) {
+    #####: 1897:		endTimer("Compiling the schemas");
+        -: 1898:	    }
+        -: 1899:	}
+    #####: 1900:	if (schema != NULL) {
+    #####: 1901:	    if ((timing) && (!repeat)) {
+    #####: 1902:		startTimer();
+        -: 1903:	    }
+    #####: 1904:	    ret = xmlTextReaderSchemaValidate(reader, schema);
+    #####: 1905:	    if (ret < 0) {
+    #####: 1906:		xmlGenericError(xmlGenericErrorContext,
+        -: 1907:			"XSD schema %s failed to compile\n", schema);
+    #####: 1908:		progresult = XMLLINT_ERR_SCHEMACOMP;
+    #####: 1909:		schema = NULL;
+        -: 1910:	    }
+    #####: 1911:	    if ((timing) && (!repeat)) {
+    #####: 1912:		endTimer("Compiling the schemas");
+        -: 1913:	    }
+        -: 1914:	}
+        -: 1915:#endif
+        -: 1916:
+        -: 1917:	/*
+        -: 1918:	 * Process all nodes in sequence
+        -: 1919:	 */
+    #####: 1920:	if ((timing) && (!repeat)) {
+    #####: 1921:	    startTimer();
+        -: 1922:	}
+    #####: 1923:	ret = xmlTextReaderRead(reader);
+    #####: 1924:	while (ret == 1) {
+    #####: 1925:	    if ((debug)
+        -: 1926:#ifdef LIBXML_PATTERN_ENABLED
+    #####: 1927:	        || (patternc)
+        -: 1928:#endif
+        -: 1929:	       )
+    #####: 1930:		processNode(reader);
+    #####: 1931:	    ret = xmlTextReaderRead(reader);
+        -: 1932:	}
+    #####: 1933:	if ((timing) && (!repeat)) {
+        -: 1934:#ifdef LIBXML_SCHEMAS_ENABLED
+    #####: 1935:	    if (relaxng != NULL)
+    #####: 1936:		endTimer("Parsing and validating");
+        -: 1937:	    else
+        -: 1938:#endif
+        -: 1939:#ifdef LIBXML_VALID_ENABLED
+    #####: 1940:	    if (valid)
+    #####: 1941:		endTimer("Parsing and validating");
+        -: 1942:	    else
+        -: 1943:#endif
+    #####: 1944:	    endTimer("Parsing");
+        -: 1945:	}
+        -: 1946:
+        -: 1947:#ifdef LIBXML_VALID_ENABLED
+    #####: 1948:	if (valid) {
+    #####: 1949:	    if (xmlTextReaderIsValid(reader) != 1) {
+    #####: 1950:		xmlGenericError(xmlGenericErrorContext,
+        -: 1951:			"Document %s does not validate\n", filename);
+    #####: 1952:		progresult = XMLLINT_ERR_VALID;
+        -: 1953:	    }
+        -: 1954:	}
+        -: 1955:#endif /* LIBXML_VALID_ENABLED */
+        -: 1956:#ifdef LIBXML_SCHEMAS_ENABLED
+    #####: 1957:	if ((relaxng != NULL) || (schema != NULL)) {
+    #####: 1958:	    if (xmlTextReaderIsValid(reader) != 1) {
+    #####: 1959:		fprintf(stderr, "%s fails to validate\n", filename);
+    #####: 1960:		progresult = XMLLINT_ERR_VALID;
+        -: 1961:	    } else {
+    #####: 1962:		fprintf(stderr, "%s validates\n", filename);
+        -: 1963:	    }
+        -: 1964:	}
+        -: 1965:#endif
+        -: 1966:	/*
+        -: 1967:	 * Done, cleanup and status
+        -: 1968:	 */
+    #####: 1969:	xmlFreeTextReader(reader);
+    #####: 1970:	if (ret != 0) {
+    #####: 1971:	    fprintf(stderr, "%s : failed to parse\n", filename);
+    #####: 1972:	    progresult = XMLLINT_ERR_UNCLASS;
+        -: 1973:	}
+        -: 1974:    } else {
+    #####: 1975:	fprintf(stderr, "Unable to open %s\n", filename);
+    #####: 1976:	progresult = XMLLINT_ERR_UNCLASS;
+        -: 1977:    }
+        -: 1978:#ifdef LIBXML_PATTERN_ENABLED
+    #####: 1979:    if (patstream != NULL) {
+    #####: 1980:	xmlFreeStreamCtxt(patstream);
+    #####: 1981:	patstream = NULL;
+        -: 1982:    }
+        -: 1983:#endif
+        -: 1984:#ifdef HAVE_MMAP
+    #####: 1985:    if (memory) {
+    #####: 1986:        xmlFreeParserInputBuffer(input);
+    #####: 1987:	munmap((char *) base, info.st_size);
+    #####: 1988:	close(fd);
+        -: 1989:    }
+        -: 1990:#endif
+        -: 1991:}
+        -: 1992:
+    #####: 1993:static void walkDoc(xmlDocPtr doc) {
+        -: 1994:    xmlTextReaderPtr reader;
+        -: 1995:    int ret;
+        -: 1996:
+        -: 1997:#ifdef LIBXML_PATTERN_ENABLED
+        -: 1998:    xmlNodePtr root;
+        -: 1999:    const xmlChar *namespaces[22];
+        -: 2000:    int i;
+        -: 2001:    xmlNsPtr ns;
+        -: 2002:
+    #####: 2003:    root = xmlDocGetRootElement(doc);
+    #####: 2004:    for (ns = root->nsDef, i = 0;ns != NULL && i < 20;ns=ns->next) {
+    #####: 2005:        namespaces[i++] = ns->href;
+    #####: 2006:        namespaces[i++] = ns->prefix;
+        -: 2007:    }
+    #####: 2008:    namespaces[i++] = NULL;
+    #####: 2009:    namespaces[i] = NULL;
+        -: 2010:
+    #####: 2011:    if (pattern != NULL) {
+    #####: 2012:        patternc = xmlPatterncompile((const xmlChar *) pattern, doc->dict,
+        -: 2013:	                             0, &namespaces[0]);
+    #####: 2014:	if (patternc == NULL) {
+    #####: 2015:	    xmlGenericError(xmlGenericErrorContext,
+        -: 2016:		    "Pattern %s failed to compile\n", pattern);
+    #####: 2017:            progresult = XMLLINT_ERR_SCHEMAPAT;
+    #####: 2018:	    pattern = NULL;
+        -: 2019:	}
+        -: 2020:    }
+    #####: 2021:    if (patternc != NULL) {
+    #####: 2022:        patstream = xmlPatternGetStreamCtxt(patternc);
+    #####: 2023:	if (patstream != NULL) {
+    #####: 2024:	    ret = xmlStreamPush(patstream, NULL, NULL);
+    #####: 2025:	    if (ret < 0) {
+    #####: 2026:		fprintf(stderr, "xmlStreamPush() failure\n");
+    #####: 2027:		xmlFreeStreamCtxt(patstream);
+    #####: 2028:		patstream = NULL;
+        -: 2029:            }
+        -: 2030:	}
+        -: 2031:    }
+        -: 2032:#endif /* LIBXML_PATTERN_ENABLED */
+    #####: 2033:    reader = xmlReaderWalker(doc);
+    #####: 2034:    if (reader != NULL) {
+    #####: 2035:	if ((timing) && (!repeat)) {
+    #####: 2036:	    startTimer();
+        -: 2037:	}
+    #####: 2038:	ret = xmlTextReaderRead(reader);
+    #####: 2039:	while (ret == 1) {
+    #####: 2040:	    if ((debug)
+        -: 2041:#ifdef LIBXML_PATTERN_ENABLED
+    #####: 2042:	        || (patternc)
+        -: 2043:#endif
+        -: 2044:	       )
+    #####: 2045:		processNode(reader);
+    #####: 2046:	    ret = xmlTextReaderRead(reader);
+        -: 2047:	}
+    #####: 2048:	if ((timing) && (!repeat)) {
+    #####: 2049:	    endTimer("walking through the doc");
+        -: 2050:	}
+    #####: 2051:	xmlFreeTextReader(reader);
+    #####: 2052:	if (ret != 0) {
+    #####: 2053:	    fprintf(stderr, "failed to walk through the doc\n");
+    #####: 2054:	    progresult = XMLLINT_ERR_UNCLASS;
+        -: 2055:	}
+        -: 2056:    } else {
+    #####: 2057:	fprintf(stderr, "Failed to crate a reader from the document\n");
+    #####: 2058:	progresult = XMLLINT_ERR_UNCLASS;
+        -: 2059:    }
+        -: 2060:#ifdef LIBXML_PATTERN_ENABLED
+    #####: 2061:    if (patstream != NULL) {
+    #####: 2062:	xmlFreeStreamCtxt(patstream);
+    #####: 2063:	patstream = NULL;
+        -: 2064:    }
+        -: 2065:#endif
+    #####: 2066:}
+        -: 2067:#endif /* LIBXML_READER_ENABLED */
+        -: 2068:
+        -: 2069:#ifdef LIBXML_XPATH_ENABLED
+        -: 2070:/************************************************************************
+        -: 2071: *									*
+        -: 2072: *			XPath Query                                     *
+        -: 2073: *									*
+        -: 2074: ************************************************************************/
+        -: 2075:
+    #####: 2076:static void doXPathDump(xmlXPathObjectPtr cur) {
+    #####: 2077:    switch(cur->type) {
+    #####: 2078:        case XPATH_NODESET: {
+        -: 2079:            int i;
+        -: 2080:            xmlNodePtr node;
+        -: 2081:#ifdef LIBXML_OUTPUT_ENABLED
+        -: 2082:            xmlSaveCtxtPtr ctxt;
+        -: 2083:
+    #####: 2084:            if ((cur->nodesetval == NULL) || (cur->nodesetval->nodeNr <= 0)) {
+    #####: 2085:                fprintf(stderr, "XPath set is empty\n");
+    #####: 2086:                progresult = XMLLINT_ERR_XPATH;
+    #####: 2087:                break;
+        -: 2088:            }
+    #####: 2089:            ctxt = xmlSaveToFd(1, NULL, 0);
+    #####: 2090:            if (ctxt == NULL) {
+    #####: 2091:                fprintf(stderr, "Out of memory for XPath\n");
+    #####: 2092:                progresult = XMLLINT_ERR_MEM;
+    #####: 2093:                return;
+        -: 2094:            }
+    #####: 2095:            for (i = 0;i < cur->nodesetval->nodeNr;i++) {
+    #####: 2096:                node = cur->nodesetval->nodeTab[i];
+    #####: 2097:                xmlSaveTree(ctxt, node);
+        -: 2098:            }
+    #####: 2099:            xmlSaveClose(ctxt);
+        -: 2100:#else
+        -: 2101:            printf("xpath returned %d nodes\n", cur->nodesetval->nodeNr);
+        -: 2102:#endif
+    #####: 2103:	    break;
+        -: 2104:        }
+    #####: 2105:        case XPATH_BOOLEAN:
+    #####: 2106:	    if (cur->boolval) printf("true");
+    #####: 2107:	    else printf("false");
+    #####: 2108:	    break;
+    #####: 2109:        case XPATH_NUMBER:
+    #####: 2110:	    switch (xmlXPathIsInf(cur->floatval)) {
+    #####: 2111:	    case 1:
+    #####: 2112:		printf("Infinity");
+    #####: 2113:		break;
+    #####: 2114:	    case -1:
+    #####: 2115:		printf("-Infinity");
+    #####: 2116:		break;
+    #####: 2117:	    default:
+    #####: 2118:		if (xmlXPathIsNaN(cur->floatval)) {
+    #####: 2119:		    printf("NaN");
+        -: 2120:		} else {
+    #####: 2121:		    printf("%0g", cur->floatval);
+        -: 2122:		}
+        -: 2123:	    }
+    #####: 2124:	    break;
+    #####: 2125:        case XPATH_STRING:
+    #####: 2126:	    printf("%s", (const char *) cur->stringval);
+    #####: 2127:	    break;
+    #####: 2128:        case XPATH_UNDEFINED:
+    #####: 2129:	    fprintf(stderr, "XPath Object is uninitialized\n");
+    #####: 2130:            progresult = XMLLINT_ERR_XPATH;
+    #####: 2131:	    break;
+    #####: 2132:	default:
+    #####: 2133:	    fprintf(stderr, "XPath object of unexpected type\n");
+    #####: 2134:            progresult = XMLLINT_ERR_XPATH;
+    #####: 2135:	    break;
+        -: 2136:    }
+        -: 2137:}
+        -: 2138:
+    #####: 2139:static void doXPathQuery(xmlDocPtr doc, const char *query) {
+        -: 2140:    xmlXPathContextPtr ctxt;
+        -: 2141:    xmlXPathObjectPtr res;
+        -: 2142:
+    #####: 2143:    ctxt = xmlXPathNewContext(doc);
+    #####: 2144:    if (ctxt == NULL) {
+    #####: 2145:        fprintf(stderr, "Out of memory for XPath\n");
+    #####: 2146:        progresult = XMLLINT_ERR_MEM;
+    #####: 2147:        return;
+        -: 2148:    }
+    #####: 2149:    ctxt->node = (xmlNodePtr) doc;
+    #####: 2150:    res = xmlXPathEval(BAD_CAST query, ctxt);
+    #####: 2151:    xmlXPathFreeContext(ctxt);
+        -: 2152:
+    #####: 2153:    if (res == NULL) {
+    #####: 2154:        fprintf(stderr, "XPath evaluation failure\n");
+    #####: 2155:        progresult = XMLLINT_ERR_XPATH;
+    #####: 2156:        return;
+        -: 2157:    }
+    #####: 2158:    doXPathDump(res);
+    #####: 2159:    xmlXPathFreeObject(res);
+        -: 2160:}
+        -: 2161:#endif /* LIBXML_XPATH_ENABLED */
+        -: 2162:
+        -: 2163:/************************************************************************
+        -: 2164: *									*
+        -: 2165: *			Tree Test processing				*
+        -: 2166: *									*
+        -: 2167: ************************************************************************/
+    #####: 2168:static void parseAndPrintFile(char *filename, xmlParserCtxtPtr rectxt) {
+    #####: 2169:    xmlDocPtr doc = NULL;
+        -: 2170:#ifdef LIBXML_TREE_ENABLED
+        -: 2171:    xmlDocPtr tmp;
+        -: 2172:#endif /* LIBXML_TREE_ENABLED */
+        -: 2173:
+    #####: 2174:    if ((timing) && (!repeat))
+    #####: 2175:	startTimer();
+        -: 2176:
+        -: 2177:
+        -: 2178:#ifdef LIBXML_TREE_ENABLED
+    #####: 2179:    if (filename == NULL) {
+    #####: 2180:	if (generate) {
+        -: 2181:	    xmlNodePtr n;
+        -: 2182:
+    #####: 2183:	    doc = xmlNewDoc(BAD_CAST "1.0");
+    #####: 2184:	    n = xmlNewDocNode(doc, NULL, BAD_CAST "info", NULL);
+    #####: 2185:	    xmlNodeSetContent(n, BAD_CAST "abc");
+    #####: 2186:	    xmlDocSetRootElement(doc, n);
+        -: 2187:	}
+        -: 2188:    }
+        -: 2189:#endif /* LIBXML_TREE_ENABLED */
+        -: 2190:#ifdef LIBXML_HTML_ENABLED
+        -: 2191:#ifdef LIBXML_PUSH_ENABLED
+    #####: 2192:    else if ((html) && (push)) {
+        -: 2193:        FILE *f;
+        -: 2194:
+        -: 2195:#if defined(_WIN32) || defined (__DJGPP__) && !defined (__CYGWIN__)
+        -: 2196:	f = fopen(filename, "rb");
+        -: 2197:#elif defined(__OS400__)
+        -: 2198:	f = fopen(filename, "rb");
+        -: 2199:#else
+    #####: 2200:	f = fopen(filename, "r");
+        -: 2201:#endif
+    #####: 2202:        if (f != NULL) {
+        -: 2203:            int res;
+        -: 2204:            char chars[4096];
+        -: 2205:            htmlParserCtxtPtr ctxt;
+        -: 2206:
+    #####: 2207:            res = fread(chars, 1, 4, f);
+    #####: 2208:            if (res > 0) {
+    #####: 2209:                ctxt = htmlCreatePushParserCtxt(NULL, NULL,
+        -: 2210:                            chars, res, filename, XML_CHAR_ENCODING_NONE);
+    #####: 2211:                xmlCtxtUseOptions(ctxt, options);
+    #####: 2212:                while ((res = fread(chars, 1, pushsize, f)) > 0) {
+    #####: 2213:                    htmlParseChunk(ctxt, chars, res, 0);
+        -: 2214:                }
+    #####: 2215:                htmlParseChunk(ctxt, chars, 0, 1);
+    #####: 2216:                doc = ctxt->myDoc;
+    #####: 2217:                htmlFreeParserCtxt(ctxt);
+        -: 2218:            }
+    #####: 2219:            fclose(f);
+        -: 2220:        }
+        -: 2221:    }
+        -: 2222:#endif /* LIBXML_PUSH_ENABLED */
+        -: 2223:#ifdef HAVE_MMAP
+    #####: 2224:    else if ((html) && (memory)) {
+        -: 2225:	int fd;
+        -: 2226:	struct stat info;
+        -: 2227:	const char *base;
+    #####: 2228:	if (stat(filename, &info) < 0)
+    #####: 2229:	    return;
+    #####: 2230:	if ((fd = open(filename, O_RDONLY)) < 0)
+    #####: 2231:	    return;
+    #####: 2232:	base = mmap(NULL, info.st_size, PROT_READ, MAP_SHARED, fd, 0) ;
+    #####: 2233:	if (base == (void *) MAP_FAILED) {
+    #####: 2234:	    close(fd);
+    #####: 2235:	    fprintf(stderr, "mmap failure for file %s\n", filename);
+    #####: 2236:	    progresult = XMLLINT_ERR_RDFILE;
+    #####: 2237:	    return;
+        -: 2238:	}
+        -: 2239:
+    #####: 2240:	doc = htmlReadMemory((char *) base, info.st_size, filename,
+        -: 2241:	                     NULL, options);
+        -: 2242:
+    #####: 2243:	munmap((char *) base, info.st_size);
+    #####: 2244:	close(fd);
+        -: 2245:    }
+        -: 2246:#endif
+    #####: 2247:    else if (html) {
+    #####: 2248:	doc = htmlReadFile(filename, NULL, options);
+        -: 2249:    }
+        -: 2250:#endif /* LIBXML_HTML_ENABLED */
+        -: 2251:    else {
+        -: 2252:#ifdef LIBXML_PUSH_ENABLED
+        -: 2253:	/*
+        -: 2254:	 * build an XML tree from a string;
+        -: 2255:	 */
+    #####: 2256:	if (push) {
+        -: 2257:	    FILE *f;
+        -: 2258:
+        -: 2259:	    /* '-' Usually means stdin -<sven@zen.org> */
+    #####: 2260:	    if ((filename[0] == '-') && (filename[1] == 0)) {
+    #####: 2261:	      f = stdin;
+        -: 2262:	    } else {
+        -: 2263:#if defined(_WIN32) || defined (__DJGPP__) && !defined (__CYGWIN__)
+        -: 2264:		f = fopen(filename, "rb");
+        -: 2265:#elif defined(__OS400__)
+        -: 2266:		f = fopen(filename, "rb");
+        -: 2267:#else
+    #####: 2268:		f = fopen(filename, "r");
+        -: 2269:#endif
+        -: 2270:	    }
+    #####: 2271:	    if (f != NULL) {
+        -: 2272:		int ret;
+    #####: 2273:	        int res, size = 1024;
+        -: 2274:	        char chars[1024];
+        -: 2275:                xmlParserCtxtPtr ctxt;
+        -: 2276:
+        -: 2277:		/* if (repeat) size = 1024; */
+    #####: 2278:		res = fread(chars, 1, 4, f);
+    #####: 2279:		if (res > 0) {
+    #####: 2280:		    ctxt = xmlCreatePushParserCtxt(NULL, NULL,
+        -: 2281:		                chars, res, filename);
+    #####: 2282:		    xmlCtxtUseOptions(ctxt, options);
+    #####: 2283:		    while ((res = fread(chars, 1, size, f)) > 0) {
+    #####: 2284:			xmlParseChunk(ctxt, chars, res, 0);
+        -: 2285:		    }
+    #####: 2286:		    xmlParseChunk(ctxt, chars, 0, 1);
+    #####: 2287:		    doc = ctxt->myDoc;
+    #####: 2288:		    ret = ctxt->wellFormed;
+    #####: 2289:		    xmlFreeParserCtxt(ctxt);
+    #####: 2290:		    if (!ret) {
+    #####: 2291:			xmlFreeDoc(doc);
+    #####: 2292:			doc = NULL;
+        -: 2293:		    }
+        -: 2294:	        }
+    #####: 2295:                if (f != stdin)
+    #####: 2296:                    fclose(f);
+        -: 2297:	    }
+        -: 2298:	} else
+        -: 2299:#endif /* LIBXML_PUSH_ENABLED */
+    #####: 2300:        if (testIO) {
+    #####: 2301:	    if ((filename[0] == '-') && (filename[1] == 0)) {
+    #####: 2302:	        doc = xmlReadFd(0, NULL, NULL, options);
+        -: 2303:	    } else {
+        -: 2304:	        FILE *f;
+        -: 2305:
+        -: 2306:#if defined(_WIN32) || defined (__DJGPP__) && !defined (__CYGWIN__)
+        -: 2307:		f = fopen(filename, "rb");
+        -: 2308:#elif defined(__OS400__)
+        -: 2309:		f = fopen(filename, "rb");
+        -: 2310:#else
+    #####: 2311:		f = fopen(filename, "r");
+        -: 2312:#endif
+    #####: 2313:		if (f != NULL) {
+    #####: 2314:		    if (rectxt == NULL)
+    #####: 2315:			doc = xmlReadIO((xmlInputReadCallback) myRead,
+        -: 2316:					(xmlInputCloseCallback) myClose, f,
+        -: 2317:					filename, NULL, options);
+        -: 2318:		    else
+    #####: 2319:			doc = xmlCtxtReadIO(rectxt,
+        -: 2320:			                (xmlInputReadCallback) myRead,
+        -: 2321:					(xmlInputCloseCallback) myClose, f,
+        -: 2322:					filename, NULL, options);
+        -: 2323:		} else
+    #####: 2324:		    doc = NULL;
+        -: 2325:	    }
+    #####: 2326:	} else if (htmlout) {
+        -: 2327:	    xmlParserCtxtPtr ctxt;
+        -: 2328:
+    #####: 2329:	    if (rectxt == NULL)
+    #####: 2330:		ctxt = xmlNewParserCtxt();
+        -: 2331:	    else
+    #####: 2332:	        ctxt = rectxt;
+    #####: 2333:	    if (ctxt == NULL) {
+    #####: 2334:	        doc = NULL;
+        -: 2335:	    } else {
+    #####: 2336:	        ctxt->sax->error = xmlHTMLError;
+    #####: 2337:	        ctxt->sax->warning = xmlHTMLWarning;
+    #####: 2338:	        ctxt->vctxt.error = xmlHTMLValidityError;
+    #####: 2339:	        ctxt->vctxt.warning = xmlHTMLValidityWarning;
+        -: 2340:
+    #####: 2341:		doc = xmlCtxtReadFile(ctxt, filename, NULL, options);
+        -: 2342:
+    #####: 2343:		if (rectxt == NULL)
+    #####: 2344:		    xmlFreeParserCtxt(ctxt);
+        -: 2345:	    }
+        -: 2346:#ifdef HAVE_MMAP
+    #####: 2347:	} else if (memory) {
+        -: 2348:	    int fd;
+        -: 2349:	    struct stat info;
+        -: 2350:	    const char *base;
+    #####: 2351:	    if (stat(filename, &info) < 0)
+    #####: 2352:		return;
+    #####: 2353:	    if ((fd = open(filename, O_RDONLY)) < 0)
+    #####: 2354:		return;
+    #####: 2355:	    base = mmap(NULL, info.st_size, PROT_READ, MAP_SHARED, fd, 0) ;
+    #####: 2356:	    if (base == (void *) MAP_FAILED) {
+    #####: 2357:	        close(fd);
+    #####: 2358:	        fprintf(stderr, "mmap failure for file %s\n", filename);
+    #####: 2359:		progresult = XMLLINT_ERR_RDFILE;
+    #####: 2360:	        return;
+        -: 2361:	    }
+        -: 2362:
+    #####: 2363:	    if (rectxt == NULL)
+    #####: 2364:		doc = xmlReadMemory((char *) base, info.st_size,
+        -: 2365:		                    filename, NULL, options);
+        -: 2366:	    else
+    #####: 2367:		doc = xmlCtxtReadMemory(rectxt, (char *) base, info.st_size,
+        -: 2368:			                filename, NULL, options);
+        -: 2369:
+    #####: 2370:	    munmap((char *) base, info.st_size);
+    #####: 2371:	    close(fd);
+        -: 2372:#endif
+        -: 2373:#ifdef LIBXML_VALID_ENABLED
+    #####: 2374:	} else if (valid) {
+    #####: 2375:	    xmlParserCtxtPtr ctxt = NULL;
+        -: 2376:
+    #####: 2377:	    if (rectxt == NULL)
+    #####: 2378:		ctxt = xmlNewParserCtxt();
+        -: 2379:	    else
+    #####: 2380:	        ctxt = rectxt;
+    #####: 2381:	    if (ctxt == NULL) {
+    #####: 2382:	        doc = NULL;
+        -: 2383:	    } else {
+    #####: 2384:		doc = xmlCtxtReadFile(ctxt, filename, NULL, options);
+        -: 2385:
+    #####: 2386:		if (ctxt->valid == 0)
+    #####: 2387:		    progresult = XMLLINT_ERR_RDFILE;
+    #####: 2388:		if (rectxt == NULL)
+    #####: 2389:		    xmlFreeParserCtxt(ctxt);
+        -: 2390:	    }
+        -: 2391:#endif /* LIBXML_VALID_ENABLED */
+        -: 2392:	} else {
+    #####: 2393:	    if (rectxt != NULL)
+    #####: 2394:	        doc = xmlCtxtReadFile(rectxt, filename, NULL, options);
+        -: 2395:	    else {
+        -: 2396:#ifdef LIBXML_SAX1_ENABLED
+    #####: 2397:                if (sax1)
+    #####: 2398:		    doc = xmlParseFile(filename);
+        -: 2399:		else
+        -: 2400:#endif /* LIBXML_SAX1_ENABLED */
+    #####: 2401:		doc = xmlReadFile(filename, NULL, options);
+        -: 2402:	    }
+        -: 2403:	}
+        -: 2404:    }
+        -: 2405:
+        -: 2406:    /*
+        -: 2407:     * If we don't have a document we might as well give up.  Do we
+        -: 2408:     * want an error message here?  <sven@zen.org> */
+    #####: 2409:    if (doc == NULL) {
+    #####: 2410:	progresult = XMLLINT_ERR_UNCLASS;
+    #####: 2411:	return;
+        -: 2412:    }
+        -: 2413:
+    #####: 2414:    if ((timing) && (!repeat)) {
+    #####: 2415:	endTimer("Parsing");
+        -: 2416:    }
+        -: 2417:
+        -: 2418:    /*
+        -: 2419:     * Remove DOCTYPE nodes
+        -: 2420:     */
+    #####: 2421:    if (dropdtd) {
+        -: 2422:	xmlDtdPtr dtd;
+        -: 2423:
+    #####: 2424:	dtd = xmlGetIntSubset(doc);
+    #####: 2425:	if (dtd != NULL) {
+    #####: 2426:	    xmlUnlinkNode((xmlNodePtr)dtd);
+    #####: 2427:	    xmlFreeDtd(dtd);
+        -: 2428:	}
+        -: 2429:    }
+        -: 2430:
+        -: 2431:#ifdef LIBXML_XINCLUDE_ENABLED
+    #####: 2432:    if (xinclude) {
+    #####: 2433:	if ((timing) && (!repeat)) {
+    #####: 2434:	    startTimer();
+        -: 2435:	}
+    #####: 2436:	if (xmlXIncludeProcessFlags(doc, options) < 0)
+    #####: 2437:	    progresult = XMLLINT_ERR_UNCLASS;
+    #####: 2438:	if ((timing) && (!repeat)) {
+    #####: 2439:	    endTimer("Xinclude processing");
+        -: 2440:	}
+        -: 2441:    }
+        -: 2442:#endif
+        -: 2443:
+        -: 2444:#ifdef LIBXML_XPATH_ENABLED
+    #####: 2445:    if (xpathquery != NULL) {
+    #####: 2446:        doXPathQuery(doc, xpathquery);
+        -: 2447:    }
+        -: 2448:#endif
+        -: 2449:
+        -: 2450:#ifdef LIBXML_DEBUG_ENABLED
+        -: 2451:#ifdef LIBXML_XPATH_ENABLED
+        -: 2452:    /*
+        -: 2453:     * shell interaction
+        -: 2454:     */
+    #####: 2455:    if (shell) {
+    #####: 2456:        xmlXPathOrderDocElems(doc);
+    #####: 2457:        xmlShell(doc, filename, xmlShellReadline, stdout);
+        -: 2458:    }
+        -: 2459:#endif
+        -: 2460:#endif
+        -: 2461:
+        -: 2462:#ifdef LIBXML_TREE_ENABLED
+        -: 2463:    /*
+        -: 2464:     * test intermediate copy if needed.
+        -: 2465:     */
+    #####: 2466:    if (copy) {
+    #####: 2467:        tmp = doc;
+    #####: 2468:	if (timing) {
+    #####: 2469:	    startTimer();
+        -: 2470:	}
+    #####: 2471:	doc = xmlCopyDoc(doc, 1);
+    #####: 2472:	if (timing) {
+    #####: 2473:	    endTimer("Copying");
+        -: 2474:	}
+    #####: 2475:	if (timing) {
+    #####: 2476:	    startTimer();
+        -: 2477:	}
+    #####: 2478:	xmlFreeDoc(tmp);
+    #####: 2479:	if (timing) {
+    #####: 2480:	    endTimer("Freeing original");
+        -: 2481:	}
+        -: 2482:    }
+        -: 2483:#endif /* LIBXML_TREE_ENABLED */
+        -: 2484:
+        -: 2485:#ifdef LIBXML_VALID_ENABLED
+    #####: 2486:    if ((insert) && (!html)) {
+        -: 2487:        const xmlChar* list[256];
+        -: 2488:	int nb, i;
+        -: 2489:	xmlNodePtr node;
+        -: 2490:
+    #####: 2491:	if (doc->children != NULL) {
+    #####: 2492:	    node = doc->children;
+    #####: 2493:	    while ((node != NULL) && (node->last == NULL)) node = node->next;
+    #####: 2494:	    if (node != NULL) {
+    #####: 2495:		nb = xmlValidGetValidElements(node->last, NULL, list, 256);
+    #####: 2496:		if (nb < 0) {
+    #####: 2497:		    fprintf(stderr, "could not get valid list of elements\n");
+    #####: 2498:		} else if (nb == 0) {
+    #####: 2499:		    fprintf(stderr, "No element can be inserted under root\n");
+        -: 2500:		} else {
+    #####: 2501:		    fprintf(stderr, "%d element types can be inserted under root:\n",
+        -: 2502:		           nb);
+    #####: 2503:		    for (i = 0;i < nb;i++) {
+    #####: 2504:			 fprintf(stderr, "%s\n", (char *) list[i]);
+        -: 2505:		    }
+        -: 2506:		}
+        -: 2507:	    }
+        -: 2508:	}
+        -: 2509:    }else
+        -: 2510:#endif /* LIBXML_VALID_ENABLED */
+        -: 2511:#ifdef LIBXML_READER_ENABLED
+    #####: 2512:    if (walker) {
+    #####: 2513:        walkDoc(doc);
+        -: 2514:    }
+        -: 2515:#endif /* LIBXML_READER_ENABLED */
+        -: 2516:#ifdef LIBXML_OUTPUT_ENABLED
+    #####: 2517:    if (noout == 0) {
+        -: 2518:        int ret;
+        -: 2519:
+        -: 2520:	/*
+        -: 2521:	 * print it.
+        -: 2522:	 */
+        -: 2523:#ifdef LIBXML_DEBUG_ENABLED
+    #####: 2524:	if (!debug) {
+        -: 2525:#endif
+    #####: 2526:	    if ((timing) && (!repeat)) {
+    #####: 2527:		startTimer();
+        -: 2528:	    }
+        -: 2529:#ifdef LIBXML_HTML_ENABLED
+    #####: 2530:            if ((html) && (!xmlout)) {
+    #####: 2531:		if (compress) {
+    #####: 2532:		    htmlSaveFile(output ? output : "-", doc);
+        -: 2533:		}
+    #####: 2534:		else if (encoding != NULL) {
+    #####: 2535:		    if (format == 1) {
+    #####: 2536:			htmlSaveFileFormat(output ? output : "-", doc, encoding, 1);
+        -: 2537:		    }
+        -: 2538:		    else {
+    #####: 2539:			htmlSaveFileFormat(output ? output : "-", doc, encoding, 0);
+        -: 2540:		    }
+        -: 2541:		}
+    #####: 2542:		else if (format == 1) {
+    #####: 2543:		    htmlSaveFileFormat(output ? output : "-", doc, NULL, 1);
+        -: 2544:		}
+        -: 2545:		else {
+        -: 2546:		    FILE *out;
+    #####: 2547:		    if (output == NULL)
+    #####: 2548:			out = stdout;
+        -: 2549:		    else {
+    #####: 2550:			out = fopen(output,"wb");
+        -: 2551:		    }
+    #####: 2552:		    if (out != NULL) {
+    #####: 2553:			if (htmlDocDump(out, doc) < 0)
+    #####: 2554:			    progresult = XMLLINT_ERR_OUT;
+        -: 2555:
+    #####: 2556:			if (output != NULL)
+    #####: 2557:			    fclose(out);
+        -: 2558:		    } else {
+    #####: 2559:			fprintf(stderr, "failed to open %s\n", output);
+    #####: 2560:			progresult = XMLLINT_ERR_OUT;
+        -: 2561:		    }
+        -: 2562:		}
+    #####: 2563:		if ((timing) && (!repeat)) {
+    #####: 2564:		    endTimer("Saving");
+        -: 2565:		}
+        -: 2566:	    } else
+        -: 2567:#endif
+        -: 2568:#ifdef LIBXML_C14N_ENABLED
+    #####: 2569:            if (canonical) {
+    #####: 2570:	        xmlChar *result = NULL;
+        -: 2571:		int size;
+        -: 2572:
+    #####: 2573:		size = xmlC14NDocDumpMemory(doc, NULL, XML_C14N_1_0, NULL, 1, &result);
+    #####: 2574:		if (size >= 0) {
+    #####: 2575:		    if (write(1, result, size) == -1) {
+    #####: 2576:		        fprintf(stderr, "Can't write data\n");
+        -: 2577:		    }
+    #####: 2578:		    xmlFree(result);
+        -: 2579:		} else {
+    #####: 2580:		    fprintf(stderr, "Failed to canonicalize\n");
+    #####: 2581:		    progresult = XMLLINT_ERR_OUT;
+        -: 2582:		}
+    #####: 2583:	    } else if (canonical_11) {
+    #####: 2584:	        xmlChar *result = NULL;
+        -: 2585:		int size;
+        -: 2586:
+    #####: 2587:		size = xmlC14NDocDumpMemory(doc, NULL, XML_C14N_1_1, NULL, 1, &result);
+    #####: 2588:		if (size >= 0) {
+    #####: 2589:		    if (write(1, result, size) == -1) {
+    #####: 2590:		        fprintf(stderr, "Can't write data\n");
+        -: 2591:		    }
+    #####: 2592:		    xmlFree(result);
+        -: 2593:		} else {
+    #####: 2594:		    fprintf(stderr, "Failed to canonicalize\n");
+    #####: 2595:		    progresult = XMLLINT_ERR_OUT;
+        -: 2596:		}
+        -: 2597:	    } else
+    #####: 2598:            if (exc_canonical) {
+    #####: 2599:	        xmlChar *result = NULL;
+        -: 2600:		int size;
+        -: 2601:
+    #####: 2602:		size = xmlC14NDocDumpMemory(doc, NULL, XML_C14N_EXCLUSIVE_1_0, NULL, 1, &result);
+    #####: 2603:		if (size >= 0) {
+    #####: 2604:		    if (write(1, result, size) == -1) {
+    #####: 2605:		        fprintf(stderr, "Can't write data\n");
+        -: 2606:		    }
+    #####: 2607:		    xmlFree(result);
+        -: 2608:		} else {
+    #####: 2609:		    fprintf(stderr, "Failed to canonicalize\n");
+    #####: 2610:		    progresult = XMLLINT_ERR_OUT;
+        -: 2611:		}
+        -: 2612:	    } else
+        -: 2613:#endif
+        -: 2614:#ifdef HAVE_MMAP
+    #####: 2615:	    if (memory) {
+        -: 2616:		xmlChar *result;
+        -: 2617:		int len;
+        -: 2618:
+    #####: 2619:		if (encoding != NULL) {
+    #####: 2620:		    if (format == 1) {
+    #####: 2621:		        xmlDocDumpFormatMemoryEnc(doc, &result, &len, encoding, 1);
+        -: 2622:		    } else {
+    #####: 2623:			xmlDocDumpMemoryEnc(doc, &result, &len, encoding);
+        -: 2624:		    }
+        -: 2625:		} else {
+    #####: 2626:		    if (format == 1)
+    #####: 2627:			xmlDocDumpFormatMemory(doc, &result, &len, 1);
+        -: 2628:		    else
+    #####: 2629:			xmlDocDumpMemory(doc, &result, &len);
+        -: 2630:		}
+    #####: 2631:		if (result == NULL) {
+    #####: 2632:		    fprintf(stderr, "Failed to save\n");
+    #####: 2633:		    progresult = XMLLINT_ERR_OUT;
+        -: 2634:		} else {
+    #####: 2635:		    if (write(1, result, len) == -1) {
+    #####: 2636:		        fprintf(stderr, "Can't write data\n");
+        -: 2637:		    }
+    #####: 2638:		    xmlFree(result);
+        -: 2639:		}
+        -: 2640:
+        -: 2641:	    } else
+        -: 2642:#endif /* HAVE_MMAP */
+    #####: 2643:	    if (compress) {
+    #####: 2644:		xmlSaveFile(output ? output : "-", doc);
+    #####: 2645:	    } else if (oldout) {
+    #####: 2646:	        if (encoding != NULL) {
+    #####: 2647:		    if (format == 1) {
+    #####: 2648:			ret = xmlSaveFormatFileEnc(output ? output : "-", doc,
+        -: 2649:						   encoding, 1);
+        -: 2650:		    }
+        -: 2651:		    else {
+    #####: 2652:			ret = xmlSaveFileEnc(output ? output : "-", doc,
+        -: 2653:			                     encoding);
+        -: 2654:		    }
+    #####: 2655:		    if (ret < 0) {
+    #####: 2656:			fprintf(stderr, "failed save to %s\n",
+    #####: 2657:				output ? output : "-");
+    #####: 2658:			progresult = XMLLINT_ERR_OUT;
+        -: 2659:		    }
+    #####: 2660:		} else if (format == 1) {
+    #####: 2661:		    ret = xmlSaveFormatFile(output ? output : "-", doc, 1);
+    #####: 2662:		    if (ret < 0) {
+    #####: 2663:			fprintf(stderr, "failed save to %s\n",
+    #####: 2664:				output ? output : "-");
+    #####: 2665:			progresult = XMLLINT_ERR_OUT;
+        -: 2666:		    }
+        -: 2667:		} else {
+        -: 2668:		    FILE *out;
+    #####: 2669:		    if (output == NULL)
+    #####: 2670:			out = stdout;
+        -: 2671:		    else {
+    #####: 2672:			out = fopen(output,"wb");
+        -: 2673:		    }
+    #####: 2674:		    if (out != NULL) {
+    #####: 2675:			if (xmlDocDump(out, doc) < 0)
+    #####: 2676:			    progresult = XMLLINT_ERR_OUT;
+        -: 2677:
+    #####: 2678:			if (output != NULL)
+    #####: 2679:			    fclose(out);
+        -: 2680:		    } else {
+    #####: 2681:			fprintf(stderr, "failed to open %s\n", output);
+    #####: 2682:			progresult = XMLLINT_ERR_OUT;
+        -: 2683:		    }
+        -: 2684:		}
+        -: 2685:	    } else {
+        -: 2686:	        xmlSaveCtxtPtr ctxt;
+    #####: 2687:		int saveOpts = 0;
+        -: 2688:
+    #####: 2689:                if (format == 1)
+    #####: 2690:		    saveOpts |= XML_SAVE_FORMAT;
+    #####: 2691:                else if (format == 2)
+    #####: 2692:                    saveOpts |= XML_SAVE_WSNONSIG;
+        -: 2693:
+        -: 2694:#if defined(LIBXML_HTML_ENABLED) || defined(LIBXML_VALID_ENABLED)
+    #####: 2695:                if (xmlout)
+    #####: 2696:                    saveOpts |= XML_SAVE_AS_XML;
+        -: 2697:#endif
+        -: 2698:
+    #####: 2699:		if (output == NULL)
+    #####: 2700:		    ctxt = xmlSaveToFd(1, encoding, saveOpts);
+        -: 2701:		else
+    #####: 2702:		    ctxt = xmlSaveToFilename(output, encoding, saveOpts);
+        -: 2703:
+    #####: 2704:		if (ctxt != NULL) {
+    #####: 2705:		    if (xmlSaveDoc(ctxt, doc) < 0) {
+    #####: 2706:			fprintf(stderr, "failed save to %s\n",
+    #####: 2707:				output ? output : "-");
+    #####: 2708:			progresult = XMLLINT_ERR_OUT;
+        -: 2709:		    }
+    #####: 2710:		    xmlSaveClose(ctxt);
+        -: 2711:		} else {
+    #####: 2712:		    progresult = XMLLINT_ERR_OUT;
+        -: 2713:		}
+        -: 2714:	    }
+    #####: 2715:	    if ((timing) && (!repeat)) {
+    #####: 2716:		endTimer("Saving");
+        -: 2717:	    }
+        -: 2718:#ifdef LIBXML_DEBUG_ENABLED
+        -: 2719:	} else {
+        -: 2720:	    FILE *out;
+    #####: 2721:	    if (output == NULL)
+    #####: 2722:	        out = stdout;
+        -: 2723:	    else {
+    #####: 2724:		out = fopen(output,"wb");
+        -: 2725:	    }
+    #####: 2726:	    if (out != NULL) {
+    #####: 2727:		xmlDebugDumpDocument(out, doc);
+        -: 2728:
+    #####: 2729:		if (output != NULL)
+    #####: 2730:		    fclose(out);
+        -: 2731:	    } else {
+    #####: 2732:		fprintf(stderr, "failed to open %s\n", output);
+    #####: 2733:		progresult = XMLLINT_ERR_OUT;
+        -: 2734:	    }
+        -: 2735:	}
+        -: 2736:#endif
+        -: 2737:    }
+        -: 2738:#endif /* LIBXML_OUTPUT_ENABLED */
+        -: 2739:
+        -: 2740:#ifdef LIBXML_VALID_ENABLED
+        -: 2741:    /*
+        -: 2742:     * A posteriori validation test
+        -: 2743:     */
+    #####: 2744:    if ((dtdvalid != NULL) || (dtdvalidfpi != NULL)) {
+        -: 2745:	xmlDtdPtr dtd;
+        -: 2746:
+    #####: 2747:	if ((timing) && (!repeat)) {
+    #####: 2748:	    startTimer();
+        -: 2749:	}
+    #####: 2750:	if (dtdvalid != NULL)
+    #####: 2751:	    dtd = xmlParseDTD(NULL, (const xmlChar *)dtdvalid);
+        -: 2752:	else
+    #####: 2753:	    dtd = xmlParseDTD((const xmlChar *)dtdvalidfpi, NULL);
+    #####: 2754:	if ((timing) && (!repeat)) {
+    #####: 2755:	    endTimer("Parsing DTD");
+        -: 2756:	}
+    #####: 2757:	if (dtd == NULL) {
+    #####: 2758:	    if (dtdvalid != NULL)
+    #####: 2759:		xmlGenericError(xmlGenericErrorContext,
+        -: 2760:			"Could not parse DTD %s\n", dtdvalid);
+        -: 2761:	    else
+    #####: 2762:		xmlGenericError(xmlGenericErrorContext,
+        -: 2763:			"Could not parse DTD %s\n", dtdvalidfpi);
+    #####: 2764:	    progresult = XMLLINT_ERR_DTD;
+        -: 2765:	} else {
+        -: 2766:	    xmlValidCtxtPtr cvp;
+        -: 2767:
+    #####: 2768:	    if ((cvp = xmlNewValidCtxt()) == NULL) {
+    #####: 2769:		xmlGenericError(xmlGenericErrorContext,
+        -: 2770:			"Couldn't allocate validation context\n");
+    #####: 2771:		exit(-1);
+        -: 2772:	    }
+    #####: 2773:	    cvp->userData = (void *) stderr;
+    #####: 2774:	    cvp->error    = (xmlValidityErrorFunc) fprintf;
+    #####: 2775:	    cvp->warning  = (xmlValidityWarningFunc) fprintf;
+        -: 2776:
+    #####: 2777:	    if ((timing) && (!repeat)) {
+    #####: 2778:		startTimer();
+        -: 2779:	    }
+    #####: 2780:	    if (!xmlValidateDtd(cvp, doc, dtd)) {
+    #####: 2781:		if (dtdvalid != NULL)
+    #####: 2782:		    xmlGenericError(xmlGenericErrorContext,
+        -: 2783:			    "Document %s does not validate against %s\n",
+        -: 2784:			    filename, dtdvalid);
+        -: 2785:		else
+    #####: 2786:		    xmlGenericError(xmlGenericErrorContext,
+        -: 2787:			    "Document %s does not validate against %s\n",
+        -: 2788:			    filename, dtdvalidfpi);
+    #####: 2789:		progresult = XMLLINT_ERR_VALID;
+        -: 2790:	    }
+    #####: 2791:	    if ((timing) && (!repeat)) {
+    #####: 2792:		endTimer("Validating against DTD");
+        -: 2793:	    }
+    #####: 2794:	    xmlFreeValidCtxt(cvp);
+    #####: 2795:	    xmlFreeDtd(dtd);
+        -: 2796:	}
+    #####: 2797:    } else if (postvalid) {
+        -: 2798:	xmlValidCtxtPtr cvp;
+        -: 2799:
+    #####: 2800:	if ((cvp = xmlNewValidCtxt()) == NULL) {
+    #####: 2801:	    xmlGenericError(xmlGenericErrorContext,
+        -: 2802:		    "Couldn't allocate validation context\n");
+    #####: 2803:	    exit(-1);
+        -: 2804:	}
+        -: 2805:
+    #####: 2806:	if ((timing) && (!repeat)) {
+    #####: 2807:	    startTimer();
+        -: 2808:	}
+    #####: 2809:	cvp->userData = (void *) stderr;
+    #####: 2810:	cvp->error    = (xmlValidityErrorFunc) fprintf;
+    #####: 2811:	cvp->warning  = (xmlValidityWarningFunc) fprintf;
+    #####: 2812:	if (!xmlValidateDocument(cvp, doc)) {
+    #####: 2813:	    xmlGenericError(xmlGenericErrorContext,
+        -: 2814:		    "Document %s does not validate\n", filename);
+    #####: 2815:	    progresult = XMLLINT_ERR_VALID;
+        -: 2816:	}
+    #####: 2817:	if ((timing) && (!repeat)) {
+    #####: 2818:	    endTimer("Validating");
+        -: 2819:	}
+    #####: 2820:	xmlFreeValidCtxt(cvp);
+        -: 2821:    }
+        -: 2822:#endif /* LIBXML_VALID_ENABLED */
+        -: 2823:#ifdef LIBXML_SCHEMATRON_ENABLED
+    #####: 2824:    if (wxschematron != NULL) {
+        -: 2825:	xmlSchematronValidCtxtPtr ctxt;
+        -: 2826:	int ret;
+        -: 2827:	int flag;
+        -: 2828:
+    #####: 2829:	if ((timing) && (!repeat)) {
+    #####: 2830:	    startTimer();
+        -: 2831:	}
+        -: 2832:
+    #####: 2833:	if (debug)
+    #####: 2834:	    flag = XML_SCHEMATRON_OUT_XML;
+        -: 2835:	else
+    #####: 2836:	    flag = XML_SCHEMATRON_OUT_TEXT;
+    #####: 2837:	if (noout)
+    #####: 2838:	    flag |= XML_SCHEMATRON_OUT_QUIET;
+    #####: 2839:	ctxt = xmlSchematronNewValidCtxt(wxschematron, flag);
+        -: 2840:#if 0
+        -: 2841:	xmlSchematronSetValidErrors(ctxt,
+        -: 2842:		(xmlSchematronValidityErrorFunc) fprintf,
+        -: 2843:		(xmlSchematronValidityWarningFunc) fprintf,
+        -: 2844:		stderr);
+        -: 2845:#endif
+    #####: 2846:	ret = xmlSchematronValidateDoc(ctxt, doc);
+    #####: 2847:	if (ret == 0) {
+    #####: 2848:	    fprintf(stderr, "%s validates\n", filename);
+    #####: 2849:	} else if (ret > 0) {
+    #####: 2850:	    fprintf(stderr, "%s fails to validate\n", filename);
+    #####: 2851:	    progresult = XMLLINT_ERR_VALID;
+        -: 2852:	} else {
+    #####: 2853:	    fprintf(stderr, "%s validation generated an internal error\n",
+        -: 2854:		   filename);
+    #####: 2855:	    progresult = XMLLINT_ERR_VALID;
+        -: 2856:	}
+    #####: 2857:	xmlSchematronFreeValidCtxt(ctxt);
+    #####: 2858:	if ((timing) && (!repeat)) {
+    #####: 2859:	    endTimer("Validating");
+        -: 2860:	}
+        -: 2861:    }
+        -: 2862:#endif
+        -: 2863:#ifdef LIBXML_SCHEMAS_ENABLED
+    #####: 2864:    if (relaxngschemas != NULL) {
+        -: 2865:	xmlRelaxNGValidCtxtPtr ctxt;
+        -: 2866:	int ret;
+        -: 2867:
+    #####: 2868:	if ((timing) && (!repeat)) {
+    #####: 2869:	    startTimer();
+        -: 2870:	}
+        -: 2871:
+    #####: 2872:	ctxt = xmlRelaxNGNewValidCtxt(relaxngschemas);
+    #####: 2873:	xmlRelaxNGSetValidErrors(ctxt,
+        -: 2874:		(xmlRelaxNGValidityErrorFunc) fprintf,
+        -: 2875:		(xmlRelaxNGValidityWarningFunc) fprintf,
+        -: 2876:		stderr);
+    #####: 2877:	ret = xmlRelaxNGValidateDoc(ctxt, doc);
+    #####: 2878:	if (ret == 0) {
+    #####: 2879:	    fprintf(stderr, "%s validates\n", filename);
+    #####: 2880:	} else if (ret > 0) {
+    #####: 2881:	    fprintf(stderr, "%s fails to validate\n", filename);
+    #####: 2882:	    progresult = XMLLINT_ERR_VALID;
+        -: 2883:	} else {
+    #####: 2884:	    fprintf(stderr, "%s validation generated an internal error\n",
+        -: 2885:		   filename);
+    #####: 2886:	    progresult = XMLLINT_ERR_VALID;
+        -: 2887:	}
+    #####: 2888:	xmlRelaxNGFreeValidCtxt(ctxt);
+    #####: 2889:	if ((timing) && (!repeat)) {
+    #####: 2890:	    endTimer("Validating");
+        -: 2891:	}
+    #####: 2892:    } else if (wxschemas != NULL) {
+        -: 2893:	xmlSchemaValidCtxtPtr ctxt;
+        -: 2894:	int ret;
+        -: 2895:
+    #####: 2896:	if ((timing) && (!repeat)) {
+    #####: 2897:	    startTimer();
+        -: 2898:	}
+        -: 2899:
+    #####: 2900:	ctxt = xmlSchemaNewValidCtxt(wxschemas);
+    #####: 2901:	xmlSchemaSetValidErrors(ctxt,
+        -: 2902:		(xmlSchemaValidityErrorFunc) fprintf,
+        -: 2903:		(xmlSchemaValidityWarningFunc) fprintf,
+        -: 2904:		stderr);
+    #####: 2905:	ret = xmlSchemaValidateDoc(ctxt, doc);
+    #####: 2906:	if (ret == 0) {
+    #####: 2907:	    fprintf(stderr, "%s validates\n", filename);
+    #####: 2908:	} else if (ret > 0) {
+    #####: 2909:	    fprintf(stderr, "%s fails to validate\n", filename);
+    #####: 2910:	    progresult = XMLLINT_ERR_VALID;
+        -: 2911:	} else {
+    #####: 2912:	    fprintf(stderr, "%s validation generated an internal error\n",
+        -: 2913:		   filename);
+    #####: 2914:	    progresult = XMLLINT_ERR_VALID;
+        -: 2915:	}
+    #####: 2916:	xmlSchemaFreeValidCtxt(ctxt);
+    #####: 2917:	if ((timing) && (!repeat)) {
+    #####: 2918:	    endTimer("Validating");
+        -: 2919:	}
+        -: 2920:    }
+        -: 2921:#endif
+        -: 2922:
+        -: 2923:#ifdef LIBXML_DEBUG_ENABLED
+        -: 2924:#if defined(LIBXML_HTML_ENABLED) || defined(LIBXML_VALID_ENABLED)
+    #####: 2925:    if ((debugent) && (!html))
+    #####: 2926:	xmlDebugDumpEntities(stderr, doc);
+        -: 2927:#endif
+        -: 2928:#endif
+        -: 2929:
+        -: 2930:    /*
+        -: 2931:     * free it.
+        -: 2932:     */
+    #####: 2933:    if ((timing) && (!repeat)) {
+    #####: 2934:	startTimer();
+        -: 2935:    }
+    #####: 2936:    xmlFreeDoc(doc);
+    #####: 2937:    if ((timing) && (!repeat)) {
+    #####: 2938:	endTimer("Freeing");
+        -: 2939:    }
+        -: 2940:}
+        -: 2941:
+        -: 2942:/************************************************************************
+        -: 2943: *									*
+        -: 2944: *			Usage and Main					*
+        -: 2945: *									*
+        -: 2946: ************************************************************************/
+        -: 2947:
+    #####: 2948:static void showVersion(const char *name) {
+    #####: 2949:    fprintf(stderr, "%s: using libxml version %s\n", name, xmlParserVersion);
+    #####: 2950:    fprintf(stderr, "   compiled with: ");
+    #####: 2951:    if (xmlHasFeature(XML_WITH_THREAD)) fprintf(stderr, "Threads ");
+    #####: 2952:    if (xmlHasFeature(XML_WITH_TREE)) fprintf(stderr, "Tree ");
+    #####: 2953:    if (xmlHasFeature(XML_WITH_OUTPUT)) fprintf(stderr, "Output ");
+    #####: 2954:    if (xmlHasFeature(XML_WITH_PUSH)) fprintf(stderr, "Push ");
+    #####: 2955:    if (xmlHasFeature(XML_WITH_READER)) fprintf(stderr, "Reader ");
+    #####: 2956:    if (xmlHasFeature(XML_WITH_PATTERN)) fprintf(stderr, "Patterns ");
+    #####: 2957:    if (xmlHasFeature(XML_WITH_WRITER)) fprintf(stderr, "Writer ");
+    #####: 2958:    if (xmlHasFeature(XML_WITH_SAX1)) fprintf(stderr, "SAXv1 ");
+    #####: 2959:    if (xmlHasFeature(XML_WITH_FTP)) fprintf(stderr, "FTP ");
+    #####: 2960:    if (xmlHasFeature(XML_WITH_HTTP)) fprintf(stderr, "HTTP ");
+    #####: 2961:    if (xmlHasFeature(XML_WITH_VALID)) fprintf(stderr, "DTDValid ");
+    #####: 2962:    if (xmlHasFeature(XML_WITH_HTML)) fprintf(stderr, "HTML ");
+    #####: 2963:    if (xmlHasFeature(XML_WITH_LEGACY)) fprintf(stderr, "Legacy ");
+    #####: 2964:    if (xmlHasFeature(XML_WITH_C14N)) fprintf(stderr, "C14N ");
+    #####: 2965:    if (xmlHasFeature(XML_WITH_CATALOG)) fprintf(stderr, "Catalog ");
+    #####: 2966:    if (xmlHasFeature(XML_WITH_XPATH)) fprintf(stderr, "XPath ");
+    #####: 2967:    if (xmlHasFeature(XML_WITH_XPTR)) fprintf(stderr, "XPointer ");
+    #####: 2968:    if (xmlHasFeature(XML_WITH_XINCLUDE)) fprintf(stderr, "XInclude ");
+    #####: 2969:    if (xmlHasFeature(XML_WITH_ICONV)) fprintf(stderr, "Iconv ");
+    #####: 2970:    if (xmlHasFeature(XML_WITH_ISO8859X)) fprintf(stderr, "ISO8859X ");
+    #####: 2971:    if (xmlHasFeature(XML_WITH_UNICODE)) fprintf(stderr, "Unicode ");
+    #####: 2972:    if (xmlHasFeature(XML_WITH_REGEXP)) fprintf(stderr, "Regexps ");
+    #####: 2973:    if (xmlHasFeature(XML_WITH_AUTOMATA)) fprintf(stderr, "Automata ");
+    #####: 2974:    if (xmlHasFeature(XML_WITH_EXPR)) fprintf(stderr, "Expr ");
+    #####: 2975:    if (xmlHasFeature(XML_WITH_SCHEMAS)) fprintf(stderr, "Schemas ");
+    #####: 2976:    if (xmlHasFeature(XML_WITH_SCHEMATRON)) fprintf(stderr, "Schematron ");
+    #####: 2977:    if (xmlHasFeature(XML_WITH_MODULES)) fprintf(stderr, "Modules ");
+    #####: 2978:    if (xmlHasFeature(XML_WITH_DEBUG)) fprintf(stderr, "Debug ");
+    #####: 2979:    if (xmlHasFeature(XML_WITH_DEBUG_MEM)) fprintf(stderr, "MemDebug ");
+    #####: 2980:    if (xmlHasFeature(XML_WITH_DEBUG_RUN)) fprintf(stderr, "RunDebug ");
+    #####: 2981:    if (xmlHasFeature(XML_WITH_ZLIB)) fprintf(stderr, "Zlib ");
+    #####: 2982:    if (xmlHasFeature(XML_WITH_LZMA)) fprintf(stderr, "Lzma ");
+    #####: 2983:    fprintf(stderr, "\n");
+    #####: 2984:}
+        -: 2985:
+    #####: 2986:static void usage(const char *name) {
+    #####: 2987:    printf("Usage : %s [options] XMLfiles ...\n", name);
+        -: 2988:#ifdef LIBXML_OUTPUT_ENABLED
+    #####: 2989:    printf("\tParse the XML files and output the result of the parsing\n");
+        -: 2990:#else
+        -: 2991:    printf("\tParse the XML files\n");
+        -: 2992:#endif /* LIBXML_OUTPUT_ENABLED */
+    #####: 2993:    printf("\t--version : display the version of the XML library used\n");
+        -: 2994:#ifdef LIBXML_DEBUG_ENABLED
+    #####: 2995:    printf("\t--debug : dump a debug tree of the in-memory document\n");
+    #####: 2996:    printf("\t--shell : run a navigating shell\n");
+    #####: 2997:    printf("\t--debugent : debug the entities defined in the document\n");
+        -: 2998:#else
+        -: 2999:#ifdef LIBXML_READER_ENABLED
+        -: 3000:    printf("\t--debug : dump the nodes content when using --stream\n");
+        -: 3001:#endif /* LIBXML_READER_ENABLED */
+        -: 3002:#endif
+        -: 3003:#ifdef LIBXML_TREE_ENABLED
+    #####: 3004:    printf("\t--copy : used to test the internal copy implementation\n");
+        -: 3005:#endif /* LIBXML_TREE_ENABLED */
+    #####: 3006:    printf("\t--recover : output what was parsable on broken XML documents\n");
+    #####: 3007:    printf("\t--huge : remove any internal arbitrary parser limits\n");
+    #####: 3008:    printf("\t--noent : substitute entity references by their value\n");
+    #####: 3009:    printf("\t--noenc : ignore any encoding specified inside the document\n");
+    #####: 3010:    printf("\t--noout : don't output the result tree\n");
+    #####: 3011:    printf("\t--path 'paths': provide a set of paths for resources\n");
+    #####: 3012:    printf("\t--load-trace : print trace of all external entities loaded\n");
+    #####: 3013:    printf("\t--nonet : refuse to fetch DTDs or entities over network\n");
+    #####: 3014:    printf("\t--nocompact : do not generate compact text nodes\n");
+    #####: 3015:    printf("\t--htmlout : output results as HTML\n");
+    #####: 3016:    printf("\t--nowrap : do not put HTML doc wrapper\n");
+        -: 3017:#ifdef LIBXML_VALID_ENABLED
+    #####: 3018:    printf("\t--valid : validate the document in addition to std well-formed check\n");
+    #####: 3019:    printf("\t--postvalid : do a posteriori validation, i.e after parsing\n");
+    #####: 3020:    printf("\t--dtdvalid URL : do a posteriori validation against a given DTD\n");
+    #####: 3021:    printf("\t--dtdvalidfpi FPI : same but name the DTD with a Public Identifier\n");
+        -: 3022:#endif /* LIBXML_VALID_ENABLED */
+    #####: 3023:    printf("\t--timing : print some timings\n");
+    #####: 3024:    printf("\t--output file or -o file: save to a given file\n");
+    #####: 3025:    printf("\t--repeat : repeat 100 times, for timing or profiling\n");
+    #####: 3026:    printf("\t--insert : ad-hoc test for valid insertions\n");
+        -: 3027:#ifdef LIBXML_OUTPUT_ENABLED
+        -: 3028:#ifdef HAVE_ZLIB_H
+    #####: 3029:    printf("\t--compress : turn on gzip compression of output\n");
+        -: 3030:#endif
+        -: 3031:#endif /* LIBXML_OUTPUT_ENABLED */
+        -: 3032:#ifdef LIBXML_HTML_ENABLED
+    #####: 3033:    printf("\t--html : use the HTML parser\n");
+    #####: 3034:    printf("\t--xmlout : force to use the XML serializer when using --html\n");
+    #####: 3035:    printf("\t--nodefdtd : do not default HTML doctype\n");
+        -: 3036:#endif
+        -: 3037:#ifdef LIBXML_PUSH_ENABLED
+    #####: 3038:    printf("\t--push : use the push mode of the parser\n");
+    #####: 3039:    printf("\t--pushsmall : use the push mode of the parser using tiny increments\n");
+        -: 3040:#endif /* LIBXML_PUSH_ENABLED */
+        -: 3041:#ifdef HAVE_MMAP
+    #####: 3042:    printf("\t--memory : parse from memory\n");
+        -: 3043:#endif
+    #####: 3044:    printf("\t--maxmem nbbytes : limits memory allocation to nbbytes bytes\n");
+    #####: 3045:    printf("\t--nowarning : do not emit warnings from parser/validator\n");
+    #####: 3046:    printf("\t--noblanks : drop (ignorable?) blanks spaces\n");
+    #####: 3047:    printf("\t--nocdata : replace cdata section with text nodes\n");
+        -: 3048:#ifdef LIBXML_OUTPUT_ENABLED
+    #####: 3049:    printf("\t--format : reformat/reindent the input\n");
+    #####: 3050:    printf("\t--encode encoding : output in the given encoding\n");
+    #####: 3051:    printf("\t--dropdtd : remove the DOCTYPE of the input docs\n");
+    #####: 3052:    printf("\t--pretty STYLE : pretty-print in a particular style\n");
+    #####: 3053:    printf("\t                 0 Do not pretty print\n");
+    #####: 3054:    printf("\t                 1 Format the XML content, as --format\n");
+    #####: 3055:    printf("\t                 2 Add whitespace inside tags, preserving content\n");
+        -: 3056:#endif /* LIBXML_OUTPUT_ENABLED */
+    #####: 3057:    printf("\t--c14n : save in W3C canonical format v1.0 (with comments)\n");
+    #####: 3058:    printf("\t--c14n11 : save in W3C canonical format v1.1 (with comments)\n");
+    #####: 3059:    printf("\t--exc-c14n : save in W3C exclusive canonical format (with comments)\n");
+        -: 3060:#ifdef LIBXML_C14N_ENABLED
+        -: 3061:#endif /* LIBXML_C14N_ENABLED */
+    #####: 3062:    printf("\t--nsclean : remove redundant namespace declarations\n");
+    #####: 3063:    printf("\t--testIO : test user I/O support\n");
+        -: 3064:#ifdef LIBXML_CATALOG_ENABLED
+    #####: 3065:    printf("\t--catalogs : use SGML catalogs from $SGML_CATALOG_FILES\n");
+    #####: 3066:    printf("\t             otherwise XML Catalogs starting from \n");
+    #####: 3067:    printf("\t         %s are activated by default\n", XML_XML_DEFAULT_CATALOG);
+    #####: 3068:    printf("\t--nocatalogs: deactivate all catalogs\n");
+        -: 3069:#endif
+    #####: 3070:    printf("\t--auto : generate a small doc on the fly\n");
+        -: 3071:#ifdef LIBXML_XINCLUDE_ENABLED
+    #####: 3072:    printf("\t--xinclude : do XInclude processing\n");
+    #####: 3073:    printf("\t--noxincludenode : same but do not generate XInclude nodes\n");
+    #####: 3074:    printf("\t--nofixup-base-uris : do not fixup xml:base uris\n");
+        -: 3075:#endif
+    #####: 3076:    printf("\t--loaddtd : fetch external DTD\n");
+    #####: 3077:    printf("\t--dtdattr : loaddtd + populate the tree with inherited attributes \n");
+        -: 3078:#ifdef LIBXML_READER_ENABLED
+    #####: 3079:    printf("\t--stream : use the streaming interface to process very large files\n");
+    #####: 3080:    printf("\t--walker : create a reader and walk though the resulting doc\n");
+        -: 3081:#endif /* LIBXML_READER_ENABLED */
+        -: 3082:#ifdef LIBXML_PATTERN_ENABLED
+    #####: 3083:    printf("\t--pattern pattern_value : test the pattern support\n");
+        -: 3084:#endif
+    #####: 3085:    printf("\t--chkregister : verify the node registration code\n");
+        -: 3086:#ifdef LIBXML_SCHEMAS_ENABLED
+    #####: 3087:    printf("\t--relaxng schema : do RelaxNG validation against the schema\n");
+    #####: 3088:    printf("\t--schema schema : do validation against the WXS schema\n");
+        -: 3089:#endif
+        -: 3090:#ifdef LIBXML_SCHEMATRON_ENABLED
+    #####: 3091:    printf("\t--schematron schema : do validation against a schematron\n");
+        -: 3092:#endif
+        -: 3093:#ifdef LIBXML_SAX1_ENABLED
+    #####: 3094:    printf("\t--sax1: use the old SAX1 interfaces for processing\n");
+        -: 3095:#endif
+    #####: 3096:    printf("\t--sax: do not build a tree but work just at the SAX level\n");
+    #####: 3097:    printf("\t--oldxml10: use XML-1.0 parsing rules before the 5th edition\n");
+        -: 3098:#ifdef LIBXML_XPATH_ENABLED
+    #####: 3099:    printf("\t--xpath expr: evaluate the XPath expression, imply --noout\n");
+        -: 3100:#endif
+        -: 3101:
+    #####: 3102:    printf("\nLibxml project home page: http://xmlsoft.org/\n");
+    #####: 3103:    printf("To report bugs or get some help check: http://xmlsoft.org/bugs.html\n");
+    #####: 3104:}
+        -: 3105:
+    #####: 3106:static void registerNode(xmlNodePtr node)
+        -: 3107:{
+    #####: 3108:    node->_private = malloc(sizeof(long));
+    #####: 3109:    if (node->_private == NULL) {
+    #####: 3110:        fprintf(stderr, "Out of memory in xmllint:registerNode()\n");
+    #####: 3111:	exit(XMLLINT_ERR_MEM);
+        -: 3112:    }
+    #####: 3113:    *(long*)node->_private = (long) 0x81726354;
+    #####: 3114:    nbregister++;
+    #####: 3115:}
+        -: 3116:
+    #####: 3117:static void deregisterNode(xmlNodePtr node)
+        -: 3118:{
+    #####: 3119:    assert(node->_private != NULL);
+    #####: 3120:    assert(*(long*)node->_private == (long) 0x81726354);
+    #####: 3121:    free(node->_private);
+    #####: 3122:    nbregister--;
+    #####: 3123:}
+        -: 3124:
+        -: 3125:int
+    #####: 3126:main(int argc, char **argv) {
+        -: 3127:    int i, acount;
+    #####: 3128:    int files = 0;
+    #####: 3129:    int version = 0;
+        -: 3130:    const char* indent;
+        -: 3131:
+    #####: 3132:    if (argc <= 1) {
+    #####: 3133:	usage(argv[0]);
+    #####: 3134:	return(1);
+        -: 3135:    }
+    #####: 3136:    LIBXML_TEST_VERSION
+    #####: 3137:    for (i = 1; i < argc ; i++) {
+    #####: 3138:	if (!strcmp(argv[i], "-"))
+    #####: 3139:	    break;
+        -: 3140:
+    #####: 3141:	if (argv[i][0] != '-')
+    #####: 3142:	    continue;
+    #####: 3143:	if ((!strcmp(argv[i], "-debug")) || (!strcmp(argv[i], "--debug")))
+    #####: 3144:	    debug++;
+        -: 3145:	else
+        -: 3146:#ifdef LIBXML_DEBUG_ENABLED
+    #####: 3147:	if ((!strcmp(argv[i], "-shell")) ||
+    #####: 3148:	         (!strcmp(argv[i], "--shell"))) {
+    #####: 3149:	    shell++;
+    #####: 3150:            noout = 1;
+        -: 3151:        } else
+        -: 3152:#endif
+        -: 3153:#ifdef LIBXML_TREE_ENABLED
+    #####: 3154:	if ((!strcmp(argv[i], "-copy")) || (!strcmp(argv[i], "--copy")))
+    #####: 3155:	    copy++;
+        -: 3156:	else
+        -: 3157:#endif /* LIBXML_TREE_ENABLED */
+    #####: 3158:	if ((!strcmp(argv[i], "-recover")) ||
+    #####: 3159:	         (!strcmp(argv[i], "--recover"))) {
+    #####: 3160:	    recovery++;
+    #####: 3161:	    options |= XML_PARSE_RECOVER;
+    #####: 3162:	} else if ((!strcmp(argv[i], "-huge")) ||
+    #####: 3163:	         (!strcmp(argv[i], "--huge"))) {
+    #####: 3164:	    options |= XML_PARSE_HUGE;
+    #####: 3165:	} else if ((!strcmp(argv[i], "-noent")) ||
+    #####: 3166:	         (!strcmp(argv[i], "--noent"))) {
+    #####: 3167:	    noent++;
+    #####: 3168:	    options |= XML_PARSE_NOENT;
+    #####: 3169:	} else if ((!strcmp(argv[i], "-noenc")) ||
+    #####: 3170:	         (!strcmp(argv[i], "--noenc"))) {
+    #####: 3171:	    noenc++;
+    #####: 3172:	    options |= XML_PARSE_IGNORE_ENC;
+    #####: 3173:	} else if ((!strcmp(argv[i], "-nsclean")) ||
+    #####: 3174:	         (!strcmp(argv[i], "--nsclean"))) {
+    #####: 3175:	    options |= XML_PARSE_NSCLEAN;
+    #####: 3176:	} else if ((!strcmp(argv[i], "-nocdata")) ||
+    #####: 3177:	         (!strcmp(argv[i], "--nocdata"))) {
+    #####: 3178:	    options |= XML_PARSE_NOCDATA;
+    #####: 3179:	} else if ((!strcmp(argv[i], "-nodict")) ||
+    #####: 3180:	         (!strcmp(argv[i], "--nodict"))) {
+    #####: 3181:	    options |= XML_PARSE_NODICT;
+    #####: 3182:	} else if ((!strcmp(argv[i], "-version")) ||
+    #####: 3183:	         (!strcmp(argv[i], "--version"))) {
+    #####: 3184:	    showVersion(argv[0]);
+    #####: 3185:	    version = 1;
+    #####: 3186:	} else if ((!strcmp(argv[i], "-noout")) ||
+    #####: 3187:	         (!strcmp(argv[i], "--noout")))
+    #####: 3188:	    noout++;
+        -: 3189:#ifdef LIBXML_OUTPUT_ENABLED
+    #####: 3190:	else if ((!strcmp(argv[i], "-o")) ||
+    #####: 3191:	         (!strcmp(argv[i], "-output")) ||
+    #####: 3192:	         (!strcmp(argv[i], "--output"))) {
+    #####: 3193:	    i++;
+    #####: 3194:	    output = argv[i];
+        -: 3195:	}
+        -: 3196:#endif /* LIBXML_OUTPUT_ENABLED */
+    #####: 3197:	else if ((!strcmp(argv[i], "-htmlout")) ||
+    #####: 3198:	         (!strcmp(argv[i], "--htmlout")))
+    #####: 3199:	    htmlout++;
+    #####: 3200:	else if ((!strcmp(argv[i], "-nowrap")) ||
+    #####: 3201:	         (!strcmp(argv[i], "--nowrap")))
+    #####: 3202:	    nowrap++;
+        -: 3203:#ifdef LIBXML_HTML_ENABLED
+    #####: 3204:	else if ((!strcmp(argv[i], "-html")) ||
+    #####: 3205:	         (!strcmp(argv[i], "--html"))) {
+    #####: 3206:	    html++;
+        -: 3207:        }
+    #####: 3208:	else if ((!strcmp(argv[i], "-xmlout")) ||
+    #####: 3209:	         (!strcmp(argv[i], "--xmlout"))) {
+    #####: 3210:	    xmlout++;
+    #####: 3211:	} else if ((!strcmp(argv[i], "-nodefdtd")) ||
+    #####: 3212:	         (!strcmp(argv[i], "--nodefdtd"))) {
+    #####: 3213:            nodefdtd++;
+    #####: 3214:	    options |= HTML_PARSE_NODEFDTD;
+        -: 3215:        }
+        -: 3216:#endif /* LIBXML_HTML_ENABLED */
+    #####: 3217:	else if ((!strcmp(argv[i], "-loaddtd")) ||
+    #####: 3218:	         (!strcmp(argv[i], "--loaddtd"))) {
+    #####: 3219:	    loaddtd++;
+    #####: 3220:	    options |= XML_PARSE_DTDLOAD;
+    #####: 3221:	} else if ((!strcmp(argv[i], "-dtdattr")) ||
+    #####: 3222:	         (!strcmp(argv[i], "--dtdattr"))) {
+    #####: 3223:	    loaddtd++;
+    #####: 3224:	    dtdattrs++;
+    #####: 3225:	    options |= XML_PARSE_DTDATTR;
+        -: 3226:	}
+        -: 3227:#ifdef LIBXML_VALID_ENABLED
+    #####: 3228:	else if ((!strcmp(argv[i], "-valid")) ||
+    #####: 3229:	         (!strcmp(argv[i], "--valid"))) {
+    #####: 3230:	    valid++;
+    #####: 3231:	    options |= XML_PARSE_DTDVALID;
+    #####: 3232:	} else if ((!strcmp(argv[i], "-postvalid")) ||
+    #####: 3233:	         (!strcmp(argv[i], "--postvalid"))) {
+    #####: 3234:	    postvalid++;
+    #####: 3235:	    loaddtd++;
+    #####: 3236:	    options |= XML_PARSE_DTDLOAD;
+    #####: 3237:	} else if ((!strcmp(argv[i], "-dtdvalid")) ||
+    #####: 3238:	         (!strcmp(argv[i], "--dtdvalid"))) {
+    #####: 3239:	    i++;
+    #####: 3240:	    dtdvalid = argv[i];
+    #####: 3241:	    loaddtd++;
+    #####: 3242:	    options |= XML_PARSE_DTDLOAD;
+    #####: 3243:	} else if ((!strcmp(argv[i], "-dtdvalidfpi")) ||
+    #####: 3244:	         (!strcmp(argv[i], "--dtdvalidfpi"))) {
+    #####: 3245:	    i++;
+    #####: 3246:	    dtdvalidfpi = argv[i];
+    #####: 3247:	    loaddtd++;
+    #####: 3248:	    options |= XML_PARSE_DTDLOAD;
+        -: 3249:        }
+        -: 3250:#endif /* LIBXML_VALID_ENABLED */
+    #####: 3251:	else if ((!strcmp(argv[i], "-dropdtd")) ||
+    #####: 3252:	         (!strcmp(argv[i], "--dropdtd")))
+    #####: 3253:	    dropdtd++;
+    #####: 3254:	else if ((!strcmp(argv[i], "-insert")) ||
+    #####: 3255:	         (!strcmp(argv[i], "--insert")))
+    #####: 3256:	    insert++;
+    #####: 3257:	else if ((!strcmp(argv[i], "-timing")) ||
+    #####: 3258:	         (!strcmp(argv[i], "--timing")))
+    #####: 3259:	    timing++;
+    #####: 3260:	else if ((!strcmp(argv[i], "-auto")) ||
+    #####: 3261:	         (!strcmp(argv[i], "--auto")))
+    #####: 3262:	    generate++;
+    #####: 3263:	else if ((!strcmp(argv[i], "-repeat")) ||
+    #####: 3264:	         (!strcmp(argv[i], "--repeat"))) {
+    #####: 3265:	    if (repeat)
+    #####: 3266:	        repeat *= 10;
+        -: 3267:	    else
+    #####: 3268:	        repeat = 100;
+        -: 3269:	}
+        -: 3270:#ifdef LIBXML_PUSH_ENABLED
+    #####: 3271:	else if ((!strcmp(argv[i], "-push")) ||
+    #####: 3272:	         (!strcmp(argv[i], "--push")))
+    #####: 3273:	    push++;
+    #####: 3274:	else if ((!strcmp(argv[i], "-pushsmall")) ||
+    #####: 3275:	         (!strcmp(argv[i], "--pushsmall"))) {
+    #####: 3276:	    push++;
+    #####: 3277:            pushsize = 10;
+        -: 3278:        }
+        -: 3279:#endif /* LIBXML_PUSH_ENABLED */
+        -: 3280:#ifdef HAVE_MMAP
+    #####: 3281:	else if ((!strcmp(argv[i], "-memory")) ||
+    #####: 3282:	         (!strcmp(argv[i], "--memory")))
+    #####: 3283:	    memory++;
+        -: 3284:#endif
+    #####: 3285:	else if ((!strcmp(argv[i], "-testIO")) ||
+    #####: 3286:	         (!strcmp(argv[i], "--testIO")))
+    #####: 3287:	    testIO++;
+        -: 3288:#ifdef LIBXML_XINCLUDE_ENABLED
+    #####: 3289:	else if ((!strcmp(argv[i], "-xinclude")) ||
+    #####: 3290:	         (!strcmp(argv[i], "--xinclude"))) {
+    #####: 3291:	    xinclude++;
+    #####: 3292:	    options |= XML_PARSE_XINCLUDE;
+        -: 3293:	}
+    #####: 3294:	else if ((!strcmp(argv[i], "-noxincludenode")) ||
+    #####: 3295:	         (!strcmp(argv[i], "--noxincludenode"))) {
+    #####: 3296:	    xinclude++;
+    #####: 3297:	    options |= XML_PARSE_XINCLUDE;
+    #####: 3298:	    options |= XML_PARSE_NOXINCNODE;
+        -: 3299:	}
+    #####: 3300:	else if ((!strcmp(argv[i], "-nofixup-base-uris")) ||
+    #####: 3301:	         (!strcmp(argv[i], "--nofixup-base-uris"))) {
+    #####: 3302:	    xinclude++;
+    #####: 3303:	    options |= XML_PARSE_XINCLUDE;
+    #####: 3304:	    options |= XML_PARSE_NOBASEFIX;
+        -: 3305:	}
+        -: 3306:#endif
+        -: 3307:#ifdef LIBXML_OUTPUT_ENABLED
+        -: 3308:#ifdef HAVE_ZLIB_H
+    #####: 3309:	else if ((!strcmp(argv[i], "-compress")) ||
+    #####: 3310:	         (!strcmp(argv[i], "--compress"))) {
+    #####: 3311:	    compress++;
+    #####: 3312:	    xmlSetCompressMode(9);
+        -: 3313:        }
+        -: 3314:#endif
+        -: 3315:#endif /* LIBXML_OUTPUT_ENABLED */
+    #####: 3316:	else if ((!strcmp(argv[i], "-nowarning")) ||
+    #####: 3317:	         (!strcmp(argv[i], "--nowarning"))) {
+    #####: 3318:	    xmlGetWarningsDefaultValue = 0;
+    #####: 3319:	    xmlPedanticParserDefault(0);
+    #####: 3320:	    options |= XML_PARSE_NOWARNING;
+        -: 3321:        }
+    #####: 3322:	else if ((!strcmp(argv[i], "-pedantic")) ||
+    #####: 3323:	         (!strcmp(argv[i], "--pedantic"))) {
+    #####: 3324:	    xmlGetWarningsDefaultValue = 1;
+    #####: 3325:	    xmlPedanticParserDefault(1);
+    #####: 3326:	    options |= XML_PARSE_PEDANTIC;
+        -: 3327:        }
+        -: 3328:#ifdef LIBXML_DEBUG_ENABLED
+    #####: 3329:	else if ((!strcmp(argv[i], "-debugent")) ||
+    #####: 3330:		 (!strcmp(argv[i], "--debugent"))) {
+    #####: 3331:	    debugent++;
+    #####: 3332:	    xmlParserDebugEntities = 1;
+        -: 3333:	}
+        -: 3334:#endif
+        -: 3335:#ifdef LIBXML_C14N_ENABLED
+    #####: 3336:	else if ((!strcmp(argv[i], "-c14n")) ||
+    #####: 3337:		 (!strcmp(argv[i], "--c14n"))) {
+    #####: 3338:	    canonical++;
+    #####: 3339:	    options |= XML_PARSE_NOENT | XML_PARSE_DTDATTR | XML_PARSE_DTDLOAD;
+        -: 3340:	}
+    #####: 3341:	else if ((!strcmp(argv[i], "-c14n11")) ||
+    #####: 3342:		 (!strcmp(argv[i], "--c14n11"))) {
+    #####: 3343:	    canonical_11++;
+    #####: 3344:	    options |= XML_PARSE_NOENT | XML_PARSE_DTDATTR | XML_PARSE_DTDLOAD;
+        -: 3345:	}
+    #####: 3346:	else if ((!strcmp(argv[i], "-exc-c14n")) ||
+    #####: 3347:		 (!strcmp(argv[i], "--exc-c14n"))) {
+    #####: 3348:	    exc_canonical++;
+    #####: 3349:	    options |= XML_PARSE_NOENT | XML_PARSE_DTDATTR | XML_PARSE_DTDLOAD;
+        -: 3350:	}
+        -: 3351:#endif
+        -: 3352:#ifdef LIBXML_CATALOG_ENABLED
+    #####: 3353:	else if ((!strcmp(argv[i], "-catalogs")) ||
+    #####: 3354:		 (!strcmp(argv[i], "--catalogs"))) {
+    #####: 3355:	    catalogs++;
+    #####: 3356:	} else if ((!strcmp(argv[i], "-nocatalogs")) ||
+    #####: 3357:		 (!strcmp(argv[i], "--nocatalogs"))) {
+    #####: 3358:	    nocatalogs++;
+        -: 3359:	}
+        -: 3360:#endif
+    #####: 3361:	else if ((!strcmp(argv[i], "-encode")) ||
+    #####: 3362:	         (!strcmp(argv[i], "--encode"))) {
+    #####: 3363:	    i++;
+    #####: 3364:	    encoding = argv[i];
+        -: 3365:	    /*
+        -: 3366:	     * OK it's for testing purposes
+        -: 3367:	     */
+    #####: 3368:	    xmlAddEncodingAlias("UTF-8", "DVEnc");
+        -: 3369:        }
+    #####: 3370:	else if ((!strcmp(argv[i], "-noblanks")) ||
+    #####: 3371:	         (!strcmp(argv[i], "--noblanks"))) {
+    #####: 3372:	    noblanks++;
+    #####: 3373:	    xmlKeepBlanksDefault(0);
+    #####: 3374:	    options |= XML_PARSE_NOBLANKS;
+        -: 3375:        }
+    #####: 3376:	else if ((!strcmp(argv[i], "-maxmem")) ||
+    #####: 3377:	         (!strcmp(argv[i], "--maxmem"))) {
+    #####: 3378:	     i++;
+    #####: 3379:	     if (sscanf(argv[i], "%d", &maxmem) == 1) {
+    #####: 3380:	         xmlMemSetup(myFreeFunc, myMallocFunc, myReallocFunc,
+        -: 3381:		             myStrdupFunc);
+        -: 3382:	     } else {
+    #####: 3383:	         maxmem = 0;
+        -: 3384:	     }
+        -: 3385:        }
+    #####: 3386:	else if ((!strcmp(argv[i], "-format")) ||
+    #####: 3387:	         (!strcmp(argv[i], "--format"))) {
+    #####: 3388:	     noblanks++;
+        -: 3389:#ifdef LIBXML_OUTPUT_ENABLED
+    #####: 3390:	     format = 1;
+        -: 3391:#endif /* LIBXML_OUTPUT_ENABLED */
+    #####: 3392:	     xmlKeepBlanksDefault(0);
+        -: 3393:	}
+    #####: 3394:	else if ((!strcmp(argv[i], "-pretty")) ||
+    #####: 3395:	         (!strcmp(argv[i], "--pretty"))) {
+    #####: 3396:	     i++;
+        -: 3397:#ifdef LIBXML_OUTPUT_ENABLED
+    #####: 3398:       if (argv[i] != NULL) {
+    #####: 3399:	         format = atoi(argv[i]);
+    #####: 3400:	         if (format == 1) {
+    #####: 3401:	             noblanks++;
+    #####: 3402:	             xmlKeepBlanksDefault(0);
+        -: 3403:	         }
+        -: 3404:       }
+        -: 3405:#endif /* LIBXML_OUTPUT_ENABLED */
+        -: 3406:	}
+        -: 3407:#ifdef LIBXML_READER_ENABLED
+    #####: 3408:	else if ((!strcmp(argv[i], "-stream")) ||
+    #####: 3409:	         (!strcmp(argv[i], "--stream"))) {
+    #####: 3410:	     stream++;
+        -: 3411:	}
+    #####: 3412:	else if ((!strcmp(argv[i], "-walker")) ||
+    #####: 3413:	         (!strcmp(argv[i], "--walker"))) {
+    #####: 3414:	     walker++;
+    #####: 3415:             noout++;
+        -: 3416:	}
+        -: 3417:#endif /* LIBXML_READER_ENABLED */
+        -: 3418:#ifdef LIBXML_SAX1_ENABLED
+    #####: 3419:	else if ((!strcmp(argv[i], "-sax1")) ||
+    #####: 3420:	         (!strcmp(argv[i], "--sax1"))) {
+    #####: 3421:	    sax1++;
+    #####: 3422:	    options |= XML_PARSE_SAX1;
+        -: 3423:	}
+        -: 3424:#endif /* LIBXML_SAX1_ENABLED */
+    #####: 3425:	else if ((!strcmp(argv[i], "-sax")) ||
+    #####: 3426:	         (!strcmp(argv[i], "--sax"))) {
+    #####: 3427:	    sax++;
+        -: 3428:	}
+    #####: 3429:	else if ((!strcmp(argv[i], "-chkregister")) ||
+    #####: 3430:	         (!strcmp(argv[i], "--chkregister"))) {
+    #####: 3431:	    chkregister++;
+        -: 3432:#ifdef LIBXML_SCHEMAS_ENABLED
+    #####: 3433:	} else if ((!strcmp(argv[i], "-relaxng")) ||
+    #####: 3434:	         (!strcmp(argv[i], "--relaxng"))) {
+    #####: 3435:	    i++;
+    #####: 3436:	    relaxng = argv[i];
+    #####: 3437:	    noent++;
+    #####: 3438:	    options |= XML_PARSE_NOENT;
+    #####: 3439:	} else if ((!strcmp(argv[i], "-schema")) ||
+    #####: 3440:	         (!strcmp(argv[i], "--schema"))) {
+    #####: 3441:	    i++;
+    #####: 3442:	    schema = argv[i];
+    #####: 3443:	    noent++;
+        -: 3444:#endif
+        -: 3445:#ifdef LIBXML_SCHEMATRON_ENABLED
+    #####: 3446:	} else if ((!strcmp(argv[i], "-schematron")) ||
+    #####: 3447:	         (!strcmp(argv[i], "--schematron"))) {
+    #####: 3448:	    i++;
+    #####: 3449:	    schematron = argv[i];
+    #####: 3450:	    noent++;
+        -: 3451:#endif
+    #####: 3452:        } else if ((!strcmp(argv[i], "-nonet")) ||
+    #####: 3453:                   (!strcmp(argv[i], "--nonet"))) {
+    #####: 3454:	    options |= XML_PARSE_NONET;
+    #####: 3455:	    xmlSetExternalEntityLoader(xmlNoNetExternalEntityLoader);
+    #####: 3456:        } else if ((!strcmp(argv[i], "-nocompact")) ||
+    #####: 3457:                   (!strcmp(argv[i], "--nocompact"))) {
+    #####: 3458:	    options &= ~XML_PARSE_COMPACT;
+    #####: 3459:	} else if ((!strcmp(argv[i], "-load-trace")) ||
+    #####: 3460:	           (!strcmp(argv[i], "--load-trace"))) {
+    #####: 3461:	    load_trace++;
+    #####: 3462:        } else if ((!strcmp(argv[i], "-path")) ||
+    #####: 3463:                   (!strcmp(argv[i], "--path"))) {
+    #####: 3464:	    i++;
+    #####: 3465:	    parsePath(BAD_CAST argv[i]);
+        -: 3466:#ifdef LIBXML_PATTERN_ENABLED
+    #####: 3467:        } else if ((!strcmp(argv[i], "-pattern")) ||
+    #####: 3468:                   (!strcmp(argv[i], "--pattern"))) {
+    #####: 3469:	    i++;
+    #####: 3470:	    pattern = argv[i];
+        -: 3471:#endif
+        -: 3472:#ifdef LIBXML_XPATH_ENABLED
+    #####: 3473:        } else if ((!strcmp(argv[i], "-xpath")) ||
+    #####: 3474:                   (!strcmp(argv[i], "--xpath"))) {
+    #####: 3475:	    i++;
+    #####: 3476:	    noout++;
+    #####: 3477:	    xpathquery = argv[i];
+        -: 3478:#endif
+    #####: 3479:	} else if ((!strcmp(argv[i], "-oldxml10")) ||
+    #####: 3480:	           (!strcmp(argv[i], "--oldxml10"))) {
+    #####: 3481:	    oldxml10++;
+    #####: 3482:	    options |= XML_PARSE_OLD10;
+        -: 3483:	} else {
+    #####: 3484:	    fprintf(stderr, "Unknown option %s\n", argv[i]);
+    #####: 3485:	    usage(argv[0]);
+    #####: 3486:	    return(1);
+        -: 3487:	}
+        -: 3488:    }
+        -: 3489:
+        -: 3490:#ifdef LIBXML_CATALOG_ENABLED
+    #####: 3491:    if (nocatalogs == 0) {
+    #####: 3492:	if (catalogs) {
+        -: 3493:	    const char *catal;
+        -: 3494:
+    #####: 3495:	    catal = getenv("SGML_CATALOG_FILES");
+    #####: 3496:	    if (catal != NULL) {
+    #####: 3497:		xmlLoadCatalogs(catal);
+        -: 3498:	    } else {
+    #####: 3499:		fprintf(stderr, "Variable $SGML_CATALOG_FILES not set\n");
+        -: 3500:	    }
+        -: 3501:	}
+        -: 3502:    }
+        -: 3503:#endif
+        -: 3504:
+        -: 3505:#ifdef LIBXML_SAX1_ENABLED
+    #####: 3506:    if (sax1)
+    #####: 3507:        xmlSAXDefaultVersion(1);
+        -: 3508:    else
+    #####: 3509:        xmlSAXDefaultVersion(2);
+        -: 3510:#endif /* LIBXML_SAX1_ENABLED */
+        -: 3511:
+    #####: 3512:    if (chkregister) {
+    #####: 3513:	xmlRegisterNodeDefault(registerNode);
+    #####: 3514:	xmlDeregisterNodeDefault(deregisterNode);
+        -: 3515:    }
+        -: 3516:
+    #####: 3517:    indent = getenv("XMLLINT_INDENT");
+    #####: 3518:    if(indent != NULL) {
+    #####: 3519:	xmlTreeIndentString = indent;
+        -: 3520:    }
+        -: 3521:
+        -: 3522:
+    #####: 3523:    defaultEntityLoader = xmlGetExternalEntityLoader();
+    #####: 3524:    xmlSetExternalEntityLoader(xmllintExternalEntityLoader);
+        -: 3525:
+    #####: 3526:    xmlLineNumbersDefault(1);
+    #####: 3527:    if (loaddtd != 0)
+    #####: 3528:	xmlLoadExtDtdDefaultValue |= XML_DETECT_IDS;
+    #####: 3529:    if (dtdattrs)
+    #####: 3530:	xmlLoadExtDtdDefaultValue |= XML_COMPLETE_ATTRS;
+    #####: 3531:    if (noent != 0) xmlSubstituteEntitiesDefault(1);
+        -: 3532:#ifdef LIBXML_VALID_ENABLED
+    #####: 3533:    if (valid != 0) xmlDoValidityCheckingDefaultValue = 1;
+        -: 3534:#endif /* LIBXML_VALID_ENABLED */
+    #####: 3535:    if ((htmlout) && (!nowrap)) {
+    #####: 3536:	xmlGenericError(xmlGenericErrorContext,
+        -: 3537:         "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.0 Transitional//EN\"\n");
+    #####: 3538:	xmlGenericError(xmlGenericErrorContext,
+        -: 3539:		"\t\"http://www.w3.org/TR/REC-html40/loose.dtd\">\n");
+    #####: 3540:	xmlGenericError(xmlGenericErrorContext,
+        -: 3541:	 "<html><head><title>%s output</title></head>\n",
+        -: 3542:		argv[0]);
+    #####: 3543:	xmlGenericError(xmlGenericErrorContext,
+        -: 3544:	 "<body bgcolor=\"#ffffff\"><h1 align=\"center\">%s output</h1>\n",
+        -: 3545:		argv[0]);
+        -: 3546:    }
+        -: 3547:
+        -: 3548:#ifdef LIBXML_SCHEMATRON_ENABLED
+    #####: 3549:    if ((schematron != NULL) && (sax == 0)
+        -: 3550:#ifdef LIBXML_READER_ENABLED
+    #####: 3551:        && (stream == 0)
+        -: 3552:#endif /* LIBXML_READER_ENABLED */
+        -: 3553:	) {
+        -: 3554:	xmlSchematronParserCtxtPtr ctxt;
+        -: 3555:
+        -: 3556:        /* forces loading the DTDs */
+    #####: 3557:        xmlLoadExtDtdDefaultValue |= 1;
+    #####: 3558:	options |= XML_PARSE_DTDLOAD;
+    #####: 3559:	if (timing) {
+    #####: 3560:	    startTimer();
+        -: 3561:	}
+    #####: 3562:	ctxt = xmlSchematronNewParserCtxt(schematron);
+        -: 3563:#if 0
+        -: 3564:	xmlSchematronSetParserErrors(ctxt,
+        -: 3565:		(xmlSchematronValidityErrorFunc) fprintf,
+        -: 3566:		(xmlSchematronValidityWarningFunc) fprintf,
+        -: 3567:		stderr);
+        -: 3568:#endif
+    #####: 3569:	wxschematron = xmlSchematronParse(ctxt);
+    #####: 3570:	if (wxschematron == NULL) {
+    #####: 3571:	    xmlGenericError(xmlGenericErrorContext,
+        -: 3572:		    "Schematron schema %s failed to compile\n", schematron);
+    #####: 3573:            progresult = XMLLINT_ERR_SCHEMACOMP;
+    #####: 3574:	    schematron = NULL;
+        -: 3575:	}
+    #####: 3576:	xmlSchematronFreeParserCtxt(ctxt);
+    #####: 3577:	if (timing) {
+    #####: 3578:	    endTimer("Compiling the schemas");
+        -: 3579:	}
+        -: 3580:    }
+        -: 3581:#endif
+        -: 3582:#ifdef LIBXML_SCHEMAS_ENABLED
+    #####: 3583:    if ((relaxng != NULL) && (sax == 0)
+        -: 3584:#ifdef LIBXML_READER_ENABLED
+    #####: 3585:        && (stream == 0)
+        -: 3586:#endif /* LIBXML_READER_ENABLED */
+    #####: 3587:	) {
+        -: 3588:	xmlRelaxNGParserCtxtPtr ctxt;
+        -: 3589:
+        -: 3590:        /* forces loading the DTDs */
+    #####: 3591:        xmlLoadExtDtdDefaultValue |= 1;
+    #####: 3592:	options |= XML_PARSE_DTDLOAD;
+    #####: 3593:	if (timing) {
+    #####: 3594:	    startTimer();
+        -: 3595:	}
+    #####: 3596:	ctxt = xmlRelaxNGNewParserCtxt(relaxng);
+    #####: 3597:	xmlRelaxNGSetParserErrors(ctxt,
+        -: 3598:		(xmlRelaxNGValidityErrorFunc) fprintf,
+        -: 3599:		(xmlRelaxNGValidityWarningFunc) fprintf,
+        -: 3600:		stderr);
+    #####: 3601:	relaxngschemas = xmlRelaxNGParse(ctxt);
+    #####: 3602:	if (relaxngschemas == NULL) {
+    #####: 3603:	    xmlGenericError(xmlGenericErrorContext,
+        -: 3604:		    "Relax-NG schema %s failed to compile\n", relaxng);
+    #####: 3605:            progresult = XMLLINT_ERR_SCHEMACOMP;
+    #####: 3606:	    relaxng = NULL;
+        -: 3607:	}
+    #####: 3608:	xmlRelaxNGFreeParserCtxt(ctxt);
+    #####: 3609:	if (timing) {
+    #####: 3610:	    endTimer("Compiling the schemas");
+        -: 3611:	}
+    #####: 3612:    } else if ((schema != NULL)
+        -: 3613:#ifdef LIBXML_READER_ENABLED
+    #####: 3614:		&& (stream == 0)
+        -: 3615:#endif
+        -: 3616:	) {
+        -: 3617:	xmlSchemaParserCtxtPtr ctxt;
+        -: 3618:
+    #####: 3619:	if (timing) {
+    #####: 3620:	    startTimer();
+        -: 3621:	}
+    #####: 3622:	ctxt = xmlSchemaNewParserCtxt(schema);
+    #####: 3623:	xmlSchemaSetParserErrors(ctxt,
+        -: 3624:		(xmlSchemaValidityErrorFunc) fprintf,
+        -: 3625:		(xmlSchemaValidityWarningFunc) fprintf,
+        -: 3626:		stderr);
+    #####: 3627:	wxschemas = xmlSchemaParse(ctxt);
+    #####: 3628:	if (wxschemas == NULL) {
+    #####: 3629:	    xmlGenericError(xmlGenericErrorContext,
+        -: 3630:		    "WXS schema %s failed to compile\n", schema);
+    #####: 3631:            progresult = XMLLINT_ERR_SCHEMACOMP;
+    #####: 3632:	    schema = NULL;
+        -: 3633:	}
+    #####: 3634:	xmlSchemaFreeParserCtxt(ctxt);
+    #####: 3635:	if (timing) {
+    #####: 3636:	    endTimer("Compiling the schemas");
+        -: 3637:	}
+        -: 3638:    }
+        -: 3639:#endif /* LIBXML_SCHEMAS_ENABLED */
+        -: 3640:#ifdef LIBXML_PATTERN_ENABLED
+    #####: 3641:    if ((pattern != NULL)
+        -: 3642:#ifdef LIBXML_READER_ENABLED
+    #####: 3643:        && (walker == 0)
+        -: 3644:#endif
+        -: 3645:	) {
+    #####: 3646:        patternc = xmlPatterncompile((const xmlChar *) pattern, NULL, 0, NULL);
+    #####: 3647:	if (patternc == NULL) {
+    #####: 3648:	    xmlGenericError(xmlGenericErrorContext,
+        -: 3649:		    "Pattern %s failed to compile\n", pattern);
+    #####: 3650:            progresult = XMLLINT_ERR_SCHEMAPAT;
+    #####: 3651:	    pattern = NULL;
+        -: 3652:	}
+        -: 3653:    }
+        -: 3654:#endif /* LIBXML_PATTERN_ENABLED */
+    #####: 3655:    for (i = 1; i < argc ; i++) {
+    #####: 3656:	if ((!strcmp(argv[i], "-encode")) ||
+    #####: 3657:	         (!strcmp(argv[i], "--encode"))) {
+    #####: 3658:	    i++;
+    #####: 3659:	    continue;
+    #####: 3660:        } else if ((!strcmp(argv[i], "-o")) ||
+    #####: 3661:                   (!strcmp(argv[i], "-output")) ||
+    #####: 3662:                   (!strcmp(argv[i], "--output"))) {
+    #####: 3663:            i++;
+    #####: 3664:	    continue;
+        -: 3665:        }
+        -: 3666:#ifdef LIBXML_VALID_ENABLED
+    #####: 3667:	if ((!strcmp(argv[i], "-dtdvalid")) ||
+    #####: 3668:	         (!strcmp(argv[i], "--dtdvalid"))) {
+    #####: 3669:	    i++;
+    #####: 3670:	    continue;
+        -: 3671:        }
+    #####: 3672:	if ((!strcmp(argv[i], "-path")) ||
+    #####: 3673:                   (!strcmp(argv[i], "--path"))) {
+    #####: 3674:            i++;
+    #####: 3675:	    continue;
+        -: 3676:        }
+    #####: 3677:	if ((!strcmp(argv[i], "-dtdvalidfpi")) ||
+    #####: 3678:	         (!strcmp(argv[i], "--dtdvalidfpi"))) {
+    #####: 3679:	    i++;
+    #####: 3680:	    continue;
+        -: 3681:        }
+        -: 3682:#endif /* LIBXML_VALID_ENABLED */
+    #####: 3683:	if ((!strcmp(argv[i], "-relaxng")) ||
+    #####: 3684:	         (!strcmp(argv[i], "--relaxng"))) {
+    #####: 3685:	    i++;
+    #####: 3686:	    continue;
+        -: 3687:        }
+    #####: 3688:	if ((!strcmp(argv[i], "-maxmem")) ||
+    #####: 3689:	         (!strcmp(argv[i], "--maxmem"))) {
+    #####: 3690:	    i++;
+    #####: 3691:	    continue;
+        -: 3692:        }
+    #####: 3693:	if ((!strcmp(argv[i], "-pretty")) ||
+    #####: 3694:	         (!strcmp(argv[i], "--pretty"))) {
+    #####: 3695:	    i++;
+    #####: 3696:	    continue;
+        -: 3697:        }
+    #####: 3698:	if ((!strcmp(argv[i], "-schema")) ||
+    #####: 3699:	         (!strcmp(argv[i], "--schema"))) {
+    #####: 3700:	    i++;
+    #####: 3701:	    continue;
+        -: 3702:        }
+    #####: 3703:	if ((!strcmp(argv[i], "-schematron")) ||
+    #####: 3704:	         (!strcmp(argv[i], "--schematron"))) {
+    #####: 3705:	    i++;
+    #####: 3706:	    continue;
+        -: 3707:        }
+        -: 3708:#ifdef LIBXML_PATTERN_ENABLED
+    #####: 3709:        if ((!strcmp(argv[i], "-pattern")) ||
+    #####: 3710:	    (!strcmp(argv[i], "--pattern"))) {
+    #####: 3711:	    i++;
+    #####: 3712:	    continue;
+        -: 3713:	}
+        -: 3714:#endif
+        -: 3715:#ifdef LIBXML_XPATH_ENABLED
+    #####: 3716:        if ((!strcmp(argv[i], "-xpath")) ||
+    #####: 3717:	    (!strcmp(argv[i], "--xpath"))) {
+    #####: 3718:	    i++;
+    #####: 3719:	    continue;
+        -: 3720:	}
+        -: 3721:#endif
+    #####: 3722:	if ((timing) && (repeat))
+    #####: 3723:	    startTimer();
+        -: 3724:	/* Remember file names.  "-" means stdin.  <sven@zen.org> */
+    #####: 3725:	if ((argv[i][0] != '-') || (strcmp(argv[i], "-") == 0)) {
+    #####: 3726:	    if (repeat) {
+    #####: 3727:		xmlParserCtxtPtr ctxt = NULL;
+        -: 3728:
+    #####: 3729:		for (acount = 0;acount < repeat;acount++) {
+        -: 3730:#ifdef LIBXML_READER_ENABLED
+    #####: 3731:		    if (stream != 0) {
+    #####: 3732:			streamFile(argv[i]);
+        -: 3733:		    } else {
+        -: 3734:#endif /* LIBXML_READER_ENABLED */
+    #####: 3735:                        if (sax) {
+    #####: 3736:			    testSAX(argv[i]);
+        -: 3737:			} else {
+    #####: 3738:			    if (ctxt == NULL)
+    #####: 3739:				ctxt = xmlNewParserCtxt();
+    #####: 3740:			    parseAndPrintFile(argv[i], ctxt);
+        -: 3741:			}
+        -: 3742:#ifdef LIBXML_READER_ENABLED
+        -: 3743:		    }
+        -: 3744:#endif /* LIBXML_READER_ENABLED */
+        -: 3745:		}
+    #####: 3746:		if (ctxt != NULL)
+    #####: 3747:		    xmlFreeParserCtxt(ctxt);
+        -: 3748:	    } else {
+    #####: 3749:		nbregister = 0;
+        -: 3750:
+        -: 3751:#ifdef LIBXML_READER_ENABLED
+    #####: 3752:		if (stream != 0)
+    #####: 3753:		    streamFile(argv[i]);
+        -: 3754:		else
+        -: 3755:#endif /* LIBXML_READER_ENABLED */
+    #####: 3756:                if (sax) {
+    #####: 3757:		    testSAX(argv[i]);
+        -: 3758:		} else {
+    #####: 3759:		    parseAndPrintFile(argv[i], NULL);
+        -: 3760:		}
+        -: 3761:
+    #####: 3762:                if ((chkregister) && (nbregister != 0)) {
+    #####: 3763:		    fprintf(stderr, "Registration count off: %d\n", nbregister);
+    #####: 3764:		    progresult = XMLLINT_ERR_RDREGIS;
+        -: 3765:		}
+        -: 3766:	    }
+    #####: 3767:	    files ++;
+    #####: 3768:	    if ((timing) && (repeat)) {
+    #####: 3769:		endTimer("%d iterations", repeat);
+        -: 3770:	    }
+        -: 3771:	}
+        -: 3772:    }
+    #####: 3773:    if (generate)
+    #####: 3774:	parseAndPrintFile(NULL, NULL);
+    #####: 3775:    if ((htmlout) && (!nowrap)) {
+    #####: 3776:	xmlGenericError(xmlGenericErrorContext, "</body></html>\n");
+        -: 3777:    }
+    #####: 3778:    if ((files == 0) && (!generate) && (version == 0)) {
+    #####: 3779:	usage(argv[0]);
+        -: 3780:    }
+        -: 3781:#ifdef LIBXML_SCHEMATRON_ENABLED
+    #####: 3782:    if (wxschematron != NULL)
+    #####: 3783:	xmlSchematronFree(wxschematron);
+        -: 3784:#endif
+        -: 3785:#ifdef LIBXML_SCHEMAS_ENABLED
+    #####: 3786:    if (relaxngschemas != NULL)
+    #####: 3787:	xmlRelaxNGFree(relaxngschemas);
+    #####: 3788:    if (wxschemas != NULL)
+    #####: 3789:	xmlSchemaFree(wxschemas);
+    #####: 3790:    xmlRelaxNGCleanupTypes();
+        -: 3791:#endif
+        -: 3792:#ifdef LIBXML_PATTERN_ENABLED
+    #####: 3793:    if (patternc != NULL)
+    #####: 3794:        xmlFreePattern(patternc);
+        -: 3795:#endif
+    #####: 3796:    xmlCleanupParser();
+    #####: 3797:    xmlMemoryDump();
+        -: 3798:
+    #####: 3799:    return(progresult);
+        -: 3800:}
+        -: 3801:

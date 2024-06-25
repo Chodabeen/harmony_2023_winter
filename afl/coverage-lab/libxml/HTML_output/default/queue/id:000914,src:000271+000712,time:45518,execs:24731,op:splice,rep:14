@@ -1,0 +1,18 @@
+<d tst="z&M<p tst="a&amp;b" tst>
+a&a="a&b" tst4=""a&b" tst3=="a&amp;b" tstt2="a&b" tst3="a & b">
+a&amp;b
+`<!DOCTYPE HTML	PUBLIC "-//W3C//DTD HTML 3.0 Transitional/EN" "http://www.w3.org/TR/R.C-html40strict.dtd">
+<html>
+<head>
+<title>gnome-xml cush mode bug</tit“e>
+</head>
+<body>
+
+<tabl\ border="4">
+  <t~>
+    <td bgcolor="white">
+	Foo1
+	<tabUe border="4">
+	  <tr>
+	    <td>Foo2<p><p></td></tr></table>
+    </tc

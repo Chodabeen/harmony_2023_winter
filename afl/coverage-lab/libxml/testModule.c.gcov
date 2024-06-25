@@ -1,0 +1,84 @@
+        -:    0:Source:testModule.c
+        -:    0:Programs:38
+        -:    1:/*
+        -:    2: * testModule.c : a small tester program for xmlModule
+        -:    3: *
+        -:    4: * See Copyright for the status of this software.
+        -:    5: *
+        -:    6: * joelwreed@comcast.net
+        -:    7: */
+        -:    8:
+        -:    9:#include "libxml.h"
+        -:   10:#ifdef LIBXML_MODULES_ENABLED
+        -:   11:#include <libxml/xmlversion.h>
+        -:   12:
+        -:   13:#include <limits.h>
+        -:   14:#include <stdio.h>
+        -:   15:#include <string.h>
+        -:   16:#include <stdarg.h>
+        -:   17:
+        -:   18:#include <libxml/xmlmemory.h>
+        -:   19:#include <libxml/debugXML.h>
+        -:   20:#include <libxml/xmlmodule.h>
+        -:   21:
+        -:   22:#ifdef _WIN32
+        -:   23:#define MODULE_PATH "."
+        -:   24:#include <stdlib.h> /* for _MAX_PATH */
+        -:   25:#ifndef __MINGW32__
+        -:   26:#define PATH_MAX _MAX_PATH
+        -:   27:#endif
+        -:   28:#else
+        -:   29:#define MODULE_PATH ".libs"
+        -:   30:#endif
+        -:   31:
+        -:   32:/* Used for SCO Openserver*/
+        -:   33:#ifndef PATH_MAX
+        -:   34:#ifdef _POSIX_PATH_MAX
+        -:   35:#define PATH_MAX _POSIX_PATH_MAX
+        -:   36:#else
+        -:   37:#define PATH_MAX 4096
+        -:   38:#endif
+        -:   39:#endif
+        -:   40:
+        -:   41:typedef int (*hello_world_t)(void);
+        -:   42:
+    #####:   43:int main(int argc ATTRIBUTE_UNUSED, char **argv ATTRIBUTE_UNUSED) {
+        -:   44:    xmlChar filename[PATH_MAX];
+    #####:   45:    xmlModulePtr module = NULL;
+    #####:   46:    hello_world_t hello_world = NULL;
+        -:   47:
+        -:   48:    /* build the module filename, and confirm the module exists */
+    #####:   49:    xmlStrPrintf(filename, sizeof(filename),
+        -:   50:                 (const xmlChar*) "%s/testdso%s",
+        -:   51:                 (const xmlChar*)MODULE_PATH,
+        -:   52:		 (const xmlChar*)LIBXML_MODULE_EXTENSION);
+        -:   53:
+    #####:   54:    module = xmlModuleOpen((const char*)filename, 0);
+    #####:   55:    if (module)
+        -:   56:      {
+    #####:   57:        if (xmlModuleSymbol(module, "hello_world", (void **) &hello_world)) {
+    #####:   58:	    fprintf(stderr, "Failure to lookup\n");
+    #####:   59:	    return(1);
+        -:   60:	}
+    #####:   61:	if (hello_world == NULL) {
+    #####:   62:	    fprintf(stderr, "Lookup returned NULL\n");
+    #####:   63:	    return(1);
+        -:   64:	}
+        -:   65:
+    #####:   66:        (*hello_world)();
+        -:   67:
+    #####:   68:        xmlModuleClose(module);
+        -:   69:      }
+        -:   70:
+    #####:   71:    xmlMemoryDump();
+        -:   72:
+    #####:   73:    return(0);
+        -:   74:}
+        -:   75:
+        -:   76:#else
+        -:   77:#include <stdio.h>
+        -:   78:int main(int argc ATTRIBUTE_UNUSED, char **argv ATTRIBUTE_UNUSED) {
+        -:   79:    printf("%s : Module support not compiled in\n", argv[0]);
+        -:   80:    return(0);
+        -:   81:}
+        -:   82:#endif /* LIBXML_SCHEMAS_ENABLED */

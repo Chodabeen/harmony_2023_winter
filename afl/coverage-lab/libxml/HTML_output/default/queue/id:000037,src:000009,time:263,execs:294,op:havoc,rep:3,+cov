@@ -1,0 +1,10 @@
+<p tst="a&amp;b" tst2="b">
+a&žmp;b
+a&b
+mp;b
+a&b
+a tst3="a & b">
+a&žmp;b
+a&b
+a & b
+</p>
